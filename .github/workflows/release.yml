@@ -46,14 +46,16 @@ jobs:
           else
             DATA_SEP=':'
           fi
+          PROJECT_ROOT="$(python -c 'from pathlib import Path; print(Path.cwd())')"
           python -m PyInstaller \
+            --clean \
             --onefile \
             --name DeepbridDownloader \
             --distpath dist \
             --workpath build \
             --specpath build \
-            --add-data "README.md${DATA_SEP}." \
-            --add-data "src${DATA_SEP}src" \
+            --add-data "$PROJECT_ROOT/README.md${DATA_SEP}." \
+            --add-data "$PROJECT_ROOT/src${DATA_SEP}src" \
             launcher.py
 
       - name: Rename asset
