@@ -2,6 +2,37 @@
 
 A small cross-platform desktop downloader built with Python and Tkinter for Deepbrid-hosted files. It queues links, keeps progress in SQLite, resumes interrupted transfers when the server supports HTTP Range requests, and exposes a compact, easy-to-monitor interface for daily downloads.
 
+## Supported platforms
+
+- Windows 10/11
+- macOS 12+
+- Linux (Ubuntu and other mainstream distributions with Tkinter available)
+
+## Requirements
+
+- Python 3.10+
+- Tkinter support for your OS
+- `cryptography>=42`
+
+## Installation
+
+```sh
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Then run:
+
+```sh
+python -m src.app
+```
+
+Or use the launcher:
+
+```sh
+python launcher.py
+```
+
 ## Features
 
 - Queue and manage many Deepbrid-supported links from a single interface
@@ -62,6 +93,51 @@ On Linux, Tkinter may need to be installed through the operating system package 
 ## Retry and resume behavior
 
 If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block is treated as non-retryable and pauses the queue. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
+
+## Tests
+
+The project uses the standard library unittest suite. Run it locally with:
+
+```sh
+python -m unittest -q tests.test_downloader
+```
+
+GitHub Actions runs the same tests automatically on Ubuntu, Windows, and macOS for supported Python versions.
+
+## GitHub CI
+
+This repository includes a minimal GitHub Actions workflow at `.github/workflows/ci.yml`.
+
+It runs:
+- Python 3.10
+- Python 3.11
+- Python 3.12
+- on Windows, macOS, and Ubuntu
+- `python -m unittest -q tests.test_downloader`
+- a package build step with `python -m build`
+
+## Minimal installer for Windows, macOS, and Linux
+
+For a public repo, the minimal production path is to keep the source public and ship platform build artifacts as GitHub Releases.
+
+Recommended minimal pipeline:
+- publish the source repository publicly
+- create GitHub Releases with generated artifacts for each OS
+- use PyInstaller or Briefcase for native installers/executables
+- attach the built package to the release page
+
+Example packaging commands:
+
+```sh
+python -m pip install build pyinstaller
+python -m build
+pyinstaller --onefile --windowed launcher.py
+```
+
+Notes:
+- `pyinstaller` is the simplest way to produce a single-file app for Windows/macOS/Linux.
+- For a more polished distribution, a native installer such as an MSI or DMG is better than a bare executable.
+- The GitHub repo should remain the canonical source of truth; the release assets are the production distribution.
 
 ## Signature
 
