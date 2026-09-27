@@ -39,8 +39,22 @@ jobs:
           python -m pip install pyinstaller build
 
       - name: Build executable
+        shell: bash
         run: |
-          python -m PyInstaller --onefile --name DeepbridDownloader --distpath dist --workpath build --specpath build launcher.py
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            DATA_SEP=';'
+          else
+            DATA_SEP=':'
+          fi
+          python -m PyInstaller \
+            --onefile \
+            --name DeepbridDownloader \
+            --distpath dist \
+            --workpath build \
+            --specpath build \
+            --add-data "README.md${DATA_SEP}." \
+            --add-data "src${DATA_SEP}src" \
+            launcher.py
 
       - name: Rename asset
         shell: bash

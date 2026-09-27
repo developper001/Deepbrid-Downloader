@@ -19,19 +19,24 @@ from .queue_store import QueueStore
 from .secure_store import SecureStorageError, SecureStore
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+def resolve_app_path(*relative_parts: str) -> Path:
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return base_dir.joinpath(*relative_parts)
+
+
+PROJECT_ROOT = resolve_app_path()
 OUTPUT_DIR = PROJECT_ROOT / "download"
-DATABASE_PATH = Path(__file__).resolve().parent / "deepbrid_downloader.sqlite3"
+DATABASE_PATH = resolve_app_path("src", "deepbrid_downloader.sqlite3")
 LEGACY_DATABASE_PATH = OUTPUT_DIR / "queue.sqlite3"
 LEGACY_STORAGE_PATH = OUTPUT_DIR
 LEGACY_ENV_PATH = PROJECT_ROOT / ".env"
 INPUT_PATH = PROJECT_ROOT / "input_links.txt"
-README_PATH = PROJECT_ROOT / "README.md"
+README_PATH = resolve_app_path("README.md")
 LOG_PATH = OUTPUT_DIR / "logs.txt"
-ICON_PATH = Path(__file__).resolve().parent / "deepbrid-logo.png"
-ICON_ICO_PATH = Path(__file__).resolve().parent / "deepbrid-favicon.ico"
-WORDMARK_PATH = Path(__file__).resolve().parent / "deepbrid-wordmark.png"
-WORDMARK_LIGHT_PATH = Path(__file__).resolve().parent / "deepbrid-wordmark-light.png"
+ICON_PATH = resolve_app_path("src", "deepbrid-logo.png")
+ICON_ICO_PATH = resolve_app_path("src", "deepbrid-favicon.ico")
+WORDMARK_PATH = resolve_app_path("src", "deepbrid-wordmark.png")
+WORDMARK_LIGHT_PATH = resolve_app_path("src", "deepbrid-wordmark-light.png")
 DEFAULT_COLUMNS = ("filename", "host", "status", "size", "remaining", "eta")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 
