@@ -14,6 +14,9 @@ from unittest.mock import patch
 from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
 from src.app import (
     DownloaderApp,
+    OUTPUT_DIR,
+    _ConsoleStream,
+    default_download_directory,
     format_bytes,
     format_duration,
     migrate_legacy_database,
@@ -214,6 +217,24 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_console_stream_forwards_complete_and_partial_lines(self) -> None:
+        messages = []
+        stream = _ConsoleStream(messages.append)
+        stream.write("first\nsecond")
+        stream.flush()
+        self.assertEqual(messages, ["first", "second"])
+
+    def test_default_download_directory_prefers_existing_user_downloads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            downloads = Path(temporary_directory) / "Downloads"
+            downloads.mkdir()
+            with patch("src.app.user_downloads_dir", return_value=str(downloads)):
+                self.assertEqual(default_download_directory(), downloads)
+
+            missing = downloads / "missing"
+            with patch("src.app.user_downloads_dir", return_value=str(missing)):
+                self.assertEqual(default_download_directory(), OUTPUT_DIR)
+
     def test_readme_content_is_available_and_mentions_license(self) -> None:
         readme_text = DownloaderApp.readme_text()
         self.assertIn("## Features", readme_text)

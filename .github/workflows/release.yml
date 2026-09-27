@@ -41,15 +41,19 @@ jobs:
       - name: Build executable
         shell: bash
         run: |
+          PROJECT_ROOT="$(python -c 'from pathlib import Path; print(Path.cwd())')"
           if [ "${{ runner.os }}" = "Windows" ]; then
             DATA_SEP=';'
+            ICON_ARGS=(--icon "$PROJECT_ROOT/src/deepbrid-favicon.ico")
           else
             DATA_SEP=':'
+            ICON_ARGS=()
           fi
-          PROJECT_ROOT="$(python -c 'from pathlib import Path; print(Path.cwd())')"
           python -m PyInstaller \
             --clean \
             --onefile \
+            --noconsole \
+            "${ICON_ARGS[@]}" \
             --name DeepbridDownloader \
             --distpath dist \
             --workpath build \

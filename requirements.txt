@@ -1,1 +1,2 @@
 cryptography>=42
+platformdirs>=4

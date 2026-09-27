@@ -10,8 +10,12 @@ import sys
 import threading
 import time
 import tkinter as tk
+import traceback
+from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+
+from platformdirs import user_downloads_dir
 
 from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
@@ -39,6 +43,43 @@ WORDMARK_PATH = resolve_app_path("src", "deepbrid-wordmark.png")
 WORDMARK_LIGHT_PATH = resolve_app_path("src", "deepbrid-wordmark-light.png")
 DEFAULT_COLUMNS = ("filename", "host", "status", "size", "remaining", "eta")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
+
+
+def default_download_directory() -> Path:
+    downloads = Path(user_downloads_dir()).expanduser()
+    return downloads if downloads.is_dir() else OUTPUT_DIR
+
+
+class _ConsoleStream:
+    encoding = "utf-8"
+    errors = "replace"
+
+    def __init__(self, log: Callable[[str], None]):
+        self.log = log
+        self.pending = ""
+        self.lock = threading.Lock()
+
+    def write(self, text: str) -> int:
+        if not text:
+            return 0
+        with self.lock:
+            lines = (self.pending + text).splitlines(keepends=True)
+            self.pending = ""
+            if lines and not lines[-1].endswith(("\n", "\r")):
+                self.pending = lines.pop()
+        for line in lines:
+            self.log(line.rstrip("\r\n"))
+        return len(text)
+
+    def flush(self) -> None:
+        with self.lock:
+            pending = self.pending
+            self.pending = ""
+        if pending:
+            self.log(pending)
+
+    def isatty(self) -> bool:
+        return False
 
 
 def validate_api_key(api_key: str) -> str | None:
@@ -218,7 +259,7 @@ class DownloaderApp:
             except json.JSONDecodeError:
                 pass
         self.output_dir = Path(
-            self.secure_store.get_setting("output_directory") or str(OUTPUT_DIR)
+            self.secure_store.get_setting("output_directory") or str(default_download_directory())
         ).expanduser()
         self.output_dir_text = tk.StringVar(value=str(self.output_dir))
         self.hosts: dict[str, str] = {}
@@ -235,6 +276,7 @@ class DownloaderApp:
         self.key_save_after: str | None = None
 
         self._build_ui()
+        self._install_console_capture()
         self._set_window_icon()
         self.api_key.trace_add("write", self._schedule_key_save)
         if self.hosts:
@@ -950,6 +992,41 @@ class DownloaderApp:
     def _log(self, message: str) -> None:
         self.events.put(("log", time.strftime("%H:%M:%S"), message))
 
+    def _install_console_capture(self) -> None:
+        self._previous_stdout = sys.stdout
+        self._previous_stderr = sys.stderr
+        self._previous_excepthook = sys.excepthook
+        self._previous_thread_excepthook = threading.excepthook
+        self._previous_callback_exception = self.root.report_callback_exception
+        self._stdout_capture = _ConsoleStream(self._log)
+        self._stderr_capture = _ConsoleStream(self._log)
+        self._exception_handler = self._report_exception
+        self._thread_exception_handler = self._report_thread_exception
+        sys.stdout = self._stdout_capture
+        sys.stderr = self._stderr_capture
+        sys.excepthook = self._exception_handler
+        threading.excepthook = self._thread_exception_handler
+        self.root.report_callback_exception = self._exception_handler
+
+    def _report_exception(self, exc_type, exc_value, exc_traceback) -> None:
+        details = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)).rstrip()
+        self.events.put(("exception", time.strftime("%H:%M:%S"), details))
+
+    def _report_thread_exception(self, args) -> None:
+        self._report_exception(args.exc_type, args.exc_value, args.exc_traceback)
+
+    def _restore_console_capture(self) -> None:
+        if sys.stdout is self._stdout_capture:
+            sys.stdout = self._previous_stdout
+        if sys.stderr is self._stderr_capture:
+            sys.stderr = self._previous_stderr
+        if sys.excepthook is self._exception_handler:
+            sys.excepthook = self._previous_excepthook
+        if threading.excepthook is self._thread_exception_handler:
+            threading.excepthook = self._previous_thread_excepthook
+        if self.root.report_callback_exception == self._exception_handler:
+            self.root.report_callback_exception = self._previous_callback_exception
+
     def _start(self) -> None:
         if self.worker and self.worker.is_alive():
             return
@@ -1276,8 +1353,10 @@ class DownloaderApp:
                 self._log(event[1])
                 self.add_links_button.configure(state="normal" if self.hosts else "disabled")
                 self._refresh_rows()
-            elif event[0] == "log":
+            elif event[0] in {"log", "exception"}:
                 _, timestamp, message = event
+                if event[0] == "exception" and not self.console_visible:
+                    self._toggle_console()
                 self.console.configure(state="normal")
                 self.console.insert("end", f"[{timestamp}] {message}\n")
                 self.console.see("end")
@@ -1328,12 +1407,35 @@ class DownloaderApp:
     def _close(self) -> None:
         self._persist_theme()
         self.stop_event.set()
+        self._restore_console_capture()
         self.root.destroy()
+
+
+def _show_startup_error(root: tk.Tk, details: str) -> None:
+    for child in root.winfo_children():
+        child.destroy()
+    root.title("Deepbrid Downloader - startup error")
+    root.geometry("900x500")
+    frame = ttk.Frame(root, padding=12)
+    frame.pack(fill="both", expand=True)
+    frame.rowconfigure(0, weight=1)
+    frame.columnconfigure(0, weight=1)
+    output = tk.Text(frame, wrap="word")
+    output.grid(row=0, column=0, sticky="nsew")
+    scrollbar = ttk.Scrollbar(frame, orient="vertical", command=output.yview)
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    output.configure(yscrollcommand=scrollbar.set)
+    output.insert("end", f"Application startup failed:\n\n{details}")
+    output.configure(state="disabled")
+    ttk.Button(frame, text="Close", command=root.destroy).grid(row=1, column=0, sticky="e", pady=(8, 0))
 
 
 def main() -> None:
     root = tk.Tk()
-    DownloaderApp(root)
+    try:
+        DownloaderApp(root)
+    except Exception:
+        _show_startup_error(root, traceback.format_exc())
     root.mainloop()
 
 

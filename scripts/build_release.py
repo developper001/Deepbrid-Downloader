@@ -35,6 +35,8 @@ def build_windows() -> Path:
         "PyInstaller",
         "--onefile",
         "--noconsole",
+        "--icon",
+        str(ROOT / "src" / "deepbrid-favicon.ico"),
         "--name",
         "DeepbridDownloader",
         "--distpath",
