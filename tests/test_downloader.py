@@ -1,0 +1,636 @@
+from __future__ import annotations
+
+import tempfile
+import sqlite3
+import shutil
+import unittest
+import urllib.error
+from contextlib import closing
+from io import BytesIO
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
+from src.app import (
+    DownloaderApp,
+    format_bytes,
+    format_duration,
+    migrate_legacy_database,
+    redact_log_urls,
+    remove_legacy_storage,
+    smooth_rate,
+    validate_api_key,
+    validate_output_folder,
+)
+from src.link_utils import extract_supported_links, supported_link_status
+from src.queue_store import QueueStore
+from src.secure_store import SecureStore
+
+
+class FakeResponse:
+    def __init__(self, status: int, headers: dict[str, str], body: bytes):
+        self.status = status
+        self.headers = headers
+        self.body = body
+
+    def __enter__(self) -> FakeResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, _size: int = -1) -> bytes:
+        body, self.body = self.body, b""
+        return body
+
+    def getcode(self) -> int:
+        return self.status
+
+
+class QueueStoreTests(unittest.TestCase):
+    def test_existing_queue_database_is_migrated_without_losing_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "queue.sqlite3"
+            with closing(sqlite3.connect(database_path)) as connection:
+                connection.execute(
+                    """CREATE TABLE downloads (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        url TEXT NOT NULL UNIQUE,
+                        status TEXT NOT NULL DEFAULT 'queued',
+                        downloaded INTEGER NOT NULL DEFAULT 0,
+                        total INTEGER,
+                        filename TEXT,
+                        error TEXT,
+                        deepbrid_link TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )"""
+                )
+                connection.execute(
+                    "INSERT INTO downloads (url, error, deepbrid_link) VALUES (?, ?, ?)",
+                    (
+                        "https://supported.example/file.zip",
+                        "HTTP 403\nRequest: curl --data link=https%3A%2F%2Fsupported.example%2Ffile.zip",
+                        "https://premium.example/d/legacy-token",
+                    ),
+                )
+                connection.commit()
+
+            store = QueueStore(database_path)
+            item = store.list_items()[0]
+
+            self.assertEqual(item.url, "https://supported.example/file.zip")
+            self.assertTrue(item.enabled)
+            self.assertEqual(item.host_status, "unknown")
+            with closing(sqlite3.connect(database_path)) as connection:
+                stored_url = connection.execute(
+                    "SELECT url, url_ciphertext FROM downloads"
+                ).fetchone()
+            self.assertNotIn(b"https://supported.example/file.zip", bytes(stored_url[1]))
+            self.assertNotEqual(stored_url[0], "https://supported.example/file.zip")
+            stored_error = store.list_items()[0].error
+            self.assertEqual(stored_error, "HTTP 403")
+            self.assertEqual(store.list_items()[0].deepbrid_link, "https://premium.example/d/legacy-token")
+
+
+    def test_interrupted_item_is_requeued_and_remembers_partial_size(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "queue.sqlite3"
+            store = QueueStore(database_path)
+            self.assertTrue(store.add("https://example.com/file.zip"))
+            item = store.next_item()
+            assert item is not None
+            store.update(
+                item.id,
+                status="downloading",
+                downloaded=12,
+                filename="file.zip",
+            )
+
+            recovered_store = QueueStore(database_path)
+            recovered_item = recovered_store.next_item()
+
+            self.assertTrue(recovered_store.recovered_work)
+            self.assertIsNotNone(recovered_item)
+            assert recovered_item is not None
+            self.assertEqual(recovered_item.status, "queued")
+            self.assertEqual(recovered_item.downloaded, 12)
+            self.assertEqual(recovered_item.filename, "file.zip")
+
+    def test_original_and_generated_urls_are_encrypted_in_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "queue.sqlite3"
+            store = QueueStore(database_path)
+            original_url = "https://supported.example/file?private=value"
+            generated_url = "https://premium.example/d/secret-token"
+            self.assertTrue(store.add(original_url, host_status="up"))
+            item = store.next_item()
+            assert item is not None
+            store.update(item.id, deepbrid_link=generated_url)
+
+            with closing(sqlite3.connect(database_path)) as connection:
+                row = connection.execute(
+                    "SELECT url, url_ciphertext, deepbrid_link FROM downloads"
+                ).fetchone()
+            raw_values = b" ".join(bytes(value) if isinstance(value, bytes) else value.encode() for value in row)
+            self.assertNotIn(original_url.encode(), raw_values)
+            self.assertNotIn(generated_url.encode(), raw_values)
+            loaded = store.list_items()[0]
+            self.assertEqual(loaded.url, original_url)
+            self.assertEqual(loaded.deepbrid_link, generated_url)
+
+    def test_disabled_and_down_host_items_are_not_selected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            store.add("https://supported.example/down", host_status="down")
+            disabled_id_added = store.add("https://supported.example/disabled", host_status="up")
+            self.assertTrue(disabled_id_added)
+            disabled_item = store.list_items()[1]
+            store.update(disabled_item.id, enabled=False)
+
+            self.assertIsNone(store.next_item())
+
+    def test_next_item_follows_persisted_visible_order_and_skips_disabled_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            store.add("https://supported.example/a.zip", host_status="supported")
+            store.add("https://supported.example/b.zip", host_status="supported")
+            first, second = store.list_items()
+
+            store.set_priority_order([second.id, first.id])
+            self.assertEqual(store.next_item().id, second.id)
+            store.update(second.id, enabled=False)
+            self.assertEqual(store.next_item().id, first.id)
+
+    def test_force_redownload_resets_progress_and_generated_link(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            store.add("https://supported.example/file.zip", host_status="up")
+            item = store.next_item()
+            assert item is not None
+            store.update(
+                item.id,
+                status="completed",
+                downloaded=1024,
+                total=1024,
+                deepbrid_link="https://premium.example/token",
+            )
+
+            store.set_force_redownload(item.id)
+            redownload = store.list_items()[0]
+
+            self.assertEqual(redownload.status, "queued")
+            self.assertEqual(redownload.downloaded, 0)
+            self.assertIsNone(redownload.total)
+            self.assertIsNone(redownload.deepbrid_link)
+            self.assertTrue(redownload.force)
+
+    def test_retry_item_resets_failed_or_blocked_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            store.add("https://supported.example/file.zip", host_status="supported")
+            item = store.list_items()[0]
+            store.update(item.id, status="blocked", error="HTTP 403")
+
+            store.retry_item(item.id)
+            retried = store.list_items()[0]
+
+            self.assertEqual(retried.status, "queued")
+            self.assertIsNone(retried.error)
+            self.assertEqual(store.next_item().id, item.id)
+
+    def test_remove_item_deletes_idle_rows_but_preserves_active_downloads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            store.add("https://supported.example/idle", host_status="supported")
+            store.add("https://supported.example/active", host_status="supported")
+            idle_item, active_item = store.list_items()
+            store.update(active_item.id, status="downloading")
+
+            self.assertTrue(store.remove_item(idle_item.id))
+            self.assertFalse(store.remove_item(active_item.id))
+            remaining = store.list_items()
+            self.assertEqual([item.id for item in remaining], [active_item.id])
+
+
+class ValidationAndPresentationTests(unittest.TestCase):
+    def test_readme_content_is_available_and_mentions_license(self) -> None:
+        readme_text = DownloaderApp.readme_text()
+        self.assertIn("## Features", readme_text)
+        self.assertIn("MIT License", readme_text)
+        self.assertIn("src/img/DeepbridDownloader.png", DownloaderApp.readme_image_paths())
+
+    def test_dark_theme_state_is_persisted(self) -> None:
+        app = object.__new__(DownloaderApp)
+        app.secure_store = SecureStore(Path(tempfile.mkdtemp()) / "theme.sqlite3")
+        app.dark_theme = True
+        app._persist_theme()
+        self.assertEqual(app.secure_store.get_setting("dark_theme"), "true")
+
+        app.dark_theme = False
+        app.dark_theme = app._load_theme_preference()
+        self.assertTrue(app.dark_theme)
+
+    def test_missing_api_key_and_invalid_download_folders_have_explicit_messages(self) -> None:
+        self.assertIn("API key", validate_api_key("  "))
+        self.assertIn("Choose a download folder", validate_output_folder(""))
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self.assertIsNone(validate_output_folder(root))
+            self.assertIn("does not exist", validate_output_folder(root / "missing"))
+            file_path = root / "not-a-folder"
+            file_path.write_text("x", encoding="utf-8")
+            self.assertIn("not a folder", validate_output_folder(file_path))
+
+    def test_byte_duration_and_sort_values_are_consistent(self) -> None:
+        self.assertEqual(format_bytes(1024), "1.0 KB")
+        self.assertEqual(format_bytes(None), "Unknown")
+        self.assertEqual(format_duration(3661), "1h 1m")
+        app = object.__new__(DownloaderApp)
+        app.item_speeds = {1: 100}
+        item = SimpleNamespace(
+            id=1,
+            filename="Bravo.zip",
+            url="https://example.test/alpha.zip",
+            host_message="SUPPORTED",
+            status="queued",
+            total=500,
+            downloaded=100,
+        )
+        self.assertEqual(app._sort_value(item, "filename"), "bravo.zip")
+        self.assertEqual(app._sort_value(item, "remaining"), 400)
+        self.assertEqual(app._sort_value(item, "eta"), 4)
+
+    def test_total_speed_uses_a_slow_exponential_average(self) -> None:
+        average = smooth_rate(100.0, 1000.0)
+        self.assertEqual(average, 190.0)
+        self.assertAlmostEqual(smooth_rate(average, 100.0), 181.0)
+        self.assertEqual(smooth_rate(average, 0.0), average)
+
+
+class LogRedactionTests(unittest.TestCase):
+    def test_redacts_plain_and_form_encoded_urls_but_keeps_diagnostics(self) -> None:
+        contents = (
+            "HTTP 403 for https://host.example/file.zip\n"
+            "curl --data link=https%3A%2F%2Fhost.example%2Ffile.zip\n"
+        )
+
+        redacted = redact_log_urls(contents)
+
+        self.assertNotIn("https://", redacted)
+        self.assertNotIn("https%3A", redacted)
+        self.assertIn("HTTP 403", redacted)
+        self.assertEqual(redacted.count("<URL REDACTED>"), 2)
+
+    def test_legacy_database_is_backed_up_before_old_folder_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            old_directory = root / "download"
+            old_directory.mkdir()
+            old_database = old_directory / "queue.sqlite3"
+            new_database = root / "src" / "deepbrid_downloader.sqlite3"
+            with closing(sqlite3.connect(old_database)) as connection:
+                connection.execute("CREATE TABLE data (value TEXT NOT NULL)")
+                connection.execute("INSERT INTO data VALUES ('preserved')")
+                connection.commit()
+
+            migrate_legacy_database(old_database, new_database)
+            with closing(sqlite3.connect(new_database)) as connection:
+                copied_value = connection.execute("SELECT value FROM data").fetchone()[0]
+
+            self.assertEqual(copied_value, "preserved")
+            self.assertTrue(remove_legacy_storage(old_directory, root / "Downloads"))
+            self.assertFalse(old_directory.exists())
+
+    def test_legacy_folder_with_unexpected_files_is_retained(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            old_directory = Path(temporary_directory) / "download"
+            old_directory.mkdir()
+            (old_directory / "user-file.bin").write_bytes(b"preserve")
+
+            self.assertFalse(remove_legacy_storage(old_directory, Path(temporary_directory) / "Downloads"))
+            self.assertTrue((old_directory / "user-file.bin").exists())
+
+
+class LinkExtractionTests(unittest.TestCase):
+    def test_extracts_only_supported_urls_from_text_and_html(self) -> None:
+        hosts = {"supported.example": "up", "down.example": "down (today)"}
+        source = (
+            '<a href="https://www.supported.example/file?id=1">download</a>'
+            '<a href="https://unknown.example/file">unsupported</a>'
+            ' Also https://down.example/other.zip, and https://supported.example/two.zip.'
+        )
+
+        links = extract_supported_links(source, hosts)
+
+        self.assertEqual(
+            links,
+            [
+                ("https://www.supported.example/file?id=1", "up", "UP: supported.example"),
+                ("https://down.example/other.zip", "down", "DOWN: down.example"),
+                ("https://supported.example/two.zip", "up", "UP: supported.example"),
+            ],
+        )
+        self.assertEqual(
+            supported_link_status("https://sub.supported.example/a", hosts),
+            ("up", "UP: supported.example"),
+        )
+        self.assertEqual(
+            supported_link_status("https://ddownload.com/file", {"ddownload": "supported"}),
+            ("supported", "SUPPORTED: ddownload"),
+        )
+
+
+class SecureStoreTests(unittest.TestCase):
+    def test_api_key_is_encrypted_in_sqlite_and_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "queue.sqlite3"
+            store = SecureStore(database_path)
+            store.save_api_key("sensitive-test-api-key")
+            self.assertEqual(store.get_api_key(), "sensitive-test-api-key")
+            store.set_setting("output_directory", "C:/Downloads")
+            self.assertEqual(store.get_setting("output_directory"), "C:/Downloads")
+
+            with closing(sqlite3.connect(database_path)) as connection:
+                settings = dict(connection.execute("SELECT name, value FROM app_settings").fetchall())
+            saved_value = bytes(settings["api_key"])
+            self.assertNotIn(b"sensitive-test-api-key", bytes(saved_value))
+            self.assertEqual(len(bytes(settings["encryption_key"])), 32)
+
+            copied_database = Path(temporary_directory) / "portable-copy.sqlite3"
+            shutil.copy2(database_path, copied_database)
+            copied_store = SecureStore(copied_database)
+            self.assertEqual(copied_store.get_api_key(), "sensitive-test-api-key")
+
+    def test_api_key_cannot_be_saved_as_plain_setting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            with self.assertRaises(ValueError):
+                store.set_setting("api_key", "sensitive-test-api-key")
+
+
+class ResumeTests(unittest.TestCase):
+    def test_appends_when_server_honors_range_request(self) -> None:
+        self._assert_resume_result(
+            status=206,
+            headers={"Content-Range": "bytes 3-5/6", "Content-Length": "3"},
+            body=b"def",
+            expected=b"abcdef",
+            expected_range="bytes=3-",
+        )
+
+    def test_restarts_file_when_server_ignores_range_request(self) -> None:
+        self._assert_resume_result(
+            status=200,
+            headers={"Content-Length": "3"},
+            body=b"new",
+            expected=b"new",
+            expected_range="bytes=3-",
+        )
+
+    def test_existing_destination_is_not_requested_or_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            destination = output_dir / "file.bin"
+            destination.write_bytes(b"keep this file")
+            progress: list[tuple[int, int | None]] = []
+
+            with patch("src.deepbrid_client.urllib.request.urlopen") as open_url:
+                completed = DeepbridClient("unused").download(
+                    "https://example.com/generated",
+                    "file.bin",
+                    output_dir,
+                    lambda: False,
+                    lambda downloaded, total: progress.append((downloaded, total)),
+                )
+
+            self.assertTrue(completed)
+            self.assertFalse(open_url.called)
+            self.assertEqual(destination.read_bytes(), b"keep this file")
+            self.assertEqual(progress, [(len(b"keep this file"), len(b"keep this file"))])
+
+    def test_forced_download_atomically_replaces_existing_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            destination = output_dir / "file.bin"
+            destination.write_bytes(b"old file")
+            response = FakeResponse(200, {"Content-Length": "8"}, b"new file")
+
+            with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response) as open_url:
+                completed = DeepbridClient("unused").download(
+                    "https://example.com/generated",
+                    "file.bin",
+                    output_dir,
+                    lambda: False,
+                    lambda *_: None,
+                    overwrite_existing=True,
+                )
+
+            self.assertTrue(completed)
+            self.assertTrue(open_url.called)
+            self.assertEqual(destination.read_bytes(), b"new file")
+
+    def _assert_resume_result(
+        self,
+        status: int,
+        headers: dict[str, str],
+        body: bytes,
+        expected: bytes,
+        expected_range: str,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            (output_dir / ".file.bin.part").write_bytes(b"abc")
+            response = FakeResponse(status, headers, body)
+
+            with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response) as open_url:
+                completed = DeepbridClient("unused").download(
+                    "https://example.com/generated", "file.bin", output_dir, lambda: False, lambda *_: None
+                )
+
+            self.assertTrue(completed)
+            self.assertEqual((output_dir / "file.bin").read_bytes(), expected)
+            request = open_url.call_args.args[0]
+            self.assertEqual(request.get_header("Range"), expected_range)
+
+
+class DeepbridDiagnosticsTests(unittest.TestCase):
+    def test_valid_api_key_account_response_is_accepted(self) -> None:
+        response = FakeResponse(200, {}, b'{"type":"premium","error":0}')
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response) as open_url:
+            DeepbridClient("valid-test-key").validate_api_key()
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/user")
+        self.assertEqual(request.get_header("Authorization"), "Bearer valid-test-key")
+
+    def test_invalid_api_key_is_reported_as_non_retryable_401(self) -> None:
+        error = urllib.error.HTTPError(
+            "https://www.deepbrid.com/api/v1/user",
+            401,
+            "Unauthorized",
+            {},
+            BytesIO(b'{"error":401,"message":"Authentication required."}'),
+        )
+        with patch("src.deepbrid_client.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(DeepbridError) as raised:
+                DeepbridClient("bad-key").validate_api_key()
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertFalse(raised.exception.retryable)
+
+    def test_fetch_hosts_accepts_current_string_array_and_legacy_status_map(self) -> None:
+        current = FakeResponse(200, {}, b'["ddownload","mega"]')
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=current):
+            current_hosts = DeepbridClient.fetch_hosts()
+        self.assertEqual(current_hosts, {"ddownload": "supported", "mega": "supported"})
+
+        legacy = FakeResponse(200, {}, b'[{"mega.nz":"up"},{"ddownload.com":"down (today)"}]')
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=legacy):
+            legacy_hosts = DeepbridClient.fetch_hosts()
+        self.assertEqual(legacy_hosts["mega.nz"], "up")
+        self.assertEqual(legacy_hosts["ddownload.com"], "down (today)")
+
+    def test_fetch_host_limits_formats_daily_links_and_bandwidth(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            b'{"error":0,"reset":"daily","hosters":['
+            b'{"domain":"ddownload.com","type":"links","limit":5,"used":3,"remaining":2},'
+            b'{"domain":"mega.nz","type":"bandwidth","remaining":5368709120,"remaining_str":"5.00 GB"}]}',
+        )
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response) as open_url:
+            limits = DeepbridClient.fetch_host_limits("test-key")
+        self.assertEqual(limits["ddownload.com"], "2 / 5 links")
+        self.assertEqual(limits["mega.nz"], "5.00 GB remaining")
+        self.assertEqual(open_url.call_args.args[0].full_url, "https://www.deepbrid.com/api/v1/user/limits")
+
+    def test_fetch_host_limits_accepts_live_hoster_field(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            b'{"error":0,"hosters":[{"hoster":"ddownload.com","type":"bandwidth",'
+            b'"remaining_str":"4.00 GB"}]}',
+        )
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+            limits = DeepbridClient.fetch_host_limits("test-key")
+        self.assertEqual(limits, {"ddownload.com": "4.00 GB remaining"})
+
+    def test_fetch_host_limits_splits_comma_separated_aliases(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            b'{"error":0,"hosters":[{"hoster":"ddl.to,ddownload.com","type":"bandwidth",'
+            b'"remaining_str":"2.78 GB"}]}',
+        )
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+            limits = DeepbridClient.fetch_host_limits("test-key")
+        self.assertEqual(limits["ddownload.com"], "2.78 GB remaining")
+        self.assertEqual(limits["ddl.to"], "2.78 GB remaining")
+
+    def test_empty_host_response_is_an_explicit_error(self) -> None:
+        empty = FakeResponse(200, {}, b"[]")
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=empty):
+            with self.assertRaisesRegex(DeepbridError, "no hosts.*HTTP 200"):
+                DeepbridClient.fetch_hosts()
+
+    def test_http_error_logs_status_body_and_redacted_curl(self) -> None:
+        api_key = "secret-test-key"
+        body = b'{"error":401,"message":"Authentication required."}'
+        error = urllib.error.HTTPError(
+            "https://www.deepbrid.com/api/v1/generate/link",
+            401,
+            "Unauthorized",
+            {},
+            BytesIO(body),
+        )
+        messages: list[str] = []
+        client = DeepbridClient(api_key, log=messages.append)
+
+        with patch("src.deepbrid_client.urllib.request.urlopen", side_effect=error) as open_url:
+            with self.assertRaisesRegex(DeepbridError, "HTTP 401") as raised:
+                client.generate_link("https://example.com/file.zip")
+
+        combined = "\n".join(messages) + "\n" + str(raised.exception)
+        self.assertIn("HTTP 401", combined)
+        self.assertIn("Authentication required", combined)
+        self.assertIn("curl -X POST", combined)
+        self.assertIn("Bearer <REDACTED>", combined)
+        self.assertNotIn(api_key, combined)
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.get_header("User-agent"), APP_USER_AGENT)
+
+    def test_successful_response_does_not_log_temporary_download_url(self) -> None:
+        download_url = "https://premium-dl.deepbrid.com/d/private-token"
+        body = (
+            '{"error":0,"link":"'
+            + download_url
+            + '","filename":"file.zip"}'
+        ).encode()
+        response = FakeResponse(200, {}, body)
+        messages: list[str] = []
+        client = DeepbridClient("secret-test-key", log=messages.append)
+
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+            client.generate_link("https://example.com/file.zip")
+
+        self.assertNotIn(download_url, "\n".join(messages))
+        self.assertIn("<DOWNLOAD_LINK_REDACTED>", "\n".join(messages))
+
+    def test_invalid_json_logs_http_status_and_body(self) -> None:
+        response = FakeResponse(200, {}, b"upstream temporarily broken")
+        messages: list[str] = []
+        client = DeepbridClient("secret-test-key", log=messages.append)
+
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+            with self.assertRaisesRegex(DeepbridError, "HTTP 200") as raised:
+                client.generate_link("https://example.com/file.zip")
+
+        combined = "\n".join(messages) + "\n" + str(raised.exception)
+        self.assertIn("upstream temporarily broken", combined)
+        self.assertIn("curl -X POST", combined)
+        self.assertNotIn("secret-test-key", combined)
+
+    def test_download_http_error_includes_redacted_curl_template(self) -> None:
+        download_url = "https://premium-dl.deepbrid.com/d/private-token"
+        error = urllib.error.HTTPError(
+            download_url,
+            503,
+            "Unavailable",
+            {},
+            BytesIO(b"upstream offline"),
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with patch("src.deepbrid_client.urllib.request.urlopen", side_effect=error):
+                with self.assertRaisesRegex(DeepbridError, "HTTP 503") as raised:
+                    DeepbridClient("secret-test-key").download(
+                        download_url,
+                        "file.bin",
+                        Path(temporary_directory),
+                        lambda: False,
+                        lambda *_: None,
+                    )
+
+        message = str(raised.exception)
+        self.assertIn("upstream offline", message)
+        self.assertIn("curl -L", message)
+        self.assertIn("<TEMPORARY_DOWNLOAD_URL_REDACTED>", message)
+        self.assertNotIn("private-token", message)
+
+    def test_cloudflare_owner_block_is_not_retryable(self) -> None:
+        body = b'{"error_code":1010,"error_name":"browser_signature_banned","retryable":false,"owner_action_required":true}'
+        error = urllib.error.HTTPError(
+            "https://www.deepbrid.com/api/v1/generate/link",
+            403,
+            "Forbidden",
+            {},
+            BytesIO(body),
+        )
+        with patch("src.deepbrid_client.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(DeepbridError) as raised:
+                DeepbridClient("test-key").generate_link("https://supported.example/file")
+
+        self.assertFalse(raised.exception.retryable)
+        self.assertEqual(raised.exception.status_code, 403)
+
+
+if __name__ == "__main__":
+    unittest.main()
