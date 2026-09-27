@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
 from src.app import (
+    API_KEY_DASHBOARD_URL,
     DownloaderApp,
     OUTPUT_DIR,
     _ConsoleStream,
@@ -217,6 +218,11 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_api_key_dashboard_link_opens_browser(self) -> None:
+        with patch("src.app.webbrowser.open") as open_browser:
+            DownloaderApp._open_api_key_dashboard()
+        open_browser.assert_called_once_with(API_KEY_DASHBOARD_URL)
+
     def test_console_stream_forwards_complete_and_partial_lines(self) -> None:
         messages = []
         stream = _ConsoleStream(messages.append)

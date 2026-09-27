@@ -13,6 +13,7 @@ A small cross-platform desktop downloader built with Python and Tkinter for Deep
 - Python 3.10+
 - Tkinter support for your OS
 - `cryptography>=42`
+- `platformdirs>=4`
 
 ## Installation
 
@@ -41,6 +42,10 @@ python launcher.py
 - Show host availability and per-host quota details from Deepbrid endpoints
 - Retry blocked or failed links safely, with a pause-and-resume workflow
 - Toggle dark mode, show or hide the console, and configure visible columns
+- Open the Deepbrid dashboard directly from missing or invalid API-key prompts
+- Use the user's OS Downloads folder by default when available, retaining a saved folder choice
+- Route standard output, errors, and uncaught exceptions to the in-app console
+- Build the Windows executable with the Deepbrid icon and no separate console window
 - Open the full project README directly from the app via the new Readme button
 
 ### Main dashboard
@@ -89,6 +94,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - Right-click a row to copy the original URL, copy an available Deepbrid URL, retry, disable, force a rebuild, or remove it.
 - A host refresh reads the current supported-host list and daily quota information when available.
 - The app keeps active partial files and automatically resumes queued work after startup.
+- If the API key is missing or rejected, follow the dashboard link in the prompt to retrieve or replace it.
 
 ## Retry and resume behavior
 
@@ -103,6 +109,7 @@ python -m unittest -q tests.test_downloader
 ```
 
 GitHub Actions runs the same tests automatically on Ubuntu, Windows, and macOS for supported Python versions.
+It also runs `pip-audit` against `requirements.txt` on pushes and pull requests, with a weekly scheduled audit. The weekly run skips the platform test matrix.
 
 ## GitHub CI
 
@@ -144,6 +151,7 @@ git push origin v0.2.0
 ```
 
 This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces the platform binaries and a `sha256sums.txt` file.
+The Windows build embeds the Deepbrid icon and runs without opening a separate terminal console; output and uncaught exceptions are routed to the app's in-app console.
 
 Notes:
 - `pyinstaller` is the simplest way to produce a single-file app for Windows/macOS/Linux.

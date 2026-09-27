@@ -11,6 +11,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
+import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -43,6 +44,7 @@ WORDMARK_PATH = resolve_app_path("src", "deepbrid-wordmark.png")
 WORDMARK_LIGHT_PATH = resolve_app_path("src", "deepbrid-wordmark-light.png")
 DEFAULT_COLUMNS = ("filename", "host", "status", "size", "remaining", "eta")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
+API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/dashboard"
 
 
 def default_download_directory() -> Path:
@@ -908,6 +910,39 @@ class DownloaderApp:
         self.api_key_entry.configure(show="" if visible else "*")
         self.key_visibility_button.configure(text="Hide" if visible else "Show")
 
+    def _show_api_key_dialog(self, title: str, message: str) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        content = ttk.Frame(dialog, padding=16)
+        content.pack(fill="both", expand=True)
+        ttk.Label(content, text=message, wraplength=400, justify="left").pack(anchor="w")
+        link = tk.Label(
+            content,
+            text=API_KEY_DASHBOARD_URL,
+            foreground="#0563C1",
+            cursor="hand2",
+            font=("TkDefaultFont", 9, "underline"),
+        )
+        link.pack(anchor="w", pady=(12, 0))
+        link.bind("<Button-1>", lambda _event: self._open_api_key_dashboard())
+
+        buttons = ttk.Frame(content)
+        buttons.pack(fill="x", pady=(16, 0))
+        ttk.Button(buttons, text="OK", command=dialog.destroy).pack(side="right")
+        dialog.bind("<Return>", lambda _event: dialog.destroy())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.update_idletasks()
+        dialog.geometry(f"+{self.root.winfo_rootx() + 40}+{self.root.winfo_rooty() + 40}")
+        dialog.wait_window()
+
+    @staticmethod
+    def _open_api_key_dashboard() -> None:
+        webbrowser.open(API_KEY_DASHBOARD_URL)
+
     def _toggle_console(self) -> None:
         self.console_visible = not self.console_visible
         if self.console_visible:
@@ -1033,7 +1068,7 @@ class DownloaderApp:
         api_key = self.api_key.get().strip()
         key_error = validate_api_key(api_key)
         if key_error:
-            messagebox.showerror("API key required", key_error)
+            self._show_api_key_dialog("API key required", key_error)
             self.api_key_entry.focus_set()
             return
         folder_error = validate_output_folder(self.output_dir_text.get())
@@ -1369,7 +1404,10 @@ class DownloaderApp:
                 title = "Invalid API key" if status_code == 401 else "API key validation failed"
                 self.status_text.set("Invalid API key" if status_code == 401 else "Could not validate API key")
                 self._log(message)
-                messagebox.showerror(title, message)
+                if status_code == 401:
+                    self._show_api_key_dialog(title, message)
+                else:
+                    messagebox.showerror(title, message)
             elif event[0] == "progress":
                 _, item_id, downloaded, total, speed = event
                 if speed > 0:
