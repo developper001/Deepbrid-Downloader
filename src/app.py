@@ -750,7 +750,7 @@ class DownloaderApp:
         canvas.configure(scrollregion=canvas.bbox("all"))
         canvas.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        ttk.Button(container, text="Close", command=popup.destroy).grid(row=1, column=0, columnspan=2, pady=(8, 0), sticky="e")
+        ttk.Button(container, text="Close", command=popup.destroy).grid(row=2, column=0, columnspan=2, pady=(8, 0), sticky="e")
 
     def _build_columns_menu(self) -> None:
         self.column_visibility_vars: dict[str, tk.BooleanVar] = {}
