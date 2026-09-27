@@ -1,6 +1,3 @@
-.env
-input_links.txt
-download/*
 src/__pycache__/*
 tests/__pycache__/*
 src/deepbrid_downloader.sqlite3*
