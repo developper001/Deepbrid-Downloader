@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: DeepbridDownloader-Windows.exe
+          - os: ubuntu-latest
+            artifact_name: DeepbridDownloader-Linux
+          - os: macos-latest
+            artifact_name: DeepbridDownloader-macOS
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller build
+
+      - name: Build executable
+        run: |
+          python -m PyInstaller --onefile --name DeepbridDownloader --distpath dist --workpath build --specpath build launcher.py
+
+      - name: Rename asset
+        shell: bash
+        run: |
+          mkdir -p release-artifacts
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp dist/DeepbridDownloader.exe release-artifacts/DeepbridDownloader-Windows.exe
+          elif [ "${{ runner.os }}" = "Linux" ]; then
+            cp dist/DeepbridDownloader release-artifacts/DeepbridDownloader-Linux
+          else
+            cp dist/DeepbridDownloader release-artifacts/DeepbridDownloader-macOS
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release-artifacts/${{ matrix.artifact_name }}
+
+  checksums:
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Generate sha256 checksums
+        shell: bash
+        run: |
+          cd release-artifacts
+          find . -type f -not -name 'sha256sums.txt' -exec sha256sum {} \; > sha256sums.txt
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/**
+          generate_release_notes: true

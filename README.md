@@ -118,26 +118,37 @@ It runs:
 
 ## Minimal installer for Windows, macOS, and Linux
 
-For a public repo, the minimal production path is to keep the source public and ship platform build artifacts as GitHub Releases.
+For a public repo, the minimal production path is to keep the source public and ship platform build artifacts as a GitHub Release.
 
 Recommended minimal pipeline:
-- publish the source repository publicly
-- create GitHub Releases with generated artifacts for each OS
-- use PyInstaller or Briefcase for native installers/executables
-- attach the built package to the release page
+- publish the source repo publicly
+- tag a release like `v0.2.0`
+- let GitHub Actions build the app for Windows, macOS, and Linux
+- attach the binaries and the generated checksum file to the release
 
-Example packaging commands:
+Build and release steps:
 
 ```sh
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 python -m pip install build pyinstaller
 python -m build
-pyinstaller --onefile --windowed launcher.py
+python -m PyInstaller --onefile --windowed launcher.py
 ```
+
+Create the git tag and push it:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces the platform binaries and a `sha256sums.txt` file.
 
 Notes:
 - `pyinstaller` is the simplest way to produce a single-file app for Windows/macOS/Linux.
 - For a more polished distribution, a native installer such as an MSI or DMG is better than a bare executable.
-- The GitHub repo should remain the canonical source of truth; the release assets are the production distribution.
+- The repo remains the source of truth; the GitHub release is the production distribution.
 
 ## Signature
 
