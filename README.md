@@ -137,7 +137,7 @@ For a public repo, the minimal production path is to keep the source public and 
 
 Recommended minimal pipeline:
 - publish the source repo publicly
-- tag a release like `v0.2.6`
+- tag a release like `v0.2.7`
 - let GitHub Actions build the app for Windows, macOS, and Linux
 - attach the binaries and the generated checksum file to the release
 
@@ -154,11 +154,11 @@ python -m PyInstaller --onefile --windowed launcher.py
 Create the git tag and push it:
 
 ```sh
-git tag v0.2.6
-git push origin v0.2.6
+git tag v0.2.7
+git push origin v0.2.7
 ```
 
-This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces versioned platform binaries (for example, `DeepbridDownloader-Windows-0.2.6.exe`) and a `sha256sums.txt` file.
+This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces versioned platform binaries (for example, `DeepbridDownloader-Windows-0.2.7.exe`) and a `sha256sums.txt` file.
 The Windows build embeds the Deepbrid icon and runs without opening a separate terminal console; output and uncaught exceptions are routed to the app's in-app console.
 
 Notes:

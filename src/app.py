@@ -1262,6 +1262,9 @@ class DownloaderApp:
                 "field": "#171c19",
                 "accent": "#6d91ff",
                 "selection": "#2e426e",
+                "scrollbar": "#56615b",
+                "scrollbar_active": "#6a766f",
+                "scrollbar_trough": "#2b332f",
             }
         else:
             colors = {
@@ -1271,6 +1274,9 @@ class DownloaderApp:
                 "field": "#ffffff",
                 "accent": "#3569f6",
                 "selection": "#dbe6ff",
+                "scrollbar": "#d7ded9",
+                "scrollbar_active": "#c3cec8",
+                "scrollbar_trough": "#f3f6f4",
             }
         self.root.configure(background=colors["background"])
         style.configure(".", background=colors["background"], foreground=colors["foreground"])
@@ -1283,6 +1289,19 @@ class DownloaderApp:
         style.configure("Treeview.Heading", background=colors["background"], foreground=colors["foreground"])
         style.map("Treeview", background=[("selected", colors["selection"])], foreground=[("selected", colors["foreground"])])
         style.configure("Horizontal.TProgressbar", troughcolor=colors["surface"], background=colors["accent"])
+        style.configure(
+            "TScrollbar",
+            background=colors["scrollbar"],
+            troughcolor=colors["scrollbar_trough"],
+            bordercolor=colors["scrollbar_trough"],
+            arrowcolor=colors["foreground"],
+            darkcolor=colors["scrollbar"],
+            lightcolor=colors["scrollbar"],
+        )
+        style.map(
+            "TScrollbar",
+            background=[("active", colors["scrollbar_active"]), ("pressed", colors["scrollbar_active"])],
+        )
         self.links_input.configure(
             background=colors["field"],
             foreground=colors["foreground"],
