@@ -17,15 +17,23 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact_name: DeepbridDownloader-Windows.exe
+            platform: Windows
+            extension: .exe
           - os: ubuntu-latest
-            artifact_name: DeepbridDownloader-Linux
+            platform: Linux
+            extension: ''
           - os: macos-latest
-            artifact_name: DeepbridDownloader-macOS
+            platform: macOS
+            extension: ''
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Read release version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -66,19 +74,21 @@ jobs:
         shell: bash
         run: |
           mkdir -p release-artifacts
+          VERSION="${GITHUB_REF_NAME#v}"
+          ASSET_NAME="DeepbridDownloader-${{ matrix.platform }}-${VERSION}${{ matrix.extension }}"
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp dist/DeepbridDownloader.exe release-artifacts/DeepbridDownloader-Windows.exe
+            cp dist/DeepbridDownloader.exe "release-artifacts/$ASSET_NAME"
           elif [ "${{ runner.os }}" = "Linux" ]; then
-            cp dist/DeepbridDownloader release-artifacts/DeepbridDownloader-Linux
+            cp dist/DeepbridDownloader "release-artifacts/$ASSET_NAME"
           else
-            cp dist/DeepbridDownloader release-artifacts/DeepbridDownloader-macOS
+            cp dist/DeepbridDownloader "release-artifacts/$ASSET_NAME"
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: release-artifacts/${{ matrix.artifact_name }}
+          name: DeepbridDownloader-${{ matrix.platform }}-${{ steps.version.outputs.version }}${{ matrix.extension }}
+          path: release-artifacts/DeepbridDownloader-${{ matrix.platform }}-${{ steps.version.outputs.version }}${{ matrix.extension }}
 
   checksums:
     needs: build-release

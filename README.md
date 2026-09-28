@@ -150,7 +150,7 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces the platform binaries and a `sha256sums.txt` file.
+This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces versioned platform binaries (for example, `DeepbridDownloader-Windows-0.2.5.exe`) and a `sha256sums.txt` file.
 The Windows build embeds the Deepbrid icon and runs without opening a separate terminal console; output and uncaught exceptions are routed to the app's in-app console.
 
 Notes:

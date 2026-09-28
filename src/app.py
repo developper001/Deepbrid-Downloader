@@ -44,7 +44,7 @@ WORDMARK_PATH = resolve_app_path("src", "deepbrid-wordmark.png")
 WORDMARK_LIGHT_PATH = resolve_app_path("src", "deepbrid-wordmark-light.png")
 DEFAULT_COLUMNS = ("filename", "host", "status", "size", "remaining", "eta")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
-API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/dashboard"
+API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
 
 
 def default_download_directory() -> Path:
@@ -382,8 +382,9 @@ class DownloaderApp:
             table_frame,
             columns=("filename", "link", "host", "status", "size", "remaining", "eta"),
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
         )
+        self._selection_anchor: str | None = None
         self.column_labels = {
             "filename": "File name",
             "link": "Original link",
@@ -413,6 +414,7 @@ class DownloaderApp:
             yscrollcommand=table_scrollbar.set,
             xscrollcommand=table_horizontal_scrollbar.set,
         )
+        self.table.bind("<Button-1>", self._select_table_row)
         self.table.bind("<Button-2>" if sys.platform == "darwin" else "<Button-3>", self._show_link_menu)
         self.table.bind("<Control-c>", self._copy_original_link)
         if sys.platform == "darwin":
@@ -539,7 +541,7 @@ class DownloaderApp:
 
     def _load_hosts(self, show_popup: bool, api_key: str) -> None:
         try:
-            hosts = DeepbridClient.fetch_hosts()
+            hosts = DeepbridClient.fetch_hosts(api_key)
         except DeepbridError as error:
             self.events.put(("hosts_error", str(error)))
         else:
@@ -633,12 +635,16 @@ class DownloaderApp:
         self.status_text.set("Download folder set")
         self._log(f"Download folder set to {self.output_dir}")
 
-    def _selected_item(self):
-        selected = self.table.selection()
+    def _selected_items(self):
+        selected = set(self.table.selection())
         if not selected:
-            return None
-        item_id = int(selected[0])
-        return next((item for item in self.store.list_items() if item.id == item_id), None)
+            return []
+        items_by_row = {str(item.id): item for item in self.store.list_items()}
+        return [
+            items_by_row[row_id]
+            for row_id in self.table.get_children("")
+            if row_id in selected and row_id in items_by_row
+        ]
 
     def _set_window_icon(self) -> None:
         try:
@@ -809,100 +815,182 @@ class DownloaderApp:
         return item.id
 
     def _force_redownload(self) -> None:
-        item = self._selected_item()
-        if item is None:
+        items = self._selected_items()
+        eligible = [item for item in items if item.status != "downloading"]
+        if not eligible:
+            if items:
+                messagebox.showinfo("Download active", "Stop the selected downloads before forcing a re-download.")
             return
-        if item.status == "downloading":
-            messagebox.showinfo("Download active", "Stop this download before forcing a re-download.")
-            return
+        count = len(eligible)
+        prompt = (
+            "Download these files again and replace the existing copies when the new transfers complete?"
+            if count > 1
+            else "Download this file again and replace the existing copy when the new transfer completes?"
+        )
         if not messagebox.askyesno(
             "Force re-download",
-            "Download this file again and replace the existing copy when the new transfer completes?",
+            prompt,
         ):
             return
-        self.store.set_force_redownload(item.id)
-        self.item_speeds.pop(item.id, None)
-        if item.filename:
-            partial_file = self.output_dir / f".{item.filename}.part"
-            partial_file.unlink(missing_ok=True)
-        self._log(f"Forced re-download queued for item {item.id}.")
+        for item in eligible:
+            self.store.set_force_redownload(item.id)
+            self.item_speeds.pop(item.id, None)
+            if item.filename:
+                partial_file = self.output_dir / f".{item.filename}.part"
+                partial_file.unlink(missing_ok=True)
+            self._log(f"Forced re-download queued for item {item.id}.")
         self._refresh_rows()
+
+    def _select_table_row(self, event: tk.Event) -> str | None:
+        if self.table.identify_region(event.x, event.y) not in {"cell", "tree", "nothing"}:
+            return None
+        row_id = self.table.identify_row(event.y)
+        if not row_id:
+            selected = self.table.selection()
+            if selected:
+                self.table.selection_remove(*selected)
+            self._selection_anchor = None
+            return "break"
+
+        row_ids = list(self.table.get_children(""))
+        if row_id not in row_ids:
+            return "break"
+        shift_pressed = bool(event.state & 0x0001)
+        control_pressed = bool(event.state & 0x0004)
+        if shift_pressed and self._selection_anchor in row_ids:
+            anchor_index = row_ids.index(self._selection_anchor)
+            row_index = row_ids.index(row_id)
+            start, end = sorted((anchor_index, row_index))
+            selection = row_ids[start : end + 1]
+            if control_pressed:
+                self.table.selection_add(*selection)
+            else:
+                self.table.selection_set(*selection)
+        elif control_pressed:
+            if row_id in self.table.selection():
+                self.table.selection_remove(row_id)
+            else:
+                self.table.selection_add(row_id)
+            self._selection_anchor = row_id
+        else:
+            self.table.selection_set(row_id)
+            self._selection_anchor = row_id
+        self.table.focus(row_id)
+        return "break"
 
     def _show_link_menu(self, event: tk.Event) -> str:
         row_id = self.table.identify_row(event.y)
         if not row_id:
             return "break"
-        self.table.selection_set(row_id)
+        if row_id not in self.table.selection():
+            self.table.selection_set(row_id)
+            self._selection_anchor = row_id
+        elif self._selection_anchor is None:
+            self._selection_anchor = row_id
         self.table.focus(row_id)
-        item = self._selected_item()
-        if item is None:
+        items = self._selected_items()
+        if not items:
             return "break"
+        multiple = len(items) > 1
         self.link_menu.entryconfigure(
             1,
-            state="normal" if item.deepbrid_link else "disabled",
+            state="normal" if any(item.deepbrid_link for item in items) else "disabled",
+            label="Copy Deepbrid links" if multiple else "Copy Deepbrid link",
         )
-        self.link_menu.entryconfigure(2, label="Disable link" if item.enabled else "Enable link")
-        self.link_menu.entryconfigure(4, state="normal" if item.status in {"failed", "blocked"} else "disabled")
-        self.link_menu.entryconfigure(5, state="disabled" if item.status == "downloading" else "normal")
-        self.link_menu.entryconfigure(7, state="disabled" if item.status == "downloading" else "normal")
+        if all(item.enabled for item in items):
+            toggle_label = "Disable links" if multiple else "Disable link"
+        elif not any(item.enabled for item in items):
+            toggle_label = "Enable links" if multiple else "Enable link"
+        else:
+            toggle_label = "Toggle enabled state"
+        self.link_menu.entryconfigure(0, label="Copy original links" if multiple else "Copy original link")
+        self.link_menu.entryconfigure(2, label=toggle_label)
+        self.link_menu.entryconfigure(
+            4,
+            state="normal" if any(item.status in {"failed", "blocked"} for item in items) else "disabled",
+            label="Retry links" if multiple else "Retry link",
+        )
+        self.link_menu.entryconfigure(
+            5,
+            state="normal" if any(item.status != "downloading" for item in items) else "disabled",
+            label="Force re-download links" if multiple else "Force re-download",
+        )
+        self.link_menu.entryconfigure(
+            7,
+            state="normal" if any(item.status != "downloading" for item in items) else "disabled",
+            label="Remove links" if multiple else "Remove link",
+        )
         self.link_menu.tk_popup(event.x_root, event.y_root)
         return "break"
 
     def _remove_link(self) -> None:
-        item = self._selected_item()
-        if item is None:
+        items = self._selected_items()
+        eligible = [item for item in items if item.status != "downloading"]
+        if not eligible:
+            if items:
+                messagebox.showinfo("Download active", "Stop the selected transfers before removing their links.")
             return
-        if item.status == "downloading":
-            messagebox.showinfo("Download active", "Stop this transfer before removing its link.")
-            return
+        count = len(eligible)
+        prompt = (
+            f"Remove these {count} links from the queue? Any completed files will stay in the download folder."
+            if count > 1
+            else "Remove this link from the queue? Any completed file will stay in the download folder."
+        )
         if not messagebox.askyesno(
             "Remove link",
-            "Remove this link from the queue? Any completed file will stay in the download folder.",
+            prompt,
         ):
             return
-        if not self.store.remove_item(item.id):
-            self.status_text.set("Could not remove the active queue item")
+        removed_any = False
+        for item in eligible:
+            if not self.store.remove_item(item.id):
+                self.status_text.set("Could not remove the active queue item")
+                continue
+            if item.filename:
+                partial = self.output_dir / f".{item.filename}.part"
+                partial.unlink(missing_ok=True)
+            self.item_speeds.pop(item.id, None)
+            self._log(f"Removed queue item {item.id}.")
+            removed_any = True
+        if not removed_any:
             return
-        if item.filename:
-            partial = self.output_dir / f".{item.filename}.part"
-            partial.unlink(missing_ok=True)
-        self.item_speeds.pop(item.id, None)
-        self._log(f"Removed queue item {item.id}.")
         self._refresh_rows()
         self._save_visible_queue_order()
 
     def _retry_item(self) -> None:
-        item = self._selected_item()
-        if item and item.status in {"failed", "blocked"}:
+        eligible = [item for item in self._selected_items() if item.status in {"failed", "blocked"}]
+        for item in eligible:
             self.store.retry_item(item.id)
             self.item_speeds.pop(item.id, None)
             self._log(f"Retry requested for queue item {item.id}.")
+        if eligible:
             self._refresh_rows()
 
     def _copy_original_link(self, _event: tk.Event | None = None) -> str:
-        item = self._selected_item()
-        if item:
+        items = self._selected_items()
+        if items:
             self.root.clipboard_clear()
-            self.root.clipboard_append(item.url)
-            self.status_text.set("Original link copied")
-            self._log("Original link copied to clipboard.")
+            self.root.clipboard_append("\n".join(item.url for item in items))
+            self.status_text.set("Original links copied" if len(items) > 1 else "Original link copied")
+            self._log("Original link(s) copied to clipboard.")
         return "break"
 
     def _copy_deepbrid_link(self) -> None:
-        item = self._selected_item()
-        if item and item.deepbrid_link:
+        links = [item.deepbrid_link for item in self._selected_items() if item.deepbrid_link]
+        if links:
             self.root.clipboard_clear()
-            self.root.clipboard_append(item.deepbrid_link)
-            self.status_text.set("Deepbrid link copied")
-            self._log("Deepbrid link copied to clipboard.")
+            self.root.clipboard_append("\n".join(links))
+            self.status_text.set("Deepbrid links copied" if len(links) > 1 else "Deepbrid link copied")
+            self._log("Deepbrid link(s) copied to clipboard.")
 
     def _toggle_link_enabled(self) -> None:
-        item = self._selected_item()
-        if item:
+        items = self._selected_items()
+        for item in items:
             self.store.update(item.id, enabled=not item.enabled)
             if item.enabled and item.id in self.active_cancel_events:
                 self.active_cancel_events[item.id].set()
             self._log(f"Queue item {item.id} {'enabled' if not item.enabled else 'disabled'}.")
+        if items:
             self._refresh_rows()
 
     def _toggle_key_visibility(self) -> None:

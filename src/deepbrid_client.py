@@ -229,10 +229,13 @@ class DeepbridClient:
         return True
 
     @staticmethod
-    def fetch_hosts() -> dict[str, str]:
+    def fetch_hosts(api_key: str = "") -> dict[str, str]:
+        headers = {"Accept": "application/json", "User-Agent": APP_USER_AGENT}
+        if api_key.strip():
+            headers["Authorization"] = f"Bearer {api_key.strip()}"
         request = urllib.request.Request(
             f"{API_BASE}/hosts",
-            headers={"Accept": "application/json", "User-Agent": APP_USER_AGENT},
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:

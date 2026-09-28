@@ -52,6 +52,38 @@ class FakeResponse:
         return self.status
 
 
+class FakeSelectionTable:
+    def __init__(self, row_ids: list[str]):
+        self.row_ids = row_ids
+        self.selected: list[str] = []
+
+    def get_children(self, _parent: str = "") -> tuple[str, ...]:
+        return tuple(self.row_ids)
+
+    def identify_region(self, _x: int, _y: int) -> str:
+        return "cell" if 0 <= _y < len(self.row_ids) else "nothing"
+
+    def identify_row(self, y: int) -> str:
+        return self.row_ids[y] if 0 <= y < len(self.row_ids) else ""
+
+    def selection(self) -> tuple[str, ...]:
+        return tuple(self.selected)
+
+    def selection_add(self, *row_ids: str) -> None:
+        for row_id in row_ids:
+            if row_id not in self.selected:
+                self.selected.append(row_id)
+
+    def selection_remove(self, *row_ids: str) -> None:
+        self.selected = [row_id for row_id in self.selected if row_id not in row_ids]
+
+    def selection_set(self, *row_ids: str) -> None:
+        self.selected = list(row_ids)
+
+    def focus(self, _row_id: str) -> None:
+        pass
+
+
 class QueueStoreTests(unittest.TestCase):
     def test_existing_queue_database_is_migrated_without_losing_items(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -218,7 +250,71 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_plain_click_replaces_existing_selection(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.table = FakeSelectionTable(["1", "2", "3"])
+        app._selection_anchor = None
+
+        app._select_table_row(SimpleNamespace(x=0, y=0, state=0))
+        app._select_table_row(SimpleNamespace(x=0, y=2, state=0))
+
+        self.assertEqual(app.table.selection(), ("3",))
+
+    def test_control_click_adds_and_toggles_rows(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.table = FakeSelectionTable(["1", "2", "3"])
+        app._selection_anchor = None
+
+        app._select_table_row(SimpleNamespace(x=0, y=0, state=0))
+        app._select_table_row(SimpleNamespace(x=0, y=2, state=0x0004))
+        self.assertEqual(set(app.table.selection()), {"1", "3"})
+
+        app._select_table_row(SimpleNamespace(x=0, y=0, state=0x0004))
+        self.assertEqual(app.table.selection(), ("3",))
+
+    def test_shift_click_adds_inclusive_range_from_anchor(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.table = FakeSelectionTable(["1", "2", "3", "4"])
+        app._selection_anchor = None
+
+        app._select_table_row(SimpleNamespace(x=0, y=0, state=0))
+        app._select_table_row(SimpleNamespace(x=0, y=3, state=0x0004))
+        app._select_table_row(SimpleNamespace(x=0, y=2, state=0x0001))
+
+        self.assertEqual(set(app.table.selection()), {"3", "4"})
+
+    def test_clicking_blank_table_space_clears_selection(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.table = FakeSelectionTable(["1", "2"])
+        app.table.selected = ["1", "2"]
+        app._selection_anchor = "1"
+
+        app._select_table_row(SimpleNamespace(x=0, y=4, state=0))
+
+        self.assertEqual(app.table.selection(), ())
+        self.assertIsNone(app._selection_anchor)
+
+    def test_bulk_actions_use_display_order(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.table = FakeSelectionTable(["1", "2", "3"])
+        app.table.selected = ["3", "1"]
+        items = [
+            SimpleNamespace(id=3, status="failed"),
+            SimpleNamespace(id=2, status="queued"),
+            SimpleNamespace(id=1, status="blocked"),
+        ]
+        app.store = SimpleNamespace(list_items=lambda: items, retry_item=lambda item_id: retried.append(item_id))
+        app.item_speeds = {}
+        app._log = lambda _message: None
+        app._refresh_rows = lambda: None
+        retried: list[int] = []
+
+        app._retry_item()
+
+        self.assertEqual(retried, [1, 3])
+
     def test_api_key_dashboard_link_opens_browser(self) -> None:
+        self.assertEqual(API_KEY_DASHBOARD_URL, "https://www.deepbrid.com/devices")
         with patch("src.app.webbrowser.open") as open_browser:
             DownloaderApp._open_api_key_dashboard()
         open_browser.assert_called_once_with(API_KEY_DASHBOARD_URL)
@@ -515,6 +611,16 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
             legacy_hosts = DeepbridClient.fetch_hosts()
         self.assertEqual(legacy_hosts["mega.nz"], "up")
         self.assertEqual(legacy_hosts["ddownload.com"], "down (today)")
+
+    def test_fetch_hosts_uses_api_key_for_live_status(self) -> None:
+        response = FakeResponse(200, {}, b'[{"ddownload.com":"up"},{"1fichier.com":"down (today)"}]')
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response) as open_url:
+            hosts = DeepbridClient.fetch_hosts("test-api-key")
+
+        self.assertEqual(hosts, {"ddownload.com": "up", "1fichier.com": "down (today)"})
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/hosts")
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-api-key")
 
     def test_fetch_host_limits_formats_daily_links_and_bandwidth(self) -> None:
         response = FakeResponse(

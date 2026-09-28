@@ -7,9 +7,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from setuptools.config.pyprojecttoml import read_configuration
+
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 ARTIFACTS = ROOT / "release-artifacts"
+VERSION = read_configuration(str(ROOT / "pyproject.toml"))["project"]["version"]
 
 
 def sha256sum(path: Path) -> str:
@@ -26,7 +29,7 @@ def run(command: list[str]) -> None:
 
 def build_windows() -> Path:
     out_dir = DIST / "windows"
-    app = ARTIFACTS / "DeepbridDownloader-Windows.exe"
+    app = ARTIFACTS / f"DeepbridDownloader-Windows-{VERSION}.exe"
     if app.exists():
         app.unlink()
     run([
@@ -46,14 +49,14 @@ def build_windows() -> Path:
     exe_path = out_dir / "DeepbridDownloader.exe"
     if not exe_path.exists():
         raise FileNotFoundError(f"Expected built exe at {exe_path}")
-    final_path = ARTIFACTS / "DeepbridDownloader-Windows.exe"
+    final_path = ARTIFACTS / f"DeepbridDownloader-Windows-{VERSION}.exe"
     shutil.copy2(exe_path, final_path)
     return final_path
 
 
 def build_linux() -> Path:
     out_dir = DIST / "linux"
-    app = ARTIFACTS / "DeepbridDownloader-Linux"
+    app = ARTIFACTS / f"DeepbridDownloader-Linux-{VERSION}"
     if app.exists():
         app.unlink()
     run([
@@ -70,14 +73,14 @@ def build_linux() -> Path:
     bin_path = out_dir / "DeepbridDownloader"
     if not bin_path.exists():
         raise FileNotFoundError(f"Expected built binary at {bin_path}")
-    final_path = ARTIFACTS / "DeepbridDownloader-Linux"
+    final_path = ARTIFACTS / f"DeepbridDownloader-Linux-{VERSION}"
     shutil.copy2(bin_path, final_path)
     return final_path
 
 
 def build_macos() -> Path:
     out_dir = DIST / "macos"
-    app = ARTIFACTS / "DeepbridDownloader-macOS"
+    app = ARTIFACTS / f"DeepbridDownloader-macOS-{VERSION}"
     if app.exists():
         app.unlink()
     run([
@@ -94,7 +97,7 @@ def build_macos() -> Path:
     bin_path = out_dir / "DeepbridDownloader"
     if not bin_path.exists():
         raise FileNotFoundError(f"Expected built binary at {bin_path}")
-    final_path = ARTIFACTS / "DeepbridDownloader-macOS"
+    final_path = ARTIFACTS / f"DeepbridDownloader-macOS-{VERSION}"
     shutil.copy2(bin_path, final_path)
     return final_path
 
