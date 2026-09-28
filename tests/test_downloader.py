@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
+from src.app_info import GITHUB_LATEST_RELEASE_URL, fetch_latest_release, is_newer_version
 from src.app import (
     API_KEY_DASHBOARD_URL,
     DownloaderApp,
@@ -251,6 +252,31 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_release_version_comparison(self) -> None:
+        self.assertTrue(is_newer_version("v0.2.6", "0.2.5"))
+        self.assertFalse(is_newer_version("v0.2.5", "0.2.5"))
+        self.assertFalse(is_newer_version("v0.2.4", "0.2.5"))
+        self.assertFalse(is_newer_version("latest", "0.2.5"))
+
+    def test_fetch_latest_release_returns_tag_and_link(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            b'{"tag_name":"v0.2.6",'
+            b'"html_url":"https://github.com/developper001/Deepbrid-Downloader/releases/tag/v0.2.6"}',
+        )
+        with patch("src.app_info.urllib.request.urlopen", return_value=response) as open_url:
+            release = fetch_latest_release()
+
+        self.assertEqual(
+            release,
+            (
+                "v0.2.6",
+                "https://github.com/developper001/Deepbrid-Downloader/releases/tag/v0.2.6",
+            ),
+        )
+        self.assertEqual(open_url.call_args.args[0].full_url, GITHUB_LATEST_RELEASE_URL)
+
     def test_host_refresh_error_preserves_http_401_for_popup(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
         events = []

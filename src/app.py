@@ -18,6 +18,13 @@ from tkinter import filedialog, messagebox, ttk
 
 from platformdirs import user_downloads_dir
 
+from .app_info import (
+    GITHUB_REPOSITORY_URL,
+    UpdateCheckError,
+    __version__ as APP_VERSION,
+    fetch_latest_release,
+    is_newer_version,
+)
 from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
 from .queue_store import QueueStore
@@ -874,7 +881,66 @@ class DownloaderApp:
         canvas.configure(scrollregion=canvas.bbox("all"))
         canvas.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        ttk.Button(container, text="Close", command=popup.destroy).grid(row=2, column=0, columnspan=2, pady=(8, 0), sticky="e")
+        actions = ttk.Frame(container)
+        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(
+            actions,
+            text="GitHub repository",
+            command=lambda: webbrowser.open(GITHUB_REPOSITORY_URL),
+        ).pack(side="left")
+        update_status = tk.StringVar(master=popup)
+        ttk.Label(actions, textvariable=update_status).pack(side="left", padx=(8, 0))
+        release_button = ttk.Button(actions, text="Open release")
+        check_button = ttk.Button(
+            actions,
+            text="Check for updates",
+            command=lambda: self._check_for_updates(
+                popup,
+                update_status,
+                check_button,
+                release_button,
+            ),
+        )
+        check_button.pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Close", command=popup.destroy).pack(side="right")
+
+    def _check_for_updates(
+        self,
+        popup: tk.Toplevel,
+        update_status: tk.StringVar,
+        check_button: ttk.Button,
+        release_button: ttk.Button,
+    ) -> None:
+        check_button.configure(state="disabled")
+        update_status.set("Checking for updates...")
+        threading.Thread(
+            target=self._load_update_status,
+            args=(popup, update_status, check_button, release_button),
+            daemon=True,
+        ).start()
+
+    def _load_update_status(
+        self,
+        popup: tk.Toplevel,
+        update_status: tk.StringVar,
+        check_button: ttk.Button,
+        release_button: ttk.Button,
+    ) -> None:
+        try:
+            latest_tag, release_url = fetch_latest_release()
+            if is_newer_version(latest_tag):
+                message = f"Version {latest_tag} is available."
+            else:
+                message = f"You are using the latest version ({APP_VERSION})."
+                release_url = ""
+                latest_tag = ""
+        except UpdateCheckError as error:
+            message = f"Update check failed: {error}"
+            latest_tag = ""
+            release_url = ""
+        self.events.put(
+            ("update_check", popup, update_status, check_button, release_button, message, latest_tag, release_url)
+        )
 
     def _build_columns_menu(self) -> None:
         self.column_visibility_vars: dict[str, tk.BooleanVar] = {}
@@ -1572,7 +1638,25 @@ class DownloaderApp:
                 event = self.events.get_nowait()
             except queue.Empty:
                 break
-            if event[0] == "refresh":
+            if event[0] == "update_check":
+                _, popup, update_status, check_button, release_button, message, latest_tag, release_url = event
+                try:
+                    if not popup.winfo_exists():
+                        continue
+                    check_button.configure(state="normal")
+                    update_status.set(message)
+                    if release_url:
+                        release_button.configure(
+                            text=f"Open release {latest_tag}",
+                            command=lambda target=release_url: webbrowser.open(target),
+                        )
+                        if not release_button.winfo_manager():
+                            release_button.pack(side="left", padx=(8, 0))
+                    else:
+                        release_button.pack_forget()
+                except tk.TclError:
+                    continue
+            elif event[0] == "refresh":
                 self._refresh_rows()
             elif event[0] == "hosts":
                 _, hosts, limits, limits_error, limits_error_status = event

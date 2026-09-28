@@ -39,22 +39,29 @@ python launcher.py
 - Queue and manage many Deepbrid-supported links from a single interface
 - Keep API keys encrypted in SQLite instead of storing them in plain text
 - Resume interrupted transfers using hidden `.part` files and range-aware downloads
-- Show host availability and per-host quota details from Deepbrid endpoints
+- Open a searchable, sortable Host Status window with live availability and daily quota details
+- Show the cached host list immediately, then refresh it in the background; open the API-key page when Deepbrid returns HTTP 401
+- Select multiple queue rows with Ctrl-click or a Shift-click range, then apply context-menu actions in display order
 - Retry blocked or failed links safely, with a pause-and-resume workflow
 - Toggle dark mode, show or hide the console, and configure visible columns
 - Open the Deepbrid dashboard directly from missing or invalid API-key prompts
+- Open the GitHub repository and check for newer releases from the About window
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
 - Route standard output, errors, and uncaught exceptions to the in-app console
 - Build the Windows executable with the Deepbrid icon and no separate console window
-- Open the full project README directly from the app via the new Readme button
+- Open the full project README directly from the About window
 
 ### Main dashboard
 
 ![Deepbrid Downloader dashboard](src/img/DeepbridDownloader.png)
 
-### Host refresh and quota overview
+### Host status and quota overview
 
 ![Refresh hosts](src/img/RefreshHosts.png)
+
+### About and release updates
+
+![About window with GitHub link and update check](src/img/AboutAndUpdates.png)
 
 ### Column visibility and queue management
 
@@ -91,10 +98,11 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - The app filters for hosts supported by Deepbrid and ignores unsupported ones.
 - Queue priority follows the displayed row order and updates when links are added, removed, or sorted.
 - Rows show status, downloaded/total bytes, remaining bytes, and ETA.
-- Right-click a row to copy the original URL, copy an available Deepbrid URL, retry, disable, force a rebuild, or remove it.
-- A host refresh reads the current supported-host list and daily quota information when available.
+- Click a row to select it, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
+- The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
 - The app keeps active partial files and automatically resumes queued work after startup.
-- If the API key is missing or rejected, follow the dashboard link in the prompt to retrieve or replace it.
+- If the API key is missing or rejected, follow the Deepbrid link in the prompt or Host Status window to retrieve or replace it.
+- Use the About window to open the GitHub repository and check whether a newer release is available.
 
 ## Retry and resume behavior
 
@@ -129,7 +137,7 @@ For a public repo, the minimal production path is to keep the source public and 
 
 Recommended minimal pipeline:
 - publish the source repo publicly
-- tag a release like `v0.2.0`
+- tag a release like `v0.2.6`
 - let GitHub Actions build the app for Windows, macOS, and Linux
 - attach the binaries and the generated checksum file to the release
 
@@ -146,11 +154,11 @@ python -m PyInstaller --onefile --windowed launcher.py
 Create the git tag and push it:
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.6
+git push origin v0.2.6
 ```
 
-This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces versioned platform binaries (for example, `DeepbridDownloader-Windows-0.2.5.exe`) and a `sha256sums.txt` file.
+This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces versioned platform binaries (for example, `DeepbridDownloader-Windows-0.2.6.exe`) and a `sha256sums.txt` file.
 The Windows build embeds the Deepbrid icon and runs without opening a separate terminal console; output and uncaught exceptions are routed to the app's in-app console.
 
 Notes:
