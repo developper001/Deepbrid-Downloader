@@ -345,8 +345,12 @@ class DownloaderApp:
         self.api_key_entry.grid(row=0, column=1, sticky="ew")
         self.key_visibility_button = ttk.Button(key_row, text="Show", command=self._toggle_key_visibility)
         self.key_visibility_button.grid(row=0, column=2, padx=(8, 0))
-        self.theme_button = ttk.Button(key_row, text="Dark mode", command=self._toggle_theme)
-        self.theme_button.grid(row=0, column=3, padx=(8, 0))
+        self.api_key_page_button = ttk.Button(
+            key_row,
+            text="Get API key",
+            command=self._open_api_key_dashboard,
+        )
+        self.api_key_page_button.grid(row=0, column=3, padx=(8, 0))
 
         folder_row = ttk.Frame(main)
         folder_row.grid(row=1, column=1, sticky="ew", pady=(0, 8))
@@ -358,6 +362,8 @@ class DownloaderApp:
         ttk.Button(folder_row, text="Browse...", command=self._choose_output_folder).grid(
             row=0, column=2, padx=(8, 0)
         )
+        self.theme_button = ttk.Button(folder_row, text="Dark mode", command=self._toggle_theme)
+        self.theme_button.grid(row=0, column=3, padx=(8, 0))
 
         add_row = ttk.Frame(main)
         add_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10))
