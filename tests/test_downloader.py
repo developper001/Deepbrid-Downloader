@@ -251,6 +251,69 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_host_refresh_error_preserves_http_401_for_popup(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        events = []
+        app.events = SimpleNamespace(put=events.append)
+
+        with patch(
+            "src.app.DeepbridClient.fetch_hosts",
+            side_effect=DeepbridError("API key rejected", status_code=401),
+        ):
+            app._load_hosts("invalid-test-key")
+
+        self.assertEqual(events, [("hosts_error", "API key rejected", 401)])
+
+    def test_host_limits_error_preserves_http_401_for_popup(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        events = []
+        app.events = SimpleNamespace(put=events.append)
+
+        with (
+            patch("src.app.DeepbridClient.fetch_hosts", return_value={"example.com": "up"}),
+            patch(
+                "src.app.DeepbridClient.fetch_host_limits",
+                side_effect=DeepbridError("API key rejected", status_code=401),
+            ),
+        ):
+            app._load_hosts("invalid-test-key")
+
+        self.assertEqual(
+            events,
+            [("hosts", {"example.com": "up"}, {}, "API key rejected", 401)],
+        )
+
+    def test_refresh_hosts_opens_cached_popup_before_scheduling_fetch(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.hosts = {"cached.example": "up"}
+        app.host_limits = {"cached.example": "5 GB remaining"}
+        app.api_key = SimpleNamespace(get=lambda: "test-key")
+        app.status_text = SimpleNamespace(set=lambda _value: None)
+        app.refresh_hosts_button = SimpleNamespace(
+            instate=lambda _states: False,
+            configure=lambda **_kwargs: None,
+        )
+        sequence: list[object] = []
+        pending_callbacks = []
+        app._show_hosts_popup = lambda hosts, limits, error: sequence.append(
+            ("popup", hosts, limits, error)
+        )
+        app.root = SimpleNamespace(
+            after_idle=lambda callback: (sequence.append("scheduled"), pending_callbacks.append(callback))
+        )
+
+        with patch("src.app.threading.Thread") as thread_class:
+            app._refresh_hosts(show_popup=True)
+
+            self.assertEqual(sequence[0], ("popup", app.hosts, app.host_limits, None))
+            self.assertEqual(sequence[1], "scheduled")
+            thread_class.assert_not_called()
+
+            pending_callbacks[0]()
+
+        thread_class.assert_called_once_with(target=app._load_hosts, args=("test-key",), daemon=True)
+        thread_class.return_value.start.assert_called_once_with()
+
     def test_host_rows_filter_and_sort_by_each_column(self) -> None:
         rows = [
             ("zeta.example", "Unavailable", "9 GB remaining"),
@@ -643,6 +706,19 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
         self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/hosts")
         self.assertEqual(request.get_header("Authorization"), "Bearer test-api-key")
 
+    def test_fetch_hosts_preserves_http_401_status(self) -> None:
+        error = urllib.error.HTTPError(
+            "https://www.deepbrid.com/api/v1/hosts",
+            401,
+            "Unauthorized",
+            {},
+            BytesIO(b"API key rejected"),
+        )
+        with patch("src.deepbrid_client.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(DeepbridError) as raised:
+                DeepbridClient.fetch_hosts("invalid-test-key")
+        self.assertEqual(raised.exception.status_code, 401)
+
     def test_fetch_host_limits_formats_daily_links_and_bandwidth(self) -> None:
         response = FakeResponse(
             200,
@@ -656,6 +732,13 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
         self.assertEqual(limits["ddownload.com"], "2 / 5 links")
         self.assertEqual(limits["mega.nz"], "5.00 GB remaining")
         self.assertEqual(open_url.call_args.args[0].full_url, "https://www.deepbrid.com/api/v1/user/limits")
+
+    def test_fetch_host_limits_preserves_json_401_status(self) -> None:
+        response = FakeResponse(200, {}, b'{"error":401,"message":"Authentication required."}')
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+            with self.assertRaisesRegex(DeepbridError, "Authentication required") as raised:
+                DeepbridClient.fetch_host_limits("invalid-test-key")
+        self.assertEqual(raised.exception.status_code, 401)
 
     def test_fetch_host_limits_accepts_live_hoster_field(self) -> None:
         response = FakeResponse(

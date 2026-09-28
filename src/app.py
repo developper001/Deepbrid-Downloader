@@ -277,6 +277,9 @@ class DownloaderApp:
         ).expanduser()
         self.output_dir_text = tk.StringVar(value=str(self.output_dir))
         self.hosts: dict[str, str] = {}
+        self.host_limits: dict[str, str] = {}
+        self.hosts_popup: tk.Toplevel | None = None
+        self._hosts_popup_update = None
         saved_hosts = self.secure_store.get_setting("hosts")
         if saved_hosts:
             try:
@@ -373,7 +376,7 @@ class DownloaderApp:
         self.stop_button.pack(side="left", padx=(8, 0))
         self.refresh_hosts_button = ttk.Button(
             controls,
-            text="Refresh hosts",
+            text="Host Status",
             command=lambda: self._refresh_hosts(show_popup=True),
         )
         self.refresh_hosts_button.pack(side="left", padx=(8, 0))
@@ -542,31 +545,47 @@ class DownloaderApp:
     def _refresh_hosts(self, show_popup: bool = False) -> None:
         if self.refresh_hosts_button.instate(["disabled"]):
             return
+        if show_popup:
+            self._show_hosts_popup(self.hosts, self.host_limits, None)
         self.refresh_hosts_button.configure(state="disabled")
         self.status_text.set("Checking host availability...")
         api_key = self.api_key.get().strip()
-        threading.Thread(
-            target=self._load_hosts,
-            args=(show_popup, api_key),
-            daemon=True,
-        ).start()
+        self.root.after_idle(
+            lambda: threading.Thread(
+                target=self._load_hosts,
+                args=(api_key,),
+                daemon=True,
+            ).start()
+        )
 
-    def _load_hosts(self, show_popup: bool, api_key: str) -> None:
+    def _load_hosts(self, api_key: str) -> None:
         try:
             hosts = DeepbridClient.fetch_hosts(api_key)
         except DeepbridError as error:
-            self.events.put(("hosts_error", str(error)))
+            self.events.put(("hosts_error", str(error), error.status_code))
         else:
             limits = {}
             limits_error = None
+            limits_error_status = None
             if api_key:
                 try:
                     limits = DeepbridClient.fetch_host_limits(api_key)
                 except DeepbridError as error:
                     limits_error = str(error)
-            self.events.put(("hosts", hosts, limits, limits_error, show_popup))
+                    limits_error_status = error.status_code
+            self.events.put(("hosts", hosts, limits, limits_error, limits_error_status))
 
     def _show_hosts_popup(self, hosts: dict[str, str], limits: dict[str, str], limits_error: str | None) -> tk.Toplevel:
+        if self.hosts_popup is not None:
+            try:
+                if self.hosts_popup.winfo_exists():
+                    if self._hosts_popup_update is not None:
+                        self._hosts_popup_update(hosts, limits, limits_error)
+                    self.hosts_popup.deiconify()
+                    self.hosts_popup.lift()
+                    return self.hosts_popup
+            except tk.TclError:
+                pass
         popup = tk.Toplevel(self.root)
         popup.title("Deepbrid supported hosts")
         popup.geometry("620x500")
@@ -578,10 +597,16 @@ class DownloaderApp:
             "Daily remaining quota is shown when available."
         )
         ttk.Label(frame, text=description, wraplength=580).pack(anchor="w", pady=(0, 8))
+        limits_message = ttk.Label(frame, wraplength=580)
+        refresh_message = ttk.Label(frame, wraplength=580)
+        api_key_button = ttk.Button(
+            frame,
+            text="Open Deepbrid API key page",
+            command=self._open_api_key_dashboard,
+        )
         if limits_error:
-            ttk.Label(frame, text=f"Daily limits unavailable: {limits_error}", wraplength=580).pack(
-                anchor="w", pady=(0, 8)
-            )
+            limits_message.configure(text=f"Daily limits unavailable: {limits_error}")
+            limits_message.pack(anchor="w", pady=(0, 8))
         search_row = ttk.Frame(frame)
         search_row.pack(fill="x", pady=(0, 8))
         ttk.Label(search_row, text="Search hosts").pack(side="left", padx=(0, 8))
@@ -597,6 +622,7 @@ class DownloaderApp:
             columns=("host", "availability", "limit"),
             show="headings",
         )
+        host_rows: list[tuple[str, str, str]] = []
         sort_state = {"column": "host", "reverse": False}
 
         def render_rows() -> None:
@@ -632,28 +658,70 @@ class DownloaderApp:
         scrollbar.grid(row=0, column=1, sticky="ns")
         table.configure(yscrollcommand=scrollbar.set)
 
-        host_rows = []
-        for domain, status in hosts.items():
-            normalized_status = status.strip().split("(", 1)[0].strip().lower()
-            if normalized_status == "down":
-                availability = "Unavailable"
-            elif normalized_status == "up":
-                availability = "Available"
-            elif normalized_status == "supported":
-                availability = "Supported; live status unavailable"
+        def update_hosts(
+            updated_hosts: dict[str, str],
+            updated_limits: dict[str, str],
+            updated_limits_error: str | None,
+            refresh_error: str | None = None,
+            status_code: int | None = None,
+        ) -> None:
+            host_rows.clear()
+            for domain, status in updated_hosts.items():
+                normalized_status = status.strip().split("(", 1)[0].strip().lower()
+                if normalized_status == "down":
+                    availability = "Unavailable"
+                elif normalized_status == "up":
+                    availability = "Available"
+                elif normalized_status == "supported":
+                    availability = "Supported; live status unavailable"
+                else:
+                    availability = status.strip() or "Status unavailable"
+                limit = updated_limits.get(domain.lower())
+                if limit is None:
+                    host_slug = domain.lower().split(".", 1)[0]
+                    limit = next(
+                        (
+                            value
+                            for key, value in updated_limits.items()
+                            if key.lower().split(".", 1)[0] == host_slug
+                        ),
+                        "—",
+                    )
+                host_rows.append((domain, availability, limit))
+            if updated_limits_error:
+                limits_message.configure(text=f"Daily limits unavailable: {updated_limits_error}")
+                if not limits_message.winfo_manager():
+                    limits_message.pack(anchor="w", pady=(0, 8))
             else:
-                availability = status.strip() or "Status unavailable"
-            limit = limits.get(domain.lower())
-            if limit is None:
-                host_slug = domain.lower().split(".", 1)[0]
-                limit = next(
-                    (value for key, value in limits.items() if key.lower().split(".", 1)[0] == host_slug),
-                    "—",
-                )
-            host_rows.append((domain, availability, limit))
+                limits_message.pack_forget()
+            if refresh_error:
+                refresh_message.configure(text=f"Host refresh failed: {refresh_error}")
+                if not refresh_message.winfo_manager():
+                    refresh_message.pack(anchor="w", pady=(0, 8))
+            else:
+                refresh_message.pack_forget()
+            if status_code == 401:
+                if not api_key_button.winfo_manager():
+                    api_key_button.pack(anchor="w", pady=(0, 8))
+            else:
+                api_key_button.pack_forget()
+            render_rows()
+
         search_var.trace_add("write", lambda *_args: render_rows())
-        render_rows()
+        self.hosts_popup = popup
+        self._hosts_popup_update = update_hosts
+        popup.bind(
+            "<Destroy>",
+            lambda event, window=popup: self._hosts_popup_destroyed(event, window),
+            add="+",
+        )
+        update_hosts(hosts, limits, limits_error)
         return popup
+
+    def _hosts_popup_destroyed(self, event: tk.Event, popup: tk.Toplevel) -> None:
+        if event.widget == popup and self.hosts_popup is popup:
+            self.hosts_popup = None
+            self._hosts_popup_update = None
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
         for item in self.store.list_items():
@@ -1507,8 +1575,9 @@ class DownloaderApp:
             if event[0] == "refresh":
                 self._refresh_rows()
             elif event[0] == "hosts":
-                _, hosts, limits, limits_error, show_popup = event
+                _, hosts, limits, limits_error, limits_error_status = event
                 self.hosts = hosts
+                self.host_limits = limits
                 self.secure_store.set_setting("hosts", json.dumps(self.hosts))
                 self._apply_host_statuses(self.hosts)
                 self.refresh_hosts_button.configure(state="normal")
@@ -1516,16 +1585,30 @@ class DownloaderApp:
                 self.status_text.set(f"Loaded {len(self.hosts)} supported hosts")
                 self._log(f"Loaded availability for {len(self.hosts)} supported hosts.")
                 self._refresh_rows()
-                if show_popup:
-                    self._show_hosts_popup(self.hosts, limits, limits_error)
+                if self._hosts_popup_update is not None:
+                    self._hosts_popup_update(
+                        self.hosts,
+                        self.host_limits,
+                        limits_error,
+                        status_code=limits_error_status,
+                    )
                 if self.store.recovered_work and self.api_key.get().strip():
                     self.root.after(300, self._start)
             elif event[0] == "hosts_error":
+                _, error_message, status_code = event
                 self.refresh_hosts_button.configure(state="normal")
-                self.status_text.set(f"Host refresh failed: {event[1][:90]}")
-                self._log(event[1])
+                self.status_text.set(f"Host refresh failed: {error_message[:90]}")
+                self._log(error_message)
                 self.add_links_button.configure(state="normal" if self.hosts else "disabled")
                 self._refresh_rows()
+                if self._hosts_popup_update is not None:
+                    self._hosts_popup_update(
+                        self.hosts,
+                        self.host_limits,
+                        None,
+                        refresh_error=error_message,
+                        status_code=status_code,
+                    )
             elif event[0] in {"log", "exception"}:
                 _, timestamp, message = event
                 if event[0] == "exception" and not self.console_visible:

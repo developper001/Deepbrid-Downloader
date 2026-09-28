@@ -245,7 +245,8 @@ class DeepbridClient:
             body = error.read().decode("utf-8", errors="replace")
             error.close()
             raise DeepbridError(
-                f"Host API returned HTTP {error.code}; response body: {body[:600]}"
+                f"Host API returned HTTP {error.code}; response body: {body[:600]}",
+                status_code=error.code,
             ) from error
         except (urllib.error.URLError, TimeoutError) as error:
             raise DeepbridError(f"Could not load Deepbrid host status: {error}") from error
@@ -300,7 +301,12 @@ class DeepbridClient:
         if not isinstance(payload, dict):
             raise DeepbridError("Deepbrid returned an unexpected host-limits response.")
         if payload.get("error", 0) not in (0, "0"):
-            raise DeepbridError(str(payload.get("message", "Could not load daily host limits.")))
+            error_code = payload.get("error")
+            status_code = int(error_code) if str(error_code).isdigit() else None
+            raise DeepbridError(
+                str(payload.get("message", "Could not load daily host limits.")),
+                status_code=status_code,
+            )
 
         limits: dict[str, str] = {}
         for entry in payload.get("hosters", []):
