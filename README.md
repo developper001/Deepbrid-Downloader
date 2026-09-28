@@ -1,5 +1,10 @@
 # Deepbrid Downloader
 
+[![CI](https://github.com/developper001/Deepbrid-Downloader/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/developper001/Deepbrid-Downloader/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/developper001/Deepbrid-Downloader?display_name=tag)](https://github.com/developper001/Deepbrid-Downloader/releases/latest)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/github/license/developper001/Deepbrid-Downloader)](https://github.com/developper001/Deepbrid-Downloader/blob/main/LICENSE)
+
 A small cross-platform desktop downloader built with Python and Tkinter for Deepbrid-hosted files. It queues links, keeps progress in SQLite, resumes interrupted transfers when the server supports HTTP Range requests, and exposes a compact, easy-to-monitor interface for daily downloads.
 
 ## Supported platforms
@@ -90,7 +95,7 @@ python -m pip install -r requirements.txt
 python -m src.app
 ```
 
-On Linux, Tkinter may need to be installed through the operating system package manager. The API key, original URLs, generated Deepbrid URLs, and the random AES-GCM encryption key are stored in `src/deepbrid_downloader.sqlite3`, so the database works across operating systems without a system keychain. Existing `.env` keys are migrated and the file removed only after the encrypted value is verified.
+On Linux, Tkinter may need to be installed through the operating system package manager. The queue, API key, generated Deepbrid URLs, and encryption key are stored in the per-user application-data directory provided by `platformdirs`; they persist independently of the executable's bundle location. Existing source-tree databases, legacy queue databases, and `.env` keys are migrated when possible.
 
 ## How it works
 
@@ -137,7 +142,7 @@ For a public repo, the minimal production path is to keep the source public and 
 
 Recommended minimal pipeline:
 - publish the source repo publicly
-- tag a release like `v0.2.7`
+- tag a release using the version in `src/app_info.py`, in the form `vX.Y.Z`
 - let GitHub Actions build the app for Windows, macOS, and Linux
 - attach the binaries and the generated checksum file to the release
 
@@ -154,11 +159,12 @@ python -m PyInstaller --onefile --windowed launcher.py
 Create the git tag and push it:
 
 ```sh
-git tag v0.2.7
-git push origin v0.2.7
+RELEASE_VERSION=X.Y.Z # Replace with the version from src/app_info.py
+git tag "v${RELEASE_VERSION}"
+git push origin "v${RELEASE_VERSION}"
 ```
 
-This triggers the GitHub release workflow in `.github/workflows/release.yml`, which produces versioned platform binaries (for example, `DeepbridDownloader-Windows-0.2.7.exe`) and a `sha256sums.txt` file.
+The GitHub release workflow verifies that the tag matches `src/app_info.py`, then produces versioned platform binaries (for example, `DeepbridDownloader-Windows-X.Y.Z.exe`) and a `sha256sums.txt` file.
 The Windows build embeds the Deepbrid icon and runs without opening a separate terminal console; output and uncaught exceptions are routed to the app's in-app console.
 
 Notes:

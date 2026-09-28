@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from platformdirs import user_downloads_dir
+from platformdirs import user_data_dir, user_downloads_dir
 
 from .app_info import (
     GITHUB_REPOSITORY_URL,
@@ -36,19 +36,23 @@ def resolve_app_path(*relative_parts: str) -> Path:
     return base_dir.joinpath(*relative_parts)
 
 
-PROJECT_ROOT = resolve_app_path()
-OUTPUT_DIR = PROJECT_ROOT / "download"
-DATABASE_PATH = resolve_app_path("src", "deepbrid_downloader.sqlite3")
-LEGACY_DATABASE_PATH = OUTPUT_DIR / "queue.sqlite3"
-LEGACY_STORAGE_PATH = OUTPUT_DIR
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+RESOURCE_ROOT = resolve_app_path()
+PROJECT_ROOT = Path(sys.executable).resolve().parent if IS_FROZEN else Path(__file__).resolve().parent.parent
+APP_DATA_DIR = Path(user_data_dir("Deepbrid Downloader", "Deepbrid")).expanduser()
+OUTPUT_DIR = APP_DATA_DIR / "download"
+DATABASE_PATH = APP_DATA_DIR / "queue.sqlite3"
+LEGACY_DATABASE_PATH = RESOURCE_ROOT / "src" / "deepbrid_downloader.sqlite3"
+LEGACY_QUEUE_DATABASE_PATH = PROJECT_ROOT / "download" / "queue.sqlite3"
+LEGACY_STORAGE_PATH = PROJECT_ROOT / "download"
 LEGACY_ENV_PATH = PROJECT_ROOT / ".env"
 INPUT_PATH = PROJECT_ROOT / "input_links.txt"
-README_PATH = resolve_app_path("README.md")
-LOG_PATH = OUTPUT_DIR / "logs.txt"
-ICON_PATH = resolve_app_path("src", "deepbrid-logo.png")
-ICON_ICO_PATH = resolve_app_path("src", "deepbrid-favicon.ico")
-WORDMARK_PATH = resolve_app_path("src", "deepbrid-wordmark.png")
-WORDMARK_LIGHT_PATH = resolve_app_path("src", "deepbrid-wordmark-light.png")
+README_PATH = RESOURCE_ROOT / "README.md"
+LOG_PATH = LEGACY_STORAGE_PATH / "logs.txt"
+ICON_PATH = RESOURCE_ROOT / "src" / "deepbrid-logo.png"
+ICON_ICO_PATH = RESOURCE_ROOT / "src" / "deepbrid-favicon.ico"
+WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
+WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
 DEFAULT_COLUMNS = ("filename", "host", "status", "size", "remaining", "eta")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
@@ -66,9 +70,19 @@ def _filter_and_sort_host_rows(
     return sorted(matching_rows, key=lambda row: row[column_index].casefold(), reverse=reverse)
 
 
+def _parse_linked_image_badge(markdown_line: str) -> tuple[str, str] | None:
+    match = re.fullmatch(r"\[!\[([^\]]+)\]\(([^)]+)\)\]\(([^)]+)\)", markdown_line.strip())
+    if not match:
+        return None
+    return match.group(1), match.group(3)
+
+
 def default_download_directory() -> Path:
     downloads = Path(user_downloads_dir()).expanduser()
-    return downloads if downloads.is_dir() else OUTPUT_DIR
+    if downloads.is_dir():
+        return downloads
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return OUTPUT_DIR
 
 
 class _ConsoleStream:
@@ -179,7 +193,7 @@ def redact_legacy_log_file() -> bool:
         return False
 
 
-def migrate_legacy_database(source: Path = LEGACY_DATABASE_PATH, target: Path = DATABASE_PATH) -> None:
+def migrate_legacy_database(source: Path, target: Path) -> None:
     if target.exists() or not source.exists():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -197,6 +211,18 @@ def migrate_legacy_database(source: Path = LEGACY_DATABASE_PATH, target: Path = 
         raise
     target_connection.close()
     source_connection.close()
+
+
+def migrate_legacy_databases(
+    target: Path = DATABASE_PATH,
+    sources: tuple[Path, ...] = (LEGACY_DATABASE_PATH, LEGACY_QUEUE_DATABASE_PATH),
+) -> None:
+    if target.exists():
+        return
+    for source in sources:
+        migrate_legacy_database(source, target)
+        if target.exists():
+            return
 
 
 def remove_legacy_storage(output_directory: Path, selected_output: Path) -> bool:
@@ -232,7 +258,7 @@ def remove_legacy_env() -> None:
 class DownloaderApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        migrate_legacy_database()
+        migrate_legacy_databases()
         self.legacy_logs_redacted = redact_legacy_log_file()
         self.secure_store = SecureStore(DATABASE_PATH)
         self.store = QueueStore(DATABASE_PATH, self.secure_store)
@@ -309,7 +335,7 @@ class DownloaderApp:
         self._refresh_rows()
         self._save_visible_queue_order()
         if remove_legacy_storage(LEGACY_STORAGE_PATH, self.output_dir):
-            self._log("Moved the queue database into src and removed the old download folder.")
+            self._log("Migrated legacy queue data and removed the old download folder.")
         elif LEGACY_STORAGE_PATH.exists():
             self._log("The old download folder contains user files or is selected as the output; it was retained.")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
@@ -805,6 +831,15 @@ class DownloaderApp:
                 paths.append(match.group(1))
         return paths
 
+    @staticmethod
+    def _open_readme_link(target: str) -> None:
+        if target.startswith(("http://", "https://")):
+            webbrowser.open(target)
+            return
+        local_path = (README_PATH.parent / target).resolve()
+        if local_path.is_file():
+            webbrowser.open(local_path.as_uri())
+
     def _show_readme(self) -> None:
         popup = tk.Toplevel(self.root)
         popup.title("Deepbrid Downloader README")
@@ -842,11 +877,34 @@ class DownloaderApp:
         popup.bind("<Shift-MouseWheel>", _on_mouse_wheel, add="+")
         frame = ttk.Frame(canvas)
         canvas.create_window((0, 0), window=frame, anchor="nw")
+        badge_row: ttk.Frame | None = None
 
         def render_line(raw_line: str) -> None:
+            nonlocal badge_row
             stripped = raw_line.strip()
             if not stripped:
+                badge_row = None
                 return
+
+            badge = _parse_linked_image_badge(stripped)
+            if badge:
+                if badge_row is None:
+                    badge_row = ttk.Frame(frame)
+                    badge_row.pack(anchor="w", pady=(2, 8))
+                label = ttk.Label(
+                    badge_row,
+                    text=badge[0],
+                    cursor="hand2",
+                    padding=(6, 3),
+                    relief="solid",
+                )
+                label.pack(side="left", padx=(0, 6))
+                label.bind(
+                    "<Button-1>",
+                    lambda _event, target=badge[1]: self._open_readme_link(target),
+                )
+                return
+            badge_row = None
 
             image_match = re.match(r"!\[[^\]]*\]\(([^)]+)\)", stripped)
             if image_match:

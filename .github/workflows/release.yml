@@ -30,15 +30,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Read release version
-        id: version
-        shell: bash
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Verify tag matches app version
+        id: version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION="$(python -c 'from src.app_info import __version__; print(__version__)')"
+          if [ "$TAG_VERSION" != "$APP_VERSION" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match app version $APP_VERSION" >&2
+            exit 1
+          fi
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: |
@@ -67,7 +74,11 @@ jobs:
             --workpath build \
             --specpath build \
             --add-data "$PROJECT_ROOT/README.md${DATA_SEP}." \
-            --add-data "$PROJECT_ROOT/src${DATA_SEP}src" \
+            --add-data "$PROJECT_ROOT/src/deepbrid-logo.png${DATA_SEP}src" \
+            --add-data "$PROJECT_ROOT/src/deepbrid-favicon.ico${DATA_SEP}src" \
+            --add-data "$PROJECT_ROOT/src/deepbrid-wordmark.png${DATA_SEP}src" \
+            --add-data "$PROJECT_ROOT/src/deepbrid-wordmark-light.png${DATA_SEP}src" \
+            --add-data "$PROJECT_ROOT/src/img${DATA_SEP}src/img" \
             launcher.py
 
       - name: Rename asset

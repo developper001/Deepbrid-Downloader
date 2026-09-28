@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__version__ = "0.2.7"
+__version__ = "0.2.8"
 GITHUB_REPOSITORY_URL = "https://github.com/developper001/Deepbrid-Downloader"
 GITHUB_LATEST_RELEASE_URL = (
     "https://api.github.com/repos/developper001/Deepbrid-Downloader/releases/latest"

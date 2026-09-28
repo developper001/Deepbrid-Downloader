@@ -15,14 +15,20 @@ from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
 from src.app_info import GITHUB_LATEST_RELEASE_URL, fetch_latest_release, is_newer_version
 from src.app import (
     API_KEY_DASHBOARD_URL,
+    APP_DATA_DIR,
+    DATABASE_PATH,
     DownloaderApp,
+    LEGACY_DATABASE_PATH,
+    LEGACY_QUEUE_DATABASE_PATH,
     OUTPUT_DIR,
     _ConsoleStream,
     default_download_directory,
     _filter_and_sort_host_rows,
+    _parse_linked_image_badge,
     format_bytes,
     format_duration,
     migrate_legacy_database,
+    migrate_legacy_databases,
     redact_log_urls,
     remove_legacy_storage,
     smooth_rate,
@@ -444,14 +450,36 @@ class ValidationAndPresentationTests(unittest.TestCase):
                 self.assertEqual(default_download_directory(), downloads)
 
             missing = downloads / "missing"
-            with patch("src.app.user_downloads_dir", return_value=str(missing)):
-                self.assertEqual(default_download_directory(), OUTPUT_DIR)
+            fallback = Path(temporary_directory) / "AppData" / "download"
+            with (
+                patch("src.app.user_downloads_dir", return_value=str(missing)),
+                patch("src.app.OUTPUT_DIR", fallback),
+            ):
+                self.assertEqual(default_download_directory(), fallback)
+                self.assertTrue(fallback.is_dir())
 
     def test_readme_content_is_available_and_mentions_license(self) -> None:
         readme_text = DownloaderApp.readme_text()
         self.assertIn("## Features", readme_text)
         self.assertIn("MIT License", readme_text)
         self.assertIn("src/img/DeepbridDownloader.png", DownloaderApp.readme_image_paths())
+
+    def test_about_parser_recognizes_linked_readme_badges(self) -> None:
+        badge_line = (
+            "[![CI](https://img.shields.io/example.svg)]"
+            "(https://github.com/example/repo/actions)"
+        )
+        self.assertEqual(
+            _parse_linked_image_badge(badge_line),
+            ("CI", "https://github.com/example/repo/actions"),
+        )
+        self.assertIsNone(_parse_linked_image_badge("ordinary README text"))
+
+    def test_runtime_database_and_download_folders_use_app_data(self) -> None:
+        self.assertEqual(DATABASE_PATH.parent, APP_DATA_DIR)
+        self.assertEqual(OUTPUT_DIR.parent, APP_DATA_DIR)
+        self.assertNotEqual(DATABASE_PATH, LEGACY_DATABASE_PATH)
+        self.assertNotEqual(DATABASE_PATH, LEGACY_QUEUE_DATABASE_PATH)
 
     def test_dark_theme_state_is_persisted(self) -> None:
         app = object.__new__(DownloaderApp)
@@ -534,6 +562,25 @@ class LogRedactionTests(unittest.TestCase):
             self.assertEqual(copied_value, "preserved")
             self.assertTrue(remove_legacy_storage(old_directory, root / "Downloads"))
             self.assertFalse(old_directory.exists())
+
+    def test_legacy_source_database_is_migrated_before_legacy_queue_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source_database = root / "src" / "legacy.sqlite3"
+            queue_database = root / "download" / "queue.sqlite3"
+            destination = root / "application-data" / "queue.sqlite3"
+            for database, value in ((source_database, "current"), (queue_database, "older")):
+                database.parent.mkdir(parents=True, exist_ok=True)
+                with closing(sqlite3.connect(database)) as connection:
+                    connection.execute("CREATE TABLE data (value TEXT NOT NULL)")
+                    connection.execute("INSERT INTO data VALUES (?)", (value,))
+                    connection.commit()
+
+            migrate_legacy_databases(destination, (source_database, queue_database))
+
+            with closing(sqlite3.connect(destination)) as connection:
+                copied_value = connection.execute("SELECT value FROM data").fetchone()[0]
+            self.assertEqual(copied_value, "current")
 
     def test_legacy_folder_with_unexpected_files_is_retained(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
