@@ -47,6 +47,18 @@ LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links her
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
 
 
+def _filter_and_sort_host_rows(
+    rows: list[tuple[str, str, str]],
+    query: str,
+    column: str,
+    reverse: bool,
+) -> list[tuple[str, str, str]]:
+    column_index = {"host": 0, "availability": 1, "limit": 2}[column]
+    normalized_query = query.casefold()
+    matching_rows = (row for row in rows if normalized_query in row[0].casefold())
+    return sorted(matching_rows, key=lambda row: row[column_index].casefold(), reverse=reverse)
+
+
 def default_download_directory() -> Path:
     downloads = Path(user_downloads_dir()).expanduser()
     return downloads if downloads.is_dir() else OUTPUT_DIR
@@ -570,6 +582,12 @@ class DownloaderApp:
             ttk.Label(frame, text=f"Daily limits unavailable: {limits_error}", wraplength=580).pack(
                 anchor="w", pady=(0, 8)
             )
+        search_row = ttk.Frame(frame)
+        search_row.pack(fill="x", pady=(0, 8))
+        ttk.Label(search_row, text="Search hosts").pack(side="left", padx=(0, 8))
+        search_var = tk.StringVar(master=popup)
+        search_entry = ttk.Entry(search_row, textvariable=search_var)
+        search_entry.pack(side="left", fill="x", expand=True)
         table_frame = ttk.Frame(frame)
         table_frame.pack(fill="both", expand=True)
         table_frame.rowconfigure(0, weight=1)
@@ -579,9 +597,33 @@ class DownloaderApp:
             columns=("host", "availability", "limit"),
             show="headings",
         )
-        table.heading("host", text="Host")
-        table.heading("availability", text="Availability")
-        table.heading("limit", text="Daily remaining")
+        sort_state = {"column": "host", "reverse": False}
+
+        def render_rows() -> None:
+            rows = _filter_and_sort_host_rows(
+                host_rows,
+                search_var.get(),
+                sort_state["column"],
+                sort_state["reverse"],
+            )
+            table.delete(*table.get_children())
+            for row in rows:
+                table.insert("", "end", values=row)
+
+        def sort_by(column: str) -> None:
+            if sort_state["column"] == column:
+                sort_state["reverse"] = not sort_state["reverse"]
+            else:
+                sort_state["column"] = column
+                sort_state["reverse"] = False
+            render_rows()
+
+        for column, label in (
+            ("host", "Host"),
+            ("availability", "Availability"),
+            ("limit", "Daily remaining"),
+        ):
+            table.heading(column, text=label, command=lambda key=column: sort_by(key))
         table.column("host", width=220, anchor="w")
         table.column("availability", width=220, anchor="w")
         table.column("limit", width=140, anchor="e")
@@ -590,7 +632,8 @@ class DownloaderApp:
         scrollbar.grid(row=0, column=1, sticky="ns")
         table.configure(yscrollcommand=scrollbar.set)
 
-        for domain, status in sorted(hosts.items(), key=lambda entry: entry[0].casefold()):
+        host_rows = []
+        for domain, status in hosts.items():
             normalized_status = status.strip().split("(", 1)[0].strip().lower()
             if normalized_status == "down":
                 availability = "Unavailable"
@@ -607,7 +650,9 @@ class DownloaderApp:
                     (value for key, value in limits.items() if key.lower().split(".", 1)[0] == host_slug),
                     "—",
                 )
-            table.insert("", "end", values=(domain, availability, limit))
+            host_rows.append((domain, availability, limit))
+        search_var.trace_add("write", lambda *_args: render_rows())
+        render_rows()
         return popup
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
@@ -701,14 +746,19 @@ class DownloaderApp:
         canvas.configure(yscrollcommand=yscrollbar.set, xscrollcommand=xscrollbar.set)
 
         def _on_mouse_wheel(event: tk.Event) -> None:
+            if not canvas.winfo_exists():
+                return
             if hasattr(event, "delta"):
                 delta = int(-event.delta / 12)
             else:
                 delta = 0
-            canvas.yview_scroll(delta, "units")
+            try:
+                canvas.yview_scroll(delta, "units")
+            except tk.TclError:
+                return
 
-        canvas.bind_all("<MouseWheel>", _on_mouse_wheel)
-        canvas.bind_all("<Shift-MouseWheel>", _on_mouse_wheel)
+        popup.bind("<MouseWheel>", _on_mouse_wheel, add="+")
+        popup.bind("<Shift-MouseWheel>", _on_mouse_wheel, add="+")
         frame = ttk.Frame(canvas)
         canvas.create_window((0, 0), window=frame, anchor="nw")
 

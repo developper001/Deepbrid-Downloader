@@ -18,6 +18,7 @@ from src.app import (
     OUTPUT_DIR,
     _ConsoleStream,
     default_download_directory,
+    _filter_and_sort_host_rows,
     format_bytes,
     format_duration,
     migrate_legacy_database,
@@ -250,6 +251,26 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_host_rows_filter_and_sort_by_each_column(self) -> None:
+        rows = [
+            ("zeta.example", "Unavailable", "9 GB remaining"),
+            ("alpha.example", "Available", "20 GB remaining"),
+            ("beta.example", "Available", "5 GB remaining"),
+        ]
+
+        self.assertEqual(
+            _filter_and_sort_host_rows(rows, "TA", "host", False),
+            [rows[2], rows[0]],
+        )
+        self.assertEqual(
+            _filter_and_sort_host_rows(rows, "", "availability", False),
+            [rows[1], rows[2], rows[0]],
+        )
+        self.assertEqual(
+            _filter_and_sort_host_rows(rows, "", "limit", True),
+            [rows[0], rows[2], rows[1]],
+        )
+
     def test_plain_click_replaces_existing_selection(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
         app.table = FakeSelectionTable(["1", "2", "3"])
