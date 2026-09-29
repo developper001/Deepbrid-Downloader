@@ -27,11 +27,17 @@ def run(command: list[str]) -> None:
     subprocess.run(command, check=True, cwd=ROOT)
 
 
-def build_windows() -> Path:
+def publish_binary(binary_path: Path, platform: str, extension: str = "") -> list[Path]:
+    stable_path = ARTIFACTS / f"DeepbridDownloader-{platform}{extension}"
+    legacy_path = ARTIFACTS / f"DeepbridDownloader-{platform}-{VERSION}{extension}"
+    for output_path in (stable_path, legacy_path):
+        output_path.unlink(missing_ok=True)
+        shutil.copy2(binary_path, output_path)
+    return [stable_path, legacy_path]
+
+
+def build_windows() -> list[Path]:
     out_dir = DIST / "windows"
-    app = ARTIFACTS / f"DeepbridDownloader-Windows-{VERSION}.exe"
-    if app.exists():
-        app.unlink()
     run([
         sys.executable,
         "-m",
@@ -49,16 +55,11 @@ def build_windows() -> Path:
     exe_path = out_dir / "DeepbridDownloader.exe"
     if not exe_path.exists():
         raise FileNotFoundError(f"Expected built exe at {exe_path}")
-    final_path = ARTIFACTS / f"DeepbridDownloader-Windows-{VERSION}.exe"
-    shutil.copy2(exe_path, final_path)
-    return final_path
+    return publish_binary(exe_path, "Windows", ".exe")
 
 
-def build_linux() -> Path:
+def build_linux() -> list[Path]:
     out_dir = DIST / "linux"
-    app = ARTIFACTS / f"DeepbridDownloader-Linux-{VERSION}"
-    if app.exists():
-        app.unlink()
     run([
         sys.executable,
         "-m",
@@ -73,16 +74,11 @@ def build_linux() -> Path:
     bin_path = out_dir / "DeepbridDownloader"
     if not bin_path.exists():
         raise FileNotFoundError(f"Expected built binary at {bin_path}")
-    final_path = ARTIFACTS / f"DeepbridDownloader-Linux-{VERSION}"
-    shutil.copy2(bin_path, final_path)
-    return final_path
+    return publish_binary(bin_path, "Linux")
 
 
-def build_macos() -> Path:
+def build_macos() -> list[Path]:
     out_dir = DIST / "macos"
-    app = ARTIFACTS / f"DeepbridDownloader-macOS-{VERSION}"
-    if app.exists():
-        app.unlink()
     run([
         sys.executable,
         "-m",
@@ -97,9 +93,7 @@ def build_macos() -> Path:
     bin_path = out_dir / "DeepbridDownloader"
     if not bin_path.exists():
         raise FileNotFoundError(f"Expected built binary at {bin_path}")
-    final_path = ARTIFACTS / f"DeepbridDownloader-macOS-{VERSION}"
-    shutil.copy2(bin_path, final_path)
-    return final_path
+    return publish_binary(bin_path, "macOS")
 
 
 def write_checksums(files: list[Path]) -> Path:
@@ -115,11 +109,7 @@ def write_checksums(files: list[Path]) -> Path:
 def main() -> None:
     ARTIFACTS.mkdir(exist_ok=True)
     DIST.mkdir(exist_ok=True)
-    built = [
-        build_windows(),
-        build_linux(),
-        build_macos(),
-    ]
+    built = [*build_windows(), *build_linux(), *build_macos()]
     checksums = write_checksums(built)
     print(f"Built: {', '.join(str(path) for path in built)}")
     print(f"Checksums: {checksums}")

@@ -380,6 +380,25 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(platform_release_asset(release, "Linux"), linux)
         self.assertIsNone(platform_release_asset(release, "FreeBSD"))
 
+    def test_platform_asset_prefers_stable_name_and_falls_back_to_legacy_name(self) -> None:
+        stable_asset = ReleaseAsset(
+            "DeepbridDownloader-Windows.exe",
+            "https://github.com/developper001/Deepbrid-Downloader/releases/download/v0.2.10/DeepbridDownloader-Windows.exe",
+            1,
+            "a" * 64,
+        )
+        legacy_asset = ReleaseAsset(
+            "DeepbridDownloader-Windows-0.2.10.exe",
+            "https://github.com/developper001/Deepbrid-Downloader/releases/download/v0.2.10/DeepbridDownloader-Windows-0.2.10.exe",
+            1,
+            "b" * 64,
+        )
+        release_with_both = LatestRelease("v0.2.10", "https://github.com/developper001/Deepbrid-Downloader/releases/tag/v0.2.10", (legacy_asset, stable_asset))
+        release_with_legacy_only = LatestRelease("v0.2.10", release_with_both.release_url, (legacy_asset,))
+
+        self.assertEqual(platform_release_asset(release_with_both, "Windows"), stable_asset)
+        self.assertEqual(platform_release_asset(release_with_legacy_only, "Windows"), legacy_asset)
+
     def test_update_download_reports_progress_and_checks_sha256(self) -> None:
         payload = b"verified update binary"
         asset = ReleaseAsset(

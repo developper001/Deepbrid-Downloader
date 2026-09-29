@@ -164,7 +164,7 @@ git tag "v${RELEASE_VERSION}"
 git push origin "v${RELEASE_VERSION}"
 ```
 
-The GitHub release workflow verifies that the tag matches `src/app_info.py`, then produces versioned platform binaries (for example, `DeepbridDownloader-Windows-X.Y.Z.exe`) and a `sha256sums.txt` file.
+The GitHub release workflow verifies that the tag matches `src/app_info.py`, then publishes stable platform binaries (for example, `DeepbridDownloader-Windows.exe`) and a `sha256sums.txt` file. Versioned aliases are included so existing updater builds can still locate future releases.
 The Windows build embeds the Deepbrid icon and runs without opening a separate terminal console; output and uncaught exceptions are routed to the app's in-app console.
 Packaged builds can download the matching platform binary, verify its GitHub SHA-256 digest, and restart into the replacement executable. Running from source continues to open the release page instead of replacing the Python environment.
 

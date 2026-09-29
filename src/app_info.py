@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
-__version__ = "0.2.9"
+__version__ = "0.2.10"
 GITHUB_REPOSITORY_URL = "https://github.com/developper001/Deepbrid-Downloader"
 GITHUB_LATEST_RELEASE_URL = (
     "https://api.github.com/repos/developper001/Deepbrid-Downloader/releases/latest"
@@ -121,7 +121,11 @@ def platform_release_asset(
     platform_name = {"Windows": "Windows", "Linux": "Linux", "Darwin": "macOS"}.get(system)
     if platform_name is None:
         return None
-    version = release.tag.removeprefix("v")
     extension = ".exe" if system == "Windows" else ""
-    expected_name = f"DeepbridDownloader-{platform_name}-{version}{extension}"
-    return next((asset for asset in release.assets if asset.name == expected_name), None)
+    asset_by_name = {asset.name: asset for asset in release.assets}
+    stable_name = f"DeepbridDownloader-{platform_name}{extension}"
+    if stable_name in asset_by_name:
+        return asset_by_name[stable_name]
+    version = release.tag.removeprefix("v")
+    legacy_name = f"DeepbridDownloader-{platform_name}-{version}{extension}"
+    return asset_by_name.get(legacy_name)

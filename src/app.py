@@ -957,7 +957,7 @@ class DownloaderApp:
             text="GitHub repository",
             command=lambda: webbrowser.open(GITHUB_REPOSITORY_URL),
         ).pack(side="left")
-        update_status = tk.StringVar(master=popup)
+        update_status = tk.StringVar(master=popup, value=f"Current version: {APP_VERSION}")
         ttk.Label(actions, textvariable=update_status).pack(side="left", padx=(8, 0))
         update_progress = ttk.Progressbar(actions, length=150, mode="determinate", maximum=100)
         release_button = ttk.Button(actions, text="Open release")
