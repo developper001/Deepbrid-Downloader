@@ -183,15 +183,21 @@ class QueueStoreTests(unittest.TestCase):
             self.assertEqual(loaded.url, original_url)
             self.assertEqual(loaded.deepbrid_link, generated_url)
 
-    def test_disabled_and_down_host_items_are_not_selected(self) -> None:
+    def test_unknown_and_unsupported_items_are_selected_but_down_and_disabled_are_not(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
             store.add("https://supported.example/down", host_status="down")
+            store.add("https://supported.example/unsupported", host_status="unsupported")
+            store.add("https://supported.example/unknown", host_status="unknown")
             disabled_id_added = store.add("https://supported.example/disabled", host_status="up")
             self.assertTrue(disabled_id_added)
-            disabled_item = store.list_items()[1]
+            unsupported_item, unknown_item, disabled_item = store.list_items()[1:]
             store.update(disabled_item.id, enabled=False)
 
+            self.assertEqual(store.next_item().id, unsupported_item.id)
+            store.update(unsupported_item.id, status="failed")
+            self.assertEqual(store.next_item().id, unknown_item.id)
+            store.update(unknown_item.id, status="failed")
             self.assertIsNone(store.next_item())
 
     def test_next_item_follows_persisted_visible_order_and_skips_disabled_rows(self) -> None:

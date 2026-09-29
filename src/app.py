@@ -1479,9 +1479,10 @@ class DownloaderApp:
                 break
             item_cancel_event = threading.Event()
             self.active_cancel_events[item.id] = item_cancel_event
-            guessed_name = safe_filename(None, item.url, item.id)
-            if not item.force and (output_dir / guessed_name).is_file():
-                existing_size = (output_dir / guessed_name).stat().st_size
+            guessed_name = item.filename or safe_filename(None, item.url, item.id)
+            existing_path = output_dir / guessed_name
+            if not item.force and existing_path.is_file():
+                existing_size = existing_path.stat().st_size
                 self.store.update(
                     item.id,
                     status="skipped",

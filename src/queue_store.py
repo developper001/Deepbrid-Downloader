@@ -147,7 +147,7 @@ class QueueStore:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM downloads WHERE status = 'queued' AND enabled = 1 "
-                "AND host_status IN ('up', 'supported') ORDER BY priority, id LIMIT 1"
+                "AND host_status != 'down' ORDER BY priority, id LIMIT 1"
             ).fetchone()
         return self._to_item(row) if row else None
 
