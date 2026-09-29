@@ -515,6 +515,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(format_duration(3661), "1h 1m")
         app = object.__new__(DownloaderApp)
         app.item_speeds = {1: 100}
+        app.item_status_messages = {1: "Link retry 2/5 in 3s"}
         item = SimpleNamespace(
             id=1,
             filename="Bravo.zip",
@@ -526,7 +527,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
         )
         self.assertEqual(app._sort_value(item, "filename"), "bravo.zip")
         self.assertEqual(app._sort_value(item, "remaining"), 400)
-        self.assertEqual(app._sort_value(item, "eta"), 4)
+        self.assertEqual(app._sort_value(item, "eta"), "link retry 2/5 in 3s")
 
     def test_total_speed_uses_a_slow_exponential_average(self) -> None:
         average = smooth_rate(100.0, 1000.0)

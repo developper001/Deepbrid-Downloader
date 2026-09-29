@@ -288,6 +288,7 @@ class DownloaderApp:
         self.progress_value = tk.DoubleVar(value=0)
         self.total_eta_text = tk.StringVar(value="Total remaining: calculating")
         self.item_speeds: dict[int, float] = {}
+        self.item_status_messages: dict[int, str] = {}
         self.average_transfer_speed = 0.0
         self.last_eta_refresh = time.monotonic()
         self.sort_column = "filename"
@@ -443,10 +444,10 @@ class DownloaderApp:
             "filename": "File name",
             "link": "Original link",
             "host": "Host",
-            "status": "Status",
+            "status": "Host status",
             "size": "Downloaded / total",
             "remaining": "Remaining",
-            "eta": "Time left",
+            "eta": "Status",
         }
         self._build_columns_menu()
         for column, label in self.column_labels.items():
@@ -457,7 +458,7 @@ class DownloaderApp:
         self.table.column("status", width=120, minwidth=90, stretch=False)
         self.table.column("size", width=145, minwidth=120, stretch=False, anchor="e")
         self.table.column("remaining", width=105, minwidth=90, stretch=False, anchor="e")
-        self.table.column("eta", width=100, minwidth=85, stretch=False, anchor="e")
+        self.table.column("eta", width=170, minwidth=130, stretch=False)
         self.table.configure(displaycolumns=self.visible_columns)
         self.table.grid(row=0, column=0, sticky="nsew")
         table_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.table.yview)
@@ -1052,14 +1053,15 @@ class DownloaderApp:
         if column == "host":
             return item.host_message.casefold()
         if column == "status":
-            return item.status.casefold()
+            return item.host_status.casefold()
         if column == "size":
             return item.total if item.total is not None else -1
         if column == "remaining":
             return max(0, item.total - item.downloaded) if item.total is not None else -1
         if column == "eta":
-            speed = self.item_speeds.get(item.id, 0)
-            return (item.total - item.downloaded) / speed if item.total is not None and speed > 0 else math.inf
+            return self.item_status_messages.get(
+                item.id, item.status.replace("_", " ").title()
+            ).casefold()
         return item.id
 
     def _force_redownload(self) -> None:
@@ -1660,28 +1662,24 @@ class DownloaderApp:
         for position, item in enumerate(items):
             row_id = str(item.id)
             seen.add(row_id)
-            if not item.enabled:
-                status = "Disabled"
-            elif item.host_status == "down":
-                status = "Host down"
-            elif item.host_status == "unsupported":
-                status = "Unsupported"
-            elif item.host_status != "up":
-                status = item.status.replace("_", " ").title()
+            host_status = item.host_status.replace("_", " ").title()
+            if item.status == "retrying":
+                queue_status = self.item_status_messages.get(item.id, "Retrying")
             else:
-                status = item.status.replace("_", " ").title()
+                queue_status = item.status.replace("_", " ").title()
+                self.item_status_messages.pop(item.id, None)
+            if not item.enabled:
+                queue_status = "Disabled"
             filename = item.filename or Path(item.url.split("?", 1)[0]).name or item.url
             remaining = max(0, item.total - item.downloaded) if item.total is not None else None
-            speed = self.item_speeds.get(item.id, max(active_speeds, default=0))
-            eta = format_duration(remaining / speed) if remaining is not None and speed > 0 else "Calculating"
             values = (
                 filename,
                 item.url,
                 item.host_message,
-                status,
+                host_status,
                 f"{format_bytes(item.downloaded)} / {format_bytes(item.total)}",
                 format_bytes(remaining),
-                eta,
+                queue_status,
             )
             if row_id in existing:
                 self.table.item(row_id, values=values)
@@ -1786,7 +1784,12 @@ class DownloaderApp:
                 self.console.see("end")
                 self.console.configure(state="disabled")
             elif event[0] == "status":
-                self.status_text.set(event[2])
+                _, item_id, message = event
+                if message.startswith("Link retry "):
+                    self.item_status_messages[item_id] = message
+                else:
+                    self.item_status_messages.pop(item_id, None)
+                self.status_text.set(message)
                 self._refresh_rows()
             elif event[0] == "api_key_error":
                 _, status_code, message = event
