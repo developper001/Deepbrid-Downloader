@@ -50,7 +50,7 @@ python launcher.py
 - Retry blocked or failed links safely, with a pause-and-resume workflow
 - Toggle dark mode, show or hide the console, and configure visible columns
 - Open the Deepbrid dashboard directly from missing or invalid API-key prompts
-- Open the GitHub repository and check for newer releases from the About window
+- Check for newer releases in About and opt into verified in-app updates with download progress
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
 - Route standard output, errors, and uncaught exceptions to the in-app console
 - Build the Windows executable with the Deepbrid icon and no separate console window
@@ -166,6 +166,7 @@ git push origin "v${RELEASE_VERSION}"
 
 The GitHub release workflow verifies that the tag matches `src/app_info.py`, then produces versioned platform binaries (for example, `DeepbridDownloader-Windows-X.Y.Z.exe`) and a `sha256sums.txt` file.
 The Windows build embeds the Deepbrid icon and runs without opening a separate terminal console; output and uncaught exceptions are routed to the app's in-app console.
+Packaged builds can download the matching platform binary, verify its GitHub SHA-256 digest, and restart into the replacement executable. Running from source continues to open the release page instead of replacing the Python environment.
 
 Notes:
 - `pyinstaller` is the simplest way to produce a single-file app for Windows/macOS/Linux.

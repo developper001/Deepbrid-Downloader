@@ -20,15 +20,19 @@ from platformdirs import user_data_dir, user_downloads_dir
 
 from .app_info import (
     GITHUB_REPOSITORY_URL,
+    LatestRelease,
+    ReleaseAsset,
     UpdateCheckError,
     __version__ as APP_VERSION,
-    fetch_latest_release,
+    fetch_latest_release_details,
     is_newer_version,
+    platform_release_asset,
 )
 from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
 from .queue_store import QueueStore
 from .secure_store import SecureStorageError, SecureStore
+from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
 
 
 def resolve_app_path(*relative_parts: str) -> Path:
@@ -955,6 +959,7 @@ class DownloaderApp:
         ).pack(side="left")
         update_status = tk.StringVar(master=popup)
         ttk.Label(actions, textvariable=update_status).pack(side="left", padx=(8, 0))
+        update_progress = ttk.Progressbar(actions, length=150, mode="determinate", maximum=100)
         release_button = ttk.Button(actions, text="Open release")
         check_button = ttk.Button(
             actions,
@@ -964,6 +969,7 @@ class DownloaderApp:
                 update_status,
                 check_button,
                 release_button,
+                update_progress,
             ),
         )
         check_button.pack(side="left", padx=(8, 0))
@@ -975,12 +981,14 @@ class DownloaderApp:
         update_status: tk.StringVar,
         check_button: ttk.Button,
         release_button: ttk.Button,
+        update_progress: ttk.Progressbar,
     ) -> None:
         check_button.configure(state="disabled")
         update_status.set("Checking for updates...")
+        update_progress.pack_forget()
         threading.Thread(
             target=self._load_update_status,
-            args=(popup, update_status, check_button, release_button),
+            args=(popup, update_status, check_button, release_button, update_progress),
             daemon=True,
         ).start()
 
@@ -990,22 +998,102 @@ class DownloaderApp:
         update_status: tk.StringVar,
         check_button: ttk.Button,
         release_button: ttk.Button,
+        update_progress: ttk.Progressbar,
     ) -> None:
         try:
-            latest_tag, release_url = fetch_latest_release()
-            if is_newer_version(latest_tag):
-                message = f"Version {latest_tag} is available."
+            release = fetch_latest_release_details()
+            asset = platform_release_asset(release)
+            if is_newer_version(release.tag):
+                message = f"Version {release.tag} is available."
             else:
-                message = f"You are using the latest version ({APP_VERSION})."
-                release_url = ""
-                latest_tag = ""
+                if is_newer_version(APP_VERSION, release.tag):
+                    message = f"Current version {APP_VERSION} is newer than the latest published release ({release.tag})."
+                else:
+                    message = f"You are using the latest version ({APP_VERSION})."
+                release = None
+                asset = None
         except UpdateCheckError as error:
             message = f"Update check failed: {error}"
-            latest_tag = ""
-            release_url = ""
+            release = None
+            asset = None
         self.events.put(
-            ("update_check", popup, update_status, check_button, release_button, message, latest_tag, release_url)
+            (
+                "update_check",
+                popup,
+                update_status,
+                check_button,
+                release_button,
+                update_progress,
+                message,
+                release,
+                asset,
+            )
         )
+
+    def _confirm_update_install(
+        self,
+        popup: tk.Toplevel,
+        update_status: tk.StringVar,
+        check_button: ttk.Button,
+        release_button: ttk.Button,
+        update_progress: ttk.Progressbar,
+        release: LatestRelease,
+        asset: ReleaseAsset,
+    ) -> None:
+        if not asset.sha256:
+            messagebox.showerror(
+                "Update unavailable",
+                "The release does not provide a verifiable SHA-256 digest.",
+                parent=popup,
+            )
+            return
+        message = f"Download and install version {release.tag}? The app will restart when the update is ready."
+        if self.worker and self.worker.is_alive():
+            message += " Active downloads will be interrupted; partial files will be kept for resume."
+        if not messagebox.askyesno("Install update", message, parent=popup):
+            return
+        check_button.configure(state="disabled")
+        release_button.configure(state="disabled")
+        update_progress.configure(maximum=max(asset.size, 1), value=0)
+        update_progress.pack(side="left", padx=(8, 0))
+        update_status.set(f"Downloading {release.tag}: 0%")
+        threading.Thread(
+            target=self._download_and_install_update,
+            args=(popup, update_status, check_button, release_button, update_progress, release, asset),
+            daemon=True,
+        ).start()
+
+    def _download_and_install_update(
+        self,
+        popup: tk.Toplevel,
+        update_status: tk.StringVar,
+        check_button: ttk.Button,
+        release_button: ttk.Button,
+        update_progress: ttk.Progressbar,
+        release: LatestRelease,
+        asset: ReleaseAsset,
+    ) -> None:
+        staged_path = None
+        try:
+            if not getattr(sys, "frozen", False):
+                raise UpdateInstallError("Automatic installation is available only in packaged builds.")
+            target_path = Path(sys.executable).resolve()
+            staged_path = download_update_asset(
+                asset,
+                target_path.parent,
+                lambda received, total: self.events.put(
+                    ("update_progress", popup, update_status, update_progress, release.tag, received, total)
+                ),
+            )
+            self.events.put(
+                ("update_downloaded", popup, update_status, check_button, release_button, update_progress, staged_path, release.tag)
+            )
+        except Exception as error:
+            if staged_path is not None:
+                staged_path.unlink(missing_ok=True)
+            self.events.put(
+                ("update_download_failed", popup, update_status, check_button, release_button, update_progress, str(error))
+            )
 
     def _build_columns_menu(self) -> None:
         self.column_visibility_vars: dict[str, tk.BooleanVar] = {}
@@ -1721,23 +1809,82 @@ class DownloaderApp:
             except queue.Empty:
                 break
             if event[0] == "update_check":
-                _, popup, update_status, check_button, release_button, message, latest_tag, release_url = event
+                _, popup, update_status, check_button, release_button, update_progress, message, release, asset = event
                 try:
                     if not popup.winfo_exists():
                         continue
                     check_button.configure(state="normal")
                     update_status.set(message)
-                    if release_url:
-                        release_button.configure(
-                            text=f"Open release {latest_tag}",
-                            command=lambda target=release_url: webbrowser.open(target),
-                        )
+                    update_progress.pack_forget()
+                    if release is not None:
+                        if getattr(sys, "frozen", False) and asset is not None and asset.sha256:
+                            release_button.configure(
+                                text="Download and install",
+                                command=lambda window=popup, status=update_status, check=check_button,
+                                button=release_button, progress=update_progress, found_release=release,
+                                found_asset=asset: self._confirm_update_install(
+                                    window, status, check, button, progress, found_release, found_asset
+                                ),
+                            )
+                        else:
+                            release_button.configure(
+                                text="Open release",
+                                command=lambda target=release.release_url: webbrowser.open(target),
+                            )
                         if not release_button.winfo_manager():
                             release_button.pack(side="left", padx=(8, 0))
                     else:
                         release_button.pack_forget()
                 except tk.TclError:
                     continue
+            elif event[0] == "update_progress":
+                _, popup, update_status, update_progress, version, received, total = event
+                try:
+                    if not popup.winfo_exists():
+                        continue
+                    maximum = max(total, 1)
+                    percent = min(100, received * 100 / maximum)
+                    update_progress.configure(maximum=maximum, value=received)
+                    update_status.set(f"Downloading {version}: {percent:.0f}%")
+                except tk.TclError:
+                    continue
+            elif event[0] == "update_downloaded":
+                _, popup, update_status, _check_button, _release_button, _progress, staged_path, version = event
+                try:
+                    launch_update_helper(Path(staged_path))
+                except UpdateInstallError as error:
+                    Path(staged_path).unlink(missing_ok=True)
+                    self.status_text.set(f"Update install failed: {error}")
+                    self._log(f"Could not install update {version}: {error}")
+                    try:
+                        if popup.winfo_exists():
+                            popup.destroy()
+                    except tk.TclError:
+                        pass
+                    messagebox.showerror("Update failed", str(error), parent=self.root)
+                else:
+                    self.status_text.set(f"Installing {version}; restarting...")
+                    self._log(f"Installing update {version}; restarting the application.")
+                    try:
+                        if popup.winfo_exists():
+                            popup.destroy()
+                    except tk.TclError:
+                        pass
+                    self._close()
+                    return
+            elif event[0] == "update_download_failed":
+                _, popup, update_status, check_button, release_button, update_progress, error = event
+                self.status_text.set(f"Update download failed: {error}")
+                self._log(f"Update download failed: {error}")
+                try:
+                    if popup.winfo_exists():
+                        update_status.set(f"Download failed: {error}")
+                        check_button.configure(state="normal")
+                        release_button.configure(state="normal")
+                        update_progress.pack_forget()
+                        messagebox.showerror("Update download failed", error, parent=popup)
+                except tk.TclError:
+                    pass
             elif event[0] == "refresh":
                 self._refresh_rows()
             elif event[0] == "hosts":

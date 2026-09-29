@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 
-__version__ = "0.2.8"
+__version__ = "0.2.9"
 GITHUB_REPOSITORY_URL = "https://github.com/developper001/Deepbrid-Downloader"
 GITHUB_LATEST_RELEASE_URL = (
     "https://api.github.com/repos/developper001/Deepbrid-Downloader/releases/latest"
@@ -15,6 +17,21 @@ GITHUB_LATEST_RELEASE_URL = (
 
 class UpdateCheckError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class ReleaseAsset:
+    name: str
+    download_url: str
+    size: int
+    sha256: str | None
+
+
+@dataclass(frozen=True)
+class LatestRelease:
+    tag: str
+    release_url: str
+    assets: tuple[ReleaseAsset, ...]
 
 
 def _version_parts(version: str) -> tuple[int, ...] | None:
@@ -31,7 +48,7 @@ def is_newer_version(latest_tag: str, current_version: str = __version__) -> boo
     return latest_parts is not None and current_parts is not None and latest_parts > current_parts
 
 
-def fetch_latest_release() -> tuple[str, str]:
+def fetch_latest_release_details() -> LatestRelease:
     request = urllib.request.Request(
         GITHUB_LATEST_RELEASE_URL,
         headers={
@@ -59,4 +76,52 @@ def fetch_latest_release() -> tuple[str, str]:
         "/developper001/Deepbrid-Downloader/releases/"
     ):
         raise UpdateCheckError("GitHub returned an invalid release link.")
-    return tag, release_url
+    raw_assets = payload.get("assets", [])
+    if not isinstance(raw_assets, list):
+        raise UpdateCheckError("GitHub returned invalid release assets.")
+    assets: list[ReleaseAsset] = []
+    for item in raw_assets:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        download_url = item.get("browser_download_url")
+        size = item.get("size")
+        digest = item.get("digest")
+        if (
+            not isinstance(name, str)
+            or not name
+            or "/" in name
+            or "\\" in name
+            or not isinstance(download_url, str)
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+        ):
+            continue
+        asset_url = urllib.parse.urlparse(download_url)
+        if asset_url.scheme != "https" or asset_url.netloc != "github.com":
+            continue
+        checksum = None
+        if isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+            checksum = digest.partition(":")[2].lower()
+        assets.append(ReleaseAsset(name, download_url, size, checksum))
+    return LatestRelease(tag, release_url, tuple(assets))
+
+
+def fetch_latest_release() -> tuple[str, str]:
+    release = fetch_latest_release_details()
+    return release.tag, release.release_url
+
+
+def platform_release_asset(
+    release: LatestRelease,
+    system: str | None = None,
+) -> ReleaseAsset | None:
+    system = system or platform.system()
+    platform_name = {"Windows": "Windows", "Linux": "Linux", "Darwin": "macOS"}.get(system)
+    if platform_name is None:
+        return None
+    version = release.tag.removeprefix("v")
+    extension = ".exe" if system == "Windows" else ""
+    expected_name = f"DeepbridDownloader-{platform_name}-{version}{extension}"
+    return next((asset for asset in release.assets if asset.name == expected_name), None)
