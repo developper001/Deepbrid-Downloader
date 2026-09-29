@@ -873,10 +873,12 @@ class DownloaderApp:
         def _on_mouse_wheel(event: tk.Event) -> None:
             if not canvas.winfo_exists():
                 return
-            if hasattr(event, "delta"):
-                delta = int(-event.delta / 12)
+            if getattr(event, "delta", 0):
+                delta = int(-event.delta / 48)
+                if not delta:
+                    delta = -1 if event.delta > 0 else 1
             else:
-                delta = 0
+                delta = {4: -1, 5: 1}.get(getattr(event, "num", None), 0)
             try:
                 canvas.yview_scroll(delta, "units")
             except tk.TclError:
