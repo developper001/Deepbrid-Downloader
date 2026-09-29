@@ -1,2 +1,3 @@
 cryptography>=42
+filelock>=3.12
 platformdirs>=4

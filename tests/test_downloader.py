@@ -6,6 +6,7 @@ import tempfile
 import sqlite3
 import shutil
 import unittest
+import uuid
 import urllib.error
 from contextlib import closing
 from io import BytesIO
@@ -49,6 +50,7 @@ from src.app import (
 from src.link_utils import extract_supported_links, supported_link_status
 from src.queue_store import QueueStore
 from src.secure_store import SecureStore
+from src.single_instance import acquire_single_instance
 from src.update_manager import download_update_asset
 
 
@@ -276,6 +278,22 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_single_instance_lock_rejects_second_owner_and_releases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            application_id = f"DeepbridDownloaderTest{uuid.uuid4().hex}"
+            first_lock = acquire_single_instance(Path(temporary_directory), application_id)
+            self.assertIsNotNone(first_lock)
+            assert first_lock is not None
+            try:
+                self.assertIsNone(acquire_single_instance(Path(temporary_directory), application_id))
+            finally:
+                first_lock.close()
+
+            second_lock = acquire_single_instance(Path(temporary_directory), application_id)
+            self.assertIsNotNone(second_lock)
+            assert second_lock is not None
+            second_lock.close()
+
     def test_startup_update_preference_persists_both_checkbox_states(self) -> None:
         saved_settings: dict[str, str] = {}
         app = object.__new__(DownloaderApp)

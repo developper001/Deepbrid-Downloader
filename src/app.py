@@ -32,6 +32,7 @@ from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
 from .queue_store import QueueStore
 from .secure_store import SecureStorageError, SecureStore
+from .single_instance import acquire_single_instance
 from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
 
 
@@ -2080,6 +2081,23 @@ def _show_startup_error(root: tk.Tk, details: str) -> None:
 
 
 def main() -> None:
+    try:
+        instance_lock = acquire_single_instance(APP_DATA_DIR)
+    except Exception:
+        root = tk.Tk()
+        _show_startup_error(root, traceback.format_exc())
+        root.mainloop()
+        return
+    if instance_lock is None:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showinfo(
+            "Already running",
+            "Deepbrid Downloader is already running. Switch to the open window instead.",
+            parent=root,
+        )
+        root.destroy()
+        return
     root = tk.Tk()
     try:
         DownloaderApp(root)
