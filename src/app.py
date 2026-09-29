@@ -265,6 +265,8 @@ class DownloaderApp:
         migrate_legacy_databases()
         self.legacy_logs_redacted = redact_legacy_log_file()
         self.secure_store = SecureStore(DATABASE_PATH)
+        saved_auto_check = self.secure_store.get_setting("auto_check_updates_on_startup")
+        self.auto_check_updates = tk.BooleanVar(master=root, value=saved_auto_check != "false")
         self.store = QueueStore(DATABASE_PATH, self.secure_store)
         self.secure_storage_error: str | None = None
         stored_key = ""
@@ -351,6 +353,7 @@ class DownloaderApp:
         if not self.legacy_logs_redacted:
             self._log("Could not redact URLs from the existing log file; check that it is writable.")
         self._refresh_hosts()
+        self.root.after_idle(self._check_for_updates_on_startup)
 
     def _build_ui(self) -> None:
         self.root.title("Deepbrid Downloader")
@@ -973,6 +976,12 @@ class DownloaderApp:
             ),
         )
         check_button.pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(
+            actions,
+            text="Check for updates on startup",
+            variable=self.auto_check_updates,
+            command=self._persist_auto_check_updates,
+        ).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Close", command=popup.destroy).pack(side="right")
 
     def _check_for_updates(
@@ -1030,6 +1039,63 @@ class DownloaderApp:
             )
         )
 
+    def _persist_auto_check_updates(self) -> None:
+        enabled = self.auto_check_updates.get()
+        self.secure_store.set_setting("auto_check_updates_on_startup", "true" if enabled else "false")
+
+    def _check_for_updates_on_startup(self) -> None:
+        if not self.auto_check_updates.get():
+            return
+        threading.Thread(target=self._load_startup_update_status, daemon=True).start()
+
+    def _load_startup_update_status(self) -> None:
+        try:
+            release = fetch_latest_release_details()
+        except UpdateCheckError:
+            return
+        if is_newer_version(release.tag):
+            self.events.put(("startup_update", release, platform_release_asset(release)))
+
+    def _prompt_startup_update(
+        self,
+        release: LatestRelease,
+        asset: ReleaseAsset | None,
+    ) -> None:
+        if not getattr(sys, "frozen", False) or asset is None or not asset.sha256:
+            if messagebox.askyesno(
+                "Update available",
+                f"Version {release.tag} is available. Open the release page?",
+                parent=self.root,
+            ):
+                webbrowser.open(release.release_url)
+            return
+
+        message = f"Version {release.tag} is available. Download and install it now?"
+        if self.worker and self.worker.is_alive():
+            message += " Active downloads will be interrupted; partial files will be kept for resume."
+        if not messagebox.askyesno("Update available", message, parent=self.root):
+            return
+
+        popup = tk.Toplevel(self.root)
+        popup.title("Downloading update")
+        popup.geometry("440x110")
+        popup.resizable(False, False)
+        popup.transient(self.root)
+        status = tk.StringVar(master=popup, value=f"Downloading {release.tag}: 0%")
+        ttk.Label(popup, textvariable=status).pack(fill="x", padx=12, pady=(12, 6))
+        progress = ttk.Progressbar(
+            popup,
+            length=410,
+            mode="determinate",
+            maximum=max(asset.size, 1),
+        )
+        progress.pack(fill="x", padx=12, pady=(0, 12))
+        threading.Thread(
+            target=self._download_and_install_update,
+            args=(popup, status, None, None, progress, release, asset),
+            daemon=True,
+        ).start()
+
     def _confirm_update_install(
         self,
         popup: tk.Toplevel,
@@ -1067,8 +1133,8 @@ class DownloaderApp:
         self,
         popup: tk.Toplevel,
         update_status: tk.StringVar,
-        check_button: ttk.Button,
-        release_button: ttk.Button,
+        check_button: ttk.Button | None,
+        release_button: ttk.Button | None,
         update_progress: ttk.Progressbar,
         release: LatestRelease,
         asset: ReleaseAsset,
@@ -1879,12 +1945,18 @@ class DownloaderApp:
                 try:
                     if popup.winfo_exists():
                         update_status.set(f"Download failed: {error}")
-                        check_button.configure(state="normal")
-                        release_button.configure(state="normal")
-                        update_progress.pack_forget()
+                        if check_button is not None:
+                            check_button.configure(state="normal")
+                        if release_button is not None:
+                            release_button.configure(state="normal")
+                        if check_button is not None or release_button is not None:
+                            update_progress.pack_forget()
                         messagebox.showerror("Update download failed", error, parent=popup)
                 except tk.TclError:
                     pass
+            elif event[0] == "startup_update":
+                _, release, asset = event
+                self._prompt_startup_update(release, asset)
             elif event[0] == "refresh":
                 self._refresh_rows()
             elif event[0] == "hosts":

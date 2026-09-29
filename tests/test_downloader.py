@@ -18,6 +18,7 @@ from src.app_info import (
     GITHUB_LATEST_RELEASE_URL,
     LatestRelease,
     ReleaseAsset,
+    UpdateCheckError,
     fetch_latest_release,
     fetch_latest_release_details,
     is_newer_version,
@@ -275,6 +276,72 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_startup_update_preference_persists_both_checkbox_states(self) -> None:
+        saved_settings: dict[str, str] = {}
+        app = object.__new__(DownloaderApp)
+        app.secure_store = SimpleNamespace(
+            set_setting=lambda name, value: saved_settings.__setitem__(name, value)
+        )
+        app.auto_check_updates = SimpleNamespace(get=lambda: True)
+
+        app._persist_auto_check_updates()
+        self.assertEqual(saved_settings["auto_check_updates_on_startup"], "true")
+
+        app.auto_check_updates = SimpleNamespace(get=lambda: False)
+        app._persist_auto_check_updates()
+        self.assertEqual(saved_settings["auto_check_updates_on_startup"], "false")
+
+    def test_startup_update_check_respects_checkbox_state(self) -> None:
+        app = object.__new__(DownloaderApp)
+        app.auto_check_updates = SimpleNamespace(get=lambda: False)
+        with patch("src.app.threading.Thread") as thread:
+            app._check_for_updates_on_startup()
+        thread.assert_not_called()
+
+        app.auto_check_updates = SimpleNamespace(get=lambda: True)
+        with patch("src.app.threading.Thread") as thread:
+            app._check_for_updates_on_startup()
+        thread.assert_called_once_with(target=app._load_startup_update_status, daemon=True)
+        thread.return_value.start.assert_called_once_with()
+
+    def test_startup_update_check_is_silent_without_a_newer_release(self) -> None:
+        events: list[tuple] = []
+        app = object.__new__(DownloaderApp)
+        app.events = SimpleNamespace(put=events.append)
+        with patch("src.app.fetch_latest_release_details", side_effect=UpdateCheckError("offline")):
+            app._load_startup_update_status()
+        self.assertEqual(events, [])
+
+        release = LatestRelease(
+            "v0.2.11",
+            "https://github.com/developper001/Deepbrid-Downloader/releases/tag/v0.2.11",
+            (),
+        )
+        with (
+            patch("src.app.fetch_latest_release_details", return_value=release),
+            patch("src.app.is_newer_version", return_value=False),
+        ):
+            app._load_startup_update_status()
+        self.assertEqual(events, [])
+
+    def test_startup_update_check_queues_prompt_for_newer_release(self) -> None:
+        release = LatestRelease(
+            "v0.2.12",
+            "https://github.com/developper001/Deepbrid-Downloader/releases/tag/v0.2.12",
+            (),
+        )
+        events: list[tuple] = []
+        app = object.__new__(DownloaderApp)
+        app.events = SimpleNamespace(put=events.append)
+        with (
+            patch("src.app.fetch_latest_release_details", return_value=release),
+            patch("src.app.is_newer_version", return_value=True),
+            patch("src.app.platform_release_asset", return_value=None),
+        ):
+            app._load_startup_update_status()
+
+        self.assertEqual(events, [("startup_update", release, None)])
+
     def test_release_version_comparison(self) -> None:
         self.assertTrue(is_newer_version("v0.2.6", "0.2.5"))
         self.assertFalse(is_newer_version("v0.2.5", "0.2.5"))
