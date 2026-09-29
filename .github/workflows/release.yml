@@ -85,36 +85,36 @@ jobs:
         shell: bash
         run: |
           mkdir -p release-artifacts
-          VERSION="${GITHUB_REF_NAME#v}"
           ASSET_NAME="DeepbridDownloader-${{ matrix.platform }}${{ matrix.extension }}"
-          LEGACY_ASSET_NAME="DeepbridDownloader-${{ matrix.platform }}-${VERSION}${{ matrix.extension }}"
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp dist/DeepbridDownloader.exe "release-artifacts/$ASSET_NAME"
-            cp dist/DeepbridDownloader.exe "release-artifacts/$LEGACY_ASSET_NAME"
           elif [ "${{ runner.os }}" = "Linux" ]; then
             cp dist/DeepbridDownloader "release-artifacts/$ASSET_NAME"
-            cp dist/DeepbridDownloader "release-artifacts/$LEGACY_ASSET_NAME"
           else
             cp dist/DeepbridDownloader "release-artifacts/$ASSET_NAME"
-            cp dist/DeepbridDownloader "release-artifacts/$LEGACY_ASSET_NAME"
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: DeepbridDownloader-${{ matrix.platform }}-${{ steps.version.outputs.version }}${{ matrix.extension }}
-          path: |
-            release-artifacts/DeepbridDownloader-${{ matrix.platform }}${{ matrix.extension }}
-            release-artifacts/DeepbridDownloader-${{ matrix.platform }}-${{ steps.version.outputs.version }}${{ matrix.extension }}
+          path: release-artifacts/DeepbridDownloader-${{ matrix.platform }}${{ matrix.extension }}
 
   checksums:
     needs: build-release
     runs-on: ubuntu-latest
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
+
+      - name: Prepare release summary
+        shell: bash
+        run: git log -1 --format=%B "$GITHUB_SHA" > release-summary.md
 
       - name: Generate sha256 checksums
         shell: bash
@@ -127,4 +127,5 @@ jobs:
         with:
           files: |
             release-artifacts/**
+          body_path: release-summary.md
           generate_release_notes: true

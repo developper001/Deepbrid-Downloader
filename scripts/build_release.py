@@ -7,12 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from setuptools.config.pyprojecttoml import read_configuration
-
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 ARTIFACTS = ROOT / "release-artifacts"
-VERSION = read_configuration(str(ROOT / "pyproject.toml"))["project"]["version"]
 
 
 def sha256sum(path: Path) -> str:
@@ -27,16 +24,14 @@ def run(command: list[str]) -> None:
     subprocess.run(command, check=True, cwd=ROOT)
 
 
-def publish_binary(binary_path: Path, platform: str, extension: str = "") -> list[Path]:
+def publish_binary(binary_path: Path, platform: str, extension: str = "") -> Path:
     stable_path = ARTIFACTS / f"DeepbridDownloader-{platform}{extension}"
-    legacy_path = ARTIFACTS / f"DeepbridDownloader-{platform}-{VERSION}{extension}"
-    for output_path in (stable_path, legacy_path):
-        output_path.unlink(missing_ok=True)
-        shutil.copy2(binary_path, output_path)
-    return [stable_path, legacy_path]
+    stable_path.unlink(missing_ok=True)
+    shutil.copy2(binary_path, stable_path)
+    return stable_path
 
 
-def build_windows() -> list[Path]:
+def build_windows() -> Path:
     out_dir = DIST / "windows"
     run([
         sys.executable,
@@ -58,7 +53,7 @@ def build_windows() -> list[Path]:
     return publish_binary(exe_path, "Windows", ".exe")
 
 
-def build_linux() -> list[Path]:
+def build_linux() -> Path:
     out_dir = DIST / "linux"
     run([
         sys.executable,
@@ -77,7 +72,7 @@ def build_linux() -> list[Path]:
     return publish_binary(bin_path, "Linux")
 
 
-def build_macos() -> list[Path]:
+def build_macos() -> Path:
     out_dir = DIST / "macos"
     run([
         sys.executable,
@@ -109,7 +104,7 @@ def write_checksums(files: list[Path]) -> Path:
 def main() -> None:
     ARTIFACTS.mkdir(exist_ok=True)
     DIST.mkdir(exist_ok=True)
-    built = [*build_windows(), *build_linux(), *build_macos()]
+    built = [build_windows(), build_linux(), build_macos()]
     checksums = write_checksums(built)
     print(f"Built: {', '.join(str(path) for path in built)}")
     print(f"Checksums: {checksums}")
