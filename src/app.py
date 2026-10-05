@@ -478,6 +478,7 @@ class DownloaderApp:
             xscrollcommand=table_horizontal_scrollbar.set,
         )
         self.table.bind("<Button-1>", self._select_table_row)
+        self.table.bind("<Control-a>", self._select_all_table_rows)
         self.table.bind("<Button-2>" if sys.platform == "darwin" else "<Button-3>", self._show_link_menu)
         self.table.bind("<Control-c>", self._copy_original_link)
         if sys.platform == "darwin":
@@ -1282,7 +1283,18 @@ class DownloaderApp:
         else:
             self.table.selection_set(row_id)
             self._selection_anchor = row_id
+        self.table.focus_set()
         self.table.focus(row_id)
+        return "break"
+
+    def _select_all_table_rows(self, _event: tk.Event | None = None) -> str:
+        row_ids = list(self.table.get_children(""))
+        if row_ids:
+            self.table.selection_set(*row_ids)
+            self._selection_anchor = row_ids[0]
+            self.table.focus(row_ids[0])
+        else:
+            self._selection_anchor = None
         return "break"
 
     def _show_link_menu(self, event: tk.Event) -> str:

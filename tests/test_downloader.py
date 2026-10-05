@@ -78,6 +78,7 @@ class FakeSelectionTable:
     def __init__(self, row_ids: list[str]):
         self.row_ids = row_ids
         self.selected: list[str] = []
+        self.has_widget_focus = False
 
     def get_children(self, _parent: str = "") -> tuple[str, ...]:
         return tuple(self.row_ids)
@@ -104,6 +105,9 @@ class FakeSelectionTable:
 
     def focus(self, _row_id: str) -> None:
         pass
+
+    def focus_set(self) -> None:
+        self.has_widget_focus = True
 
 
 class QueueStoreTests(unittest.TestCase):
@@ -610,6 +614,17 @@ class ValidationAndPresentationTests(unittest.TestCase):
         app._select_table_row(SimpleNamespace(x=0, y=2, state=0))
 
         self.assertEqual(app.table.selection(), ("3",))
+        self.assertTrue(app.table.has_widget_focus)
+
+    def test_control_a_selects_all_queue_rows(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.table = FakeSelectionTable(["1", "2", "3"])
+        app.table.selection_set("2")
+
+        result = app._select_all_table_rows()
+
+        self.assertEqual(result, "break")
+        self.assertEqual(app.table.selection(), ("1", "2", "3"))
 
     def test_control_click_adds_and_toggles_rows(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
