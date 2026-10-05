@@ -921,11 +921,13 @@ class DownloaderApp:
             webbrowser.open(local_path.as_uri())
 
     def _show_readme(self) -> None:
+        colors = self.theme_colors
         popup = tk.Toplevel(self.root)
         popup.title("Deepbrid Downloader README")
         popup.geometry("980x760")
         popup.minsize(700, 500)
         popup.transient(self.root)
+        popup.configure(background=colors["background"])
         popup.grab_set()
 
         container = ttk.Frame(popup, padding=12)
@@ -933,7 +935,12 @@ class DownloaderApp:
         container.columnconfigure(0, weight=1)
         container.rowconfigure(0, weight=1)
 
-        canvas = tk.Canvas(container, highlightthickness=0)
+        canvas = tk.Canvas(
+            container,
+            background=colors["background"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
         canvas.grid(row=0, column=0, sticky="nsew")
         yscrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
         yscrollbar.grid(row=0, column=1, sticky="ns")
@@ -1005,19 +1012,44 @@ class DownloaderApp:
                 level = len(heading_match.group(1))
                 text = heading_match.group(2)
                 font_size = 14 - min(level - 1, 4)
-                label = tk.Label(frame, text=text, font=("Segoe UI", font_size, "bold"), anchor="w", justify="left")
+                label = tk.Label(
+                    frame,
+                    text=text,
+                    font=("Segoe UI", font_size, "bold"),
+                    anchor="w",
+                    justify="left",
+                    background=colors["surface"],
+                    foreground=colors["foreground"],
+                    padx=6,
+                    pady=3,
+                )
                 label.pack(anchor="w", pady=(10 if level == 1 else 6, 4))
                 return
 
             if stripped.startswith("- ") or stripped.startswith("* "):
-                label = tk.Label(frame, text=stripped[2:], justify="left", anchor="w")
+                label = tk.Label(
+                    frame,
+                    text=stripped[2:],
+                    justify="left",
+                    anchor="w",
+                    background=colors["background"],
+                    foreground=colors["foreground"],
+                )
                 label.pack(anchor="w", pady=(2, 2))
                 return
 
             if stripped.startswith("```"):
                 return
 
-            label = tk.Label(frame, text=stripped, justify="left", anchor="w", wraplength=850)
+            label = tk.Label(
+                frame,
+                text=stripped,
+                justify="left",
+                anchor="w",
+                wraplength=850,
+                background=colors["background"],
+                foreground=colors["foreground"],
+            )
             label.pack(anchor="w", pady=(2, 2))
 
         for line in self.readme_text().splitlines():
@@ -1155,15 +1187,19 @@ class DownloaderApp:
         popup.geometry("440x110")
         popup.resizable(False, False)
         popup.transient(self.root)
+        colors = self.theme_colors
+        popup.configure(background=colors["background"])
+        frame = ttk.Frame(popup, padding=12)
+        frame.pack(fill="both", expand=True)
         status = tk.StringVar(master=popup, value=f"Downloading {release.tag}: 0%")
-        ttk.Label(popup, textvariable=status).pack(fill="x", padx=12, pady=(12, 6))
+        ttk.Label(frame, textvariable=status).pack(fill="x", pady=(0, 6))
         progress = ttk.Progressbar(
-            popup,
-            length=410,
+            frame,
+            length=1,
             mode="determinate",
             maximum=max(asset.size, 1),
         )
-        progress.pack(fill="x", padx=12, pady=(0, 12))
+        progress.pack(fill="x")
         threading.Thread(
             target=self._download_and_install_update,
             args=(popup, status, None, None, progress, release, asset),
@@ -1683,6 +1719,7 @@ class DownloaderApp:
                 "foreground": "#e8eee9",
                 "field": "#171c19",
                 "accent": "#6d91ff",
+                "heading_active": "#3b4841",
                 "selection": "#2e426e",
                 "scrollbar": "#56615b",
                 "scrollbar_active": "#6a766f",
@@ -1695,11 +1732,13 @@ class DownloaderApp:
                 "foreground": "#202b25",
                 "field": "#ffffff",
                 "accent": "#3569f6",
+                "heading_active": "#dbe6ff",
                 "selection": "#dbe6ff",
                 "scrollbar": "#d7ded9",
                 "scrollbar_active": "#c3cec8",
                 "scrollbar_trough": "#f3f6f4",
             }
+        self.theme_colors = colors
         self.root.configure(background=colors["background"])
         style.configure(".", background=colors["background"], foreground=colors["foreground"])
         style.configure("TFrame", background=colors["background"])
@@ -1709,6 +1748,11 @@ class DownloaderApp:
         style.configure("TEntry", fieldbackground=colors["field"], foreground=colors["foreground"])
         style.configure("Treeview", background=colors["surface"], fieldbackground=colors["surface"], foreground=colors["foreground"], rowheight=25)
         style.configure("Treeview.Heading", background=colors["background"], foreground=colors["foreground"])
+        style.map(
+            "Treeview.Heading",
+            background=[("active", colors["heading_active"])],
+            foreground=[("active", colors["foreground"])],
+        )
         style.map("Treeview", background=[("selected", colors["selection"])], foreground=[("selected", colors["foreground"])])
         style.configure("Horizontal.TProgressbar", troughcolor=colors["surface"], background=colors["accent"])
         style.configure(
