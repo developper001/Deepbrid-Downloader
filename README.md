@@ -123,12 +123,11 @@ The project uses the standard library unittest suite. Run it locally with:
 python -m unittest -q tests.test_downloader
 ```
 
-GitHub Actions runs the same tests automatically on Ubuntu, Windows, and macOS for supported Python versions.
-It also runs `pip-audit` against `requirements.txt` on pushes and pull requests, with a weekly scheduled audit. The weekly run skips the platform test matrix.
+GitHub Actions runs the same tests on pushes to `main` and pull requests across Ubuntu, Windows, and macOS for supported Python versions. The dependency audit runs weekly only and skips the platform test matrix.
 
 ## GitHub CI
 
-This repository includes a minimal GitHub Actions workflow at `.github/workflows/ci.yml`.
+This repository uses GitHub Actions for CI, weekly dependency audits, and tag-based releases. Workflow actions use Node 24-compatible releases.
 
 It runs:
 - Python 3.10
