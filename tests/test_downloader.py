@@ -39,6 +39,7 @@ from src.app import (
     _parse_linked_image_badge,
     format_bytes,
     format_duration,
+    format_item_eta,
     migrate_legacy_database,
     migrate_legacy_databases,
     redact_log_urls,
@@ -757,6 +758,10 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(format_bytes(1024), "1.0 KB")
         self.assertEqual(format_bytes(None), "Unknown")
         self.assertEqual(format_duration(3661), "1h 1m")
+        self.assertEqual(format_item_eta("downloading", 1000, 400, 100), "6s")
+        self.assertEqual(format_item_eta("downloading", 1000, 400, 0), "Calculating")
+        self.assertEqual(format_item_eta("queued", None, 0, 100), "—")
+        self.assertEqual(format_item_eta("completed", 1000, 1000, 100), "0s")
         app = object.__new__(DownloaderApp)
         app.item_speeds = {1: 100}
         app.item_status_messages = {1: "Link retry 2/5 in 3s"}
@@ -772,6 +777,19 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(app._sort_value(item, "filename"), "bravo.zip")
         self.assertEqual(app._sort_value(item, "remaining"), 400)
         self.assertEqual(app._sort_value(item, "eta"), "link retry 2/5 in 3s")
+
+    def test_total_eta_shows_known_work_when_queued_sizes_are_unknown(self) -> None:
+        app = object.__new__(DownloaderApp)
+        eta_text: list[str] = []
+        app.total_eta_text = SimpleNamespace(set=eta_text.append)
+        items = [
+            SimpleNamespace(enabled=True, status="downloading", total=1000, downloaded=500),
+            SimpleNamespace(enabled=True, status="queued", total=None, downloaded=0),
+        ]
+
+        app._update_total_eta(items, 100)
+
+        self.assertEqual(eta_text, ["Known remaining: 5s; 1 size(s) unknown"])
 
     def test_total_speed_uses_a_slow_exponential_average(self) -> None:
         average = smooth_rate(100.0, 1000.0)

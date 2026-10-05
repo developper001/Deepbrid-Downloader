@@ -58,7 +58,7 @@ ICON_PATH = RESOURCE_ROOT / "src" / "deepbrid-logo.png"
 ICON_ICO_PATH = RESOURCE_ROOT / "src" / "deepbrid-favicon.ico"
 WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
 WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
-DEFAULT_COLUMNS = ("filename", "host", "status", "size", "remaining", "eta")
+DEFAULT_COLUMNS = ("filename", "host", "status", "size", "remaining", "time_remaining", "eta")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
 
@@ -165,6 +165,19 @@ def format_duration(seconds: float | None) -> str:
     if not parts or seconds:
         parts.append(f"{seconds}s")
     return " ".join(parts[:2])
+
+
+def format_item_eta(status: str, total: int | None, downloaded: int, speed: float) -> str:
+    if status in {"completed", "skipped"}:
+        return "0s"
+    if status != "downloading":
+        return "—"
+    if total is None:
+        return "Calculating"
+    remaining = max(0, total - downloaded)
+    if remaining == 0:
+        return "0s"
+    return format_duration(remaining / speed) if speed > 0 else "Calculating"
 
 
 def smooth_rate(previous: float, sample: float, weight: float = 0.1) -> float:
@@ -306,9 +319,13 @@ class DownloaderApp:
         if saved_columns:
             try:
                 requested_columns = json.loads(saved_columns)
-                valid_columns = {"filename", "link", "host", "status", "size", "remaining", "eta"}
+                valid_columns = {
+                    "filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta"
+                }
                 if isinstance(requested_columns, list):
                     self.visible_columns = [column for column in requested_columns if column in valid_columns]
+                    if "eta" in self.visible_columns and "time_remaining" not in self.visible_columns:
+                        self.visible_columns.insert(self.visible_columns.index("eta"), "time_remaining")
                     if not self.visible_columns:
                         self.visible_columns = list(DEFAULT_COLUMNS)
             except json.JSONDecodeError:
@@ -443,7 +460,7 @@ class DownloaderApp:
         table_frame.columnconfigure(0, weight=1)
         self.table = ttk.Treeview(
             table_frame,
-            columns=("filename", "link", "host", "status", "size", "remaining", "eta"),
+            columns=("filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta"),
             show="headings",
             selectmode="extended",
         )
@@ -455,6 +472,7 @@ class DownloaderApp:
             "status": "Host status",
             "size": "Downloaded / total",
             "remaining": "Remaining",
+            "time_remaining": "ETA",
             "eta": "Status",
         }
         self._build_columns_menu()
@@ -466,6 +484,7 @@ class DownloaderApp:
         self.table.column("status", width=120, minwidth=90, stretch=False)
         self.table.column("size", width=145, minwidth=120, stretch=False, anchor="e")
         self.table.column("remaining", width=105, minwidth=90, stretch=False, anchor="e")
+        self.table.column("time_remaining", width=95, minwidth=80, stretch=False, anchor="e")
         self.table.column("eta", width=170, minwidth=130, stretch=False)
         self.table.configure(displaycolumns=self.visible_columns)
         self.table.grid(row=0, column=0, sticky="nsew")
@@ -1216,6 +1235,10 @@ class DownloaderApp:
             return item.total if item.total is not None else -1
         if column == "remaining":
             return max(0, item.total - item.downloaded) if item.total is not None else -1
+        if column == "time_remaining":
+            speed = self.item_speeds.get(item.id, 0) or self.average_transfer_speed
+            eta = format_item_eta(item.status, item.total, item.downloaded, speed)
+            return (eta in {"—", "Calculating"}, eta)
         if column == "eta":
             return self.item_status_messages.get(
                 item.id, item.status.replace("_", " ").title()
@@ -1850,6 +1873,12 @@ class DownloaderApp:
                 host_status,
                 f"{format_bytes(item.downloaded)} / {format_bytes(item.total)}",
                 format_bytes(remaining),
+                format_item_eta(
+                    item.status,
+                    item.total,
+                    item.downloaded,
+                    self.item_speeds.get(item.id, 0) or self.average_transfer_speed,
+                ),
                 queue_status,
             )
             if row_id in existing:
@@ -1874,16 +1903,27 @@ class DownloaderApp:
             self.total_eta_text.set("Total remaining: 0s")
             return
         unknown_sizes = sum(item.total is None for item in pending)
-        if unknown_sizes:
-            self.total_eta_text.set(f"Total remaining: calculating ({unknown_sizes} size(s) unknown)")
-            return
-        bytes_left = sum(max(0, item.total - item.downloaded) for item in pending)
+        bytes_left = sum(
+            max(0, item.total - item.downloaded)
+            for item in pending
+            if item.total is not None
+        )
         if bytes_left == 0:
-            self.total_eta_text.set("Total remaining: 0s")
+            if unknown_sizes:
+                self.total_eta_text.set(f"Total remaining: calculating ({unknown_sizes} size(s) unknown)")
+            else:
+                self.total_eta_text.set("Total remaining: 0s")
         elif speed > 0:
-            self.total_eta_text.set(f"Total remaining: {format_duration(bytes_left / speed)}")
+            estimate = format_duration(bytes_left / speed)
+            if unknown_sizes:
+                self.total_eta_text.set(f"Known remaining: {estimate}; {unknown_sizes} size(s) unknown")
+            else:
+                self.total_eta_text.set(f"Total remaining: {estimate}")
         else:
-            self.total_eta_text.set("Total remaining: calculating")
+            if unknown_sizes:
+                self.total_eta_text.set(f"Known remaining: calculating; {unknown_sizes} size(s) unknown")
+            else:
+                self.total_eta_text.set("Total remaining: calculating")
 
     def _process_events(self) -> None:
         while True:
