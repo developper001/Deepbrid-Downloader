@@ -49,10 +49,12 @@ python launcher.py
 - Show the cached host list immediately, then refresh it in the background; open the API-key page when Deepbrid returns HTTP 401
 - Select multiple queue rows with Ctrl-click or a Shift-click range, then apply context-menu actions in display order
 - Press Ctrl+A in the queue to select all links; selected text remains legible in light mode
+- Track queue-wide progress with a compact bar that includes the active file's partial progress
 - See per-file ETAs and an estimated total, including average-size estimates for queued files whose sizes are unknown
 - Check whether a completed download's size matched the expected size reported by its host
 - Retry blocked or failed links safely, with a pause-and-resume workflow
 - Toggle dark mode, show or hide the console, and customize column visibility and order with a reset-to-defaults option
+- Keep table heading hover, the About README, and update-download progress readable in dark mode
 - Open the Deepbrid dashboard directly from missing or invalid API-key prompts
 - Check for newer releases in About and opt into verified in-app updates with download progress
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
@@ -107,6 +109,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - The app filters for hosts supported by Deepbrid and ignores unsupported ones. It accepts supported links even when a host is currently unavailable, including comma-separated host aliases.
 - Queue priority follows the displayed row order and updates when links are added, removed, or sorted.
 - Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
+- The bottom progress bar tracks settled enabled links plus the active file's partial progress; its caption shows queue count and total ETA.
 - The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
 - Use the Columns dialog to show or hide fields, change their order, or reset the layout to defaults.
 - Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
