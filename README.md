@@ -49,8 +49,10 @@ python launcher.py
 - Show the cached host list immediately, then refresh it in the background; open the API-key page when Deepbrid returns HTTP 401
 - Select multiple queue rows with Ctrl-click or a Shift-click range, then apply context-menu actions in display order
 - Press Ctrl+A in the queue to select all links; selected text remains legible in light mode
+- See per-file ETAs and an estimated total, including average-size estimates for queued files whose sizes are unknown
+- Check whether a completed download's size matched the expected size reported by its host
 - Retry blocked or failed links safely, with a pause-and-resume workflow
-- Toggle dark mode, show or hide the console, and configure visible columns
+- Toggle dark mode, show or hide the console, and customize column visibility and order with a reset-to-defaults option
 - Open the Deepbrid dashboard directly from missing or invalid API-key prompts
 - Check for newer releases in About and opt into verified in-app updates with download progress
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
@@ -104,7 +106,9 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - Paste one or more supported links or HTML containing links into the input box.
 - The app filters for hosts supported by Deepbrid and ignores unsupported ones. It accepts supported links even when a host is currently unavailable, including comma-separated host aliases.
 - Queue priority follows the displayed row order and updates when links are added, removed, or sorted.
-- Rows show status, downloaded/total bytes, remaining bytes, and ETA.
+- Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
+- The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
+- Use the Columns dialog to show or hide fields, change their order, or reset the layout to defaults.
 - Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
 - The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
 - The app keeps active partial files and automatically resumes queued work after startup.
@@ -113,7 +117,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 
 ## Retry and resume behavior
 
-If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block is treated as non-retryable and pauses the queue. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
+If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block is treated as non-retryable and pauses the queue. When the host reports an expected file size, the app checks the received byte count before marking the download complete; mismatches fail and keep the partial file for retry. If the host provides no expected size, the completed file is marked not verified. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
 
 ## Tests
 

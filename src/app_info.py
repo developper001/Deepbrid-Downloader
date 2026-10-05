@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
-__version__ = "0.2.14"
+__version__ = "0.2.15"
 GITHUB_REPOSITORY_URL = "https://github.com/developper001/Deepbrid-Downloader"
 GITHUB_LATEST_RELEASE_URL = (
     "https://api.github.com/repos/developper001/Deepbrid-Downloader/releases/latest"
