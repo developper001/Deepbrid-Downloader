@@ -313,6 +313,7 @@ class DownloaderApp:
         self.api_key = tk.StringVar(value=stored_key)
         self.status_text = tk.StringVar(value="Ready")
         self.progress_value = tk.DoubleVar(value=0)
+        self.queue_progress_text = tk.StringVar(value="Queue: 0/0 files (0%)")
         self.total_eta_text = tk.StringVar(value="Total remaining: calculating")
         self.item_speeds: dict[int, float] = {}
         self.item_status_messages: dict[int, str] = {}
@@ -565,13 +566,20 @@ class DownloaderApp:
         progress_frame = ttk.Frame(bottom_row)
         progress_frame.pack(side="left", fill="both", expand=True)
         progress_frame.columnconfigure(0, weight=1)
-        self.progress = ttk.Progressbar(progress_frame, variable=self.progress_value, maximum=100)
-        ttk.Label(progress_frame, textvariable=self.total_eta_text, anchor="w").grid(
+        summary_frame = ttk.Frame(progress_frame)
+        summary_frame.grid(row=0, column=0, sticky="ew", pady=(0, 3))
+        summary_frame.columnconfigure(1, weight=1)
+        ttk.Label(summary_frame, textvariable=self.queue_progress_text, anchor="w").grid(
             row=0,
             column=0,
-            sticky="ew",
-            pady=(0, 3),
+            sticky="w",
         )
+        ttk.Label(summary_frame, textvariable=self.total_eta_text, anchor="e").grid(
+            row=0,
+            column=1,
+            sticky="e",
+        )
+        self.progress = ttk.Progressbar(progress_frame, variable=self.progress_value, maximum=100)
         self.progress.grid(row=1, column=0, sticky="ew")
 
     def _import_input_file(self) -> None:
@@ -2061,9 +2069,51 @@ class DownloaderApp:
         for row_id in existing - seen:
             self.table.delete(row_id)
         self._save_visible_queue_order()
+        self._update_queue_progress(items)
         self._update_total_eta(
             items,
             self.average_transfer_speed or max(active_speeds, default=0),
+        )
+
+    @staticmethod
+    def _average_completed_size(items) -> float | None:
+        completed_sizes = [
+            item.total
+            for item in items
+            if item.status == "completed" and item.total is not None and item.total > 0
+        ]
+        return sum(completed_sizes) / len(completed_sizes) if completed_sizes else None
+
+    def _update_queue_progress(self, items) -> None:
+        enabled_items = [item for item in items if item.enabled]
+        total_count = len(enabled_items)
+        if not total_count:
+            self.progress_value.set(0)
+            self.queue_progress_text.set("Queue: 0/0 files (0%)")
+            return
+
+        settled_statuses = {"completed", "skipped", "failed", "blocked"}
+        settled_count = sum(item.status in settled_statuses for item in enabled_items)
+        active_item = next(
+            (item for item in enabled_items if item.status == "downloading"),
+            None,
+        )
+        active_fraction = 0.0
+        if active_item is not None:
+            expected_size = active_item.total or self._average_completed_size(items)
+            if expected_size is not None and expected_size > 0:
+                active_fraction = min(
+                    1.0,
+                    max(0.0, active_item.downloaded / expected_size),
+                )
+
+        progress_percent = min(
+            100.0,
+            (settled_count + active_fraction) * 100 / total_count,
+        )
+        self.progress_value.set(progress_percent)
+        self.queue_progress_text.set(
+            f"Queue: {settled_count}/{total_count} files ({progress_percent:.0f}%)"
         )
 
     def _update_total_eta(self, items, speed: float) -> None:
@@ -2080,16 +2130,7 @@ class DownloaderApp:
             for item in pending
             if item.total is not None
         )
-        completed_sizes = [
-            item.total
-            for item in items
-            if item.status == "completed" and item.total is not None and item.total > 0
-        ]
-        average_completed_size = (
-            sum(completed_sizes) / len(completed_sizes)
-            if completed_sizes
-            else None
-        )
+        average_completed_size = self._average_completed_size(items)
         if unknown_sizes and average_completed_size is not None:
             bytes_left += round(unknown_sizes * average_completed_size)
 
@@ -2272,13 +2313,11 @@ class DownloaderApp:
                 if speed > 0:
                     self.item_speeds[item_id] = smooth_rate(self.item_speeds.get(item_id, 0), speed, 0.2)
                     self.average_transfer_speed = smooth_rate(self.average_transfer_speed, speed)
-                self.progress_value.set(min(100, downloaded * 100 / total) if total else 0)
                 self._refresh_rows()
             elif event[0] == "worker_done":
                 self.start_button.configure(state="normal")
                 self.stop_button.configure(state="disabled")
                 self.status_text.set("Stopped" if self.stop_event.is_set() else "Queue complete")
-                self.progress_value.set(0)
                 self._refresh_rows()
         now = time.monotonic()
         if now - self.last_eta_refresh >= 1:

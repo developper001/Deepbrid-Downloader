@@ -802,6 +802,24 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
         self.assertEqual(eta_text, ["Total remaining: ~15s (1 unknown @ avg 1000 B)"])
 
+    def test_queue_progress_counts_enabled_files_and_estimates_unknown_active_size(self) -> None:
+        app = object.__new__(DownloaderApp)
+        progress: list[float] = []
+        queue_text: list[str] = []
+        app.progress_value = SimpleNamespace(set=progress.append)
+        app.queue_progress_text = SimpleNamespace(set=queue_text.append)
+        items = [
+            SimpleNamespace(enabled=True, status="completed", total=1000, downloaded=1000),
+            SimpleNamespace(enabled=True, status="downloading", total=None, downloaded=500),
+            SimpleNamespace(enabled=True, status="queued", total=None, downloaded=0),
+            SimpleNamespace(enabled=False, status="queued", total=None, downloaded=0),
+        ]
+
+        app._update_queue_progress(items)
+
+        self.assertEqual(progress, [50.0])
+        self.assertEqual(queue_text, ["Queue: 1/3 files (50%)"])
+
     def test_total_eta_keeps_unknown_when_no_completed_size_sample_exists(self) -> None:
         app = object.__new__(DownloaderApp)
         eta_text: list[str] = []
