@@ -180,6 +180,12 @@ def format_item_eta(status: str, total: int | None, downloaded: int, speed: floa
     return format_duration(remaining / speed) if speed > 0 else "Calculating"
 
 
+def size_verification_label(status: str, size_verified: bool) -> str:
+    if status != "completed":
+        return "—"
+    return "Verified" if size_verified else "Not verified"
+
+
 def smooth_rate(previous: float, sample: float, weight: float = 0.1) -> float:
     if sample <= 0:
         return previous
@@ -320,7 +326,8 @@ class DownloaderApp:
             try:
                 requested_columns = json.loads(saved_columns)
                 valid_columns = {
-                    "filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta"
+                    "filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta",
+                    "verification",
                 }
                 if isinstance(requested_columns, list):
                     self.visible_columns = [column for column in requested_columns if column in valid_columns]
@@ -464,7 +471,10 @@ class DownloaderApp:
         table_frame.columnconfigure(0, weight=1)
         self.table = ttk.Treeview(
             table_frame,
-            columns=("filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta"),
+            columns=(
+                "filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta",
+                "verification",
+            ),
             show="headings",
             selectmode="extended",
         )
@@ -478,6 +488,7 @@ class DownloaderApp:
             "remaining": "Remaining",
             "time_remaining": "ETA",
             "eta": "Status",
+            "verification": "Verification",
         }
         self._build_columns_menu()
         for column, label in self.column_labels.items():
@@ -490,6 +501,7 @@ class DownloaderApp:
         self.table.column("remaining", width=105, minwidth=90, stretch=False, anchor="e")
         self.table.column("time_remaining", width=95, minwidth=80, stretch=False, anchor="e")
         self.table.column("eta", width=170, minwidth=130, stretch=False)
+        self.table.column("verification", width=110, minwidth=95, stretch=False)
         self.table.configure(displaycolumns=self.visible_columns)
         self.table.grid(row=0, column=0, sticky="nsew")
         table_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.table.yview)
@@ -1255,6 +1267,8 @@ class DownloaderApp:
             return self.item_status_messages.get(
                 item.id, item.status.replace("_", " ").title()
             ).casefold()
+        if column == "verification":
+            return size_verification_label(item.status, item.size_verified).casefold()
         return item.id
 
     def _force_redownload(self) -> None:
@@ -1811,6 +1825,12 @@ class DownloaderApp:
                     self.events.put(("progress", item.id, downloaded, total, speed))
                     last_ui_update = now
 
+            size_verified = False
+
+            def record_size_verification(verified: bool) -> None:
+                nonlocal size_verified
+                size_verified = verified
+
             try:
                 completed = client.download(
                     generated_url,
@@ -1819,12 +1839,14 @@ class DownloaderApp:
                     lambda: self.stop_event.is_set() or item_cancel_event.is_set(),
                     progress,
                     overwrite_existing=item.force,
+                    on_size_verified=record_size_verification,
                 )
                 if completed:
                     final_size = (output_dir / filename).stat().st_size
                     self.store.update(
                         item.id,
                         status="completed",
+                        size_verified=size_verified,
                         downloaded=final_size,
                         total=final_size,
                         error=None,
@@ -1893,6 +1915,7 @@ class DownloaderApp:
                     self.item_speeds.get(item.id, 0) or self.average_transfer_speed,
                 ),
                 queue_status,
+                size_verification_label(item.status, item.size_verified),
             )
             if row_id in existing:
                 self.table.item(row_id, values=values)

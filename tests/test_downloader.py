@@ -41,6 +41,7 @@ from src.app import (
     format_bytes,
     format_duration,
     format_item_eta,
+    size_verification_label,
     migrate_legacy_database,
     migrate_legacy_databases,
     redact_log_urls,
@@ -146,6 +147,7 @@ class QueueStoreTests(unittest.TestCase):
             self.assertEqual(item.url, "https://supported.example/file.zip")
             self.assertTrue(item.enabled)
             self.assertEqual(item.host_status, "unknown")
+            self.assertFalse(item.size_verified)
             with closing(sqlite3.connect(database_path)) as connection:
                 stored_url = connection.execute(
                     "SELECT url, url_ciphertext FROM downloads"
@@ -190,7 +192,7 @@ class QueueStoreTests(unittest.TestCase):
             self.assertTrue(store.add(original_url, host_status="up"))
             item = store.next_item()
             assert item is not None
-            store.update(item.id, deepbrid_link=generated_url)
+            store.update(item.id, deepbrid_link=generated_url, size_verified=True)
 
             with closing(sqlite3.connect(database_path)) as connection:
                 row = connection.execute(
@@ -202,6 +204,7 @@ class QueueStoreTests(unittest.TestCase):
             loaded = store.list_items()[0]
             self.assertEqual(loaded.url, original_url)
             self.assertEqual(loaded.deepbrid_link, generated_url)
+            self.assertTrue(loaded.size_verified)
 
     def test_unknown_and_unsupported_items_are_selected_but_down_and_disabled_are_not(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -757,6 +760,10 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
     def test_byte_duration_and_sort_values_are_consistent(self) -> None:
         self.assertNotIn("remaining", DEFAULT_COLUMNS)
+        self.assertNotIn("verification", DEFAULT_COLUMNS)
+        self.assertEqual(size_verification_label("completed", True), "Verified")
+        self.assertEqual(size_verification_label("completed", False), "Not verified")
+        self.assertEqual(size_verification_label("queued", False), "—")
         self.assertEqual(format_bytes(1024), "1.0 KB")
         self.assertEqual(format_bytes(None), "Unknown")
         self.assertEqual(format_duration(3661), "1h 1m")
@@ -948,6 +955,29 @@ class SecureStoreTests(unittest.TestCase):
 
 
 class ResumeTests(unittest.TestCase):
+    def test_successful_download_reports_whether_size_was_verified(self) -> None:
+        for headers, expected_verification in (
+            ({"Content-Length": "3"}, True),
+            ({}, False),
+        ):
+            with self.subTest(expected_verification=expected_verification):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    response = FakeResponse(200, headers, b"abc")
+                    verification: list[bool] = []
+
+                    with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+                        completed = DeepbridClient("unused").download(
+                            "https://example.com/generated",
+                            "file.bin",
+                            Path(temporary_directory),
+                            lambda: False,
+                            lambda *_: None,
+                            on_size_verified=verification.append,
+                        )
+
+                    self.assertTrue(completed)
+                    self.assertEqual(verification, [expected_verification])
+
     def test_short_download_is_rejected_and_kept_as_partial(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)

@@ -157,6 +157,7 @@ class DeepbridClient:
         should_stop: Callable[[], bool],
         on_progress: Callable[[int, int | None], None],
         overwrite_existing: bool = False,
+        on_size_verified: Callable[[bool], None] | None = None,
     ) -> bool:
         output_dir.mkdir(parents=True, exist_ok=True)
         destination = output_dir / filename
@@ -229,6 +230,8 @@ class DeepbridClient:
                 f"Download size mismatch: received {downloaded} of {total} bytes."
             )
         os.replace(partial, destination)
+        if on_size_verified is not None:
+            on_size_verified(total is not None)
         on_progress(downloaded, total or downloaded)
         return True
 

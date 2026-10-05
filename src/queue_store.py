@@ -18,6 +18,7 @@ class QueueItem:
     id: int
     url: str
     status: str
+    size_verified: bool
     downloaded: int
     total: int | None
     filename: str | None
@@ -42,6 +43,7 @@ class QueueStore:
                     url TEXT NOT NULL UNIQUE,
                     url_ciphertext BLOB,
                     status TEXT NOT NULL DEFAULT 'queued',
+                    size_verified INTEGER NOT NULL DEFAULT 0,
                     downloaded INTEGER NOT NULL DEFAULT 0,
                     total INTEGER,
                     filename TEXT,
@@ -60,6 +62,7 @@ class QueueStore:
             }
             migrations = {
                 "url_ciphertext": "BLOB",
+                "size_verified": "INTEGER NOT NULL DEFAULT 0",
                 "deepbrid_link": "TEXT",
                 "host_status": "TEXT NOT NULL DEFAULT 'unknown'",
                 "host_message": "TEXT NOT NULL DEFAULT ''",
@@ -178,7 +181,7 @@ class QueueStore:
         with self._connect() as connection:
             connection.execute(
                 "UPDATE downloads SET status = 'queued', downloaded = 0, total = NULL, "
-                "deepbrid_link = NULL, error = NULL, force = 1 "
+                "deepbrid_link = NULL, error = NULL, force = 1, size_verified = 0 "
                 "WHERE id = ? AND status != 'downloading'",
                 (item_id,),
             )
@@ -187,14 +190,15 @@ class QueueStore:
         with self._connect() as connection:
             connection.execute(
                 "UPDATE downloads SET status = 'queued', downloaded = 0, total = NULL, "
-                "deepbrid_link = NULL, error = NULL WHERE id = ? AND status != 'downloading'",
+                "deepbrid_link = NULL, error = NULL, size_verified = 0 "
+                "WHERE id = ? AND status != 'downloading'",
                 (item_id,),
             )
 
     def update(self, item_id: int, **fields: object) -> None:
         allowed = {
             "status", "downloaded", "total", "filename", "error", "deepbrid_link",
-            "host_status", "host_message", "enabled",
+            "host_status", "host_message", "enabled", "size_verified",
             "force",
         }
         if not fields or not fields.keys() <= allowed:
@@ -216,6 +220,7 @@ class QueueStore:
             id=row["id"],
             url=self.secure_store.decrypt_text(bytes(row["url_ciphertext"]), URL_AAD),
             status=row["status"],
+            size_verified=bool(row["size_verified"]),
             downloaded=row["downloaded"],
             total=row["total"],
             filename=row["filename"],
