@@ -42,6 +42,7 @@ jobs:
         run: python -m build
 
   dependency-audit:
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
