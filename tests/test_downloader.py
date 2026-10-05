@@ -29,6 +29,7 @@ from src.app import (
     API_KEY_DASHBOARD_URL,
     APP_DATA_DIR,
     DATABASE_PATH,
+    DEFAULT_COLUMNS,
     DownloaderApp,
     LEGACY_DATABASE_PATH,
     LEGACY_QUEUE_DATABASE_PATH,
@@ -755,6 +756,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
             self.assertIn("not a folder", validate_output_folder(file_path))
 
     def test_byte_duration_and_sort_values_are_consistent(self) -> None:
+        self.assertNotIn("remaining", DEFAULT_COLUMNS)
         self.assertEqual(format_bytes(1024), "1.0 KB")
         self.assertEqual(format_bytes(None), "Unknown")
         self.assertEqual(format_duration(3661), "1h 1m")

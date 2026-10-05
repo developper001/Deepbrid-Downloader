@@ -58,7 +58,7 @@ ICON_PATH = RESOURCE_ROOT / "src" / "deepbrid-logo.png"
 ICON_ICO_PATH = RESOURCE_ROOT / "src" / "deepbrid-favicon.ico"
 WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
 WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
-DEFAULT_COLUMNS = ("filename", "host", "status", "size", "remaining", "time_remaining", "eta")
+DEFAULT_COLUMNS = ("filename", "host", "status", "size", "time_remaining", "eta")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
 
@@ -326,6 +326,10 @@ class DownloaderApp:
                     self.visible_columns = [column for column in requested_columns if column in valid_columns]
                     if "eta" in self.visible_columns and "time_remaining" not in self.visible_columns:
                         self.visible_columns.insert(self.visible_columns.index("eta"), "time_remaining")
+                    if self.visible_columns == [
+                        "filename", "host", "status", "size", "remaining", "time_remaining", "eta"
+                    ]:
+                        self.visible_columns.remove("remaining")
                     if not self.visible_columns:
                         self.visible_columns = list(DEFAULT_COLUMNS)
             except json.JSONDecodeError:
@@ -1694,6 +1698,7 @@ class DownloaderApp:
                 continue
             self.store.update(item.id, status="generating", error=None)
             self._log(f"Starting queue item {item.id}: {item.url}")
+            self.events.put(("status", item.id, "Generating premium link..."))
             self.events.put(("refresh",))
             generated_url = None
             returned_name = None
@@ -1776,7 +1781,7 @@ class DownloaderApp:
                 self.active_cancel_events.pop(item.id, None)
                 continue
             self._log(f"Downloading {filename} to {output_dir}")
-            self.events.put(("status", item.id, "Downloading"))
+            self.events.put(("status", item.id, "Downloading file..."))
 
             last_database_update = 0.0
             last_ui_update = 0.0
