@@ -783,13 +783,24 @@ class ValidationAndPresentationTests(unittest.TestCase):
         eta_text: list[str] = []
         app.total_eta_text = SimpleNamespace(set=eta_text.append)
         items = [
+            SimpleNamespace(enabled=True, status="completed", total=1000, downloaded=1000),
             SimpleNamespace(enabled=True, status="downloading", total=1000, downloaded=500),
             SimpleNamespace(enabled=True, status="queued", total=None, downloaded=0),
         ]
 
         app._update_total_eta(items, 100)
 
-        self.assertEqual(eta_text, ["Known remaining: 5s; 1 size(s) unknown"])
+        self.assertEqual(eta_text, ["Total remaining: ~15s (1 unknown @ avg 1000 B)"])
+
+    def test_total_eta_keeps_unknown_when_no_completed_size_sample_exists(self) -> None:
+        app = object.__new__(DownloaderApp)
+        eta_text: list[str] = []
+        app.total_eta_text = SimpleNamespace(set=eta_text.append)
+        items = [SimpleNamespace(enabled=True, status="queued", total=None, downloaded=0)]
+
+        app._update_total_eta(items, 100)
+
+        self.assertEqual(eta_text, ["Total remaining: calculating (1 size(s) unknown)"])
 
     def test_total_speed_uses_a_slow_exponential_average(self) -> None:
         average = smooth_rate(100.0, 1000.0)

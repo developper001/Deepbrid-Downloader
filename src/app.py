@@ -1908,6 +1908,19 @@ class DownloaderApp:
             for item in pending
             if item.total is not None
         )
+        completed_sizes = [
+            item.total
+            for item in items
+            if item.status == "completed" and item.total is not None and item.total > 0
+        ]
+        average_completed_size = (
+            sum(completed_sizes) / len(completed_sizes)
+            if completed_sizes
+            else None
+        )
+        if unknown_sizes and average_completed_size is not None:
+            bytes_left += round(unknown_sizes * average_completed_size)
+
         if bytes_left == 0:
             if unknown_sizes:
                 self.total_eta_text.set(f"Total remaining: calculating ({unknown_sizes} size(s) unknown)")
@@ -1916,7 +1929,13 @@ class DownloaderApp:
         elif speed > 0:
             estimate = format_duration(bytes_left / speed)
             if unknown_sizes:
-                self.total_eta_text.set(f"Known remaining: {estimate}; {unknown_sizes} size(s) unknown")
+                if average_completed_size is not None:
+                    average_size_text = format_bytes(round(average_completed_size))
+                    self.total_eta_text.set(
+                        f"Total remaining: ~{estimate} ({unknown_sizes} unknown @ avg {average_size_text})"
+                    )
+                else:
+                    self.total_eta_text.set(f"Known remaining: {estimate}; {unknown_sizes} size(s) unknown")
             else:
                 self.total_eta_text.set(f"Total remaining: {estimate}")
         else:
