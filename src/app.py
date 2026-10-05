@@ -531,9 +531,17 @@ class DownloaderApp:
         bottom_row.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         self.console_button = ttk.Button(bottom_row, text="Show console", command=self._toggle_console)
         self.console_button.pack(side="left", padx=(0, 10))
-        ttk.Label(bottom_row, textvariable=self.total_eta_text).pack(side="left", padx=(0, 10))
-        self.progress = ttk.Progressbar(bottom_row, variable=self.progress_value, maximum=100)
-        self.progress.pack(side="left", fill="x", expand=True)
+        progress_frame = ttk.Frame(bottom_row)
+        progress_frame.pack(side="left", fill="both", expand=True)
+        progress_frame.columnconfigure(0, weight=1)
+        self.progress = ttk.Progressbar(progress_frame, variable=self.progress_value, maximum=100)
+        ttk.Label(progress_frame, textvariable=self.total_eta_text, anchor="w").grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            pady=(0, 3),
+        )
+        self.progress.grid(row=1, column=0, sticky="ew")
 
     def _import_input_file(self) -> None:
         if not INPUT_PATH.exists():
