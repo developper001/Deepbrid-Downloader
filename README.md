@@ -42,11 +42,13 @@ python launcher.py
 ## Features
 
 - Queue and manage many Deepbrid-supported links from a single interface
+- Add links for supported hosts even when their current availability is down; recognize comma-separated host aliases
 - Keep API keys encrypted in SQLite instead of storing them in plain text
 - Resume interrupted transfers using hidden `.part` files and range-aware downloads
 - Open a searchable, sortable Host Status window with live availability and daily quota details
 - Show the cached host list immediately, then refresh it in the background; open the API-key page when Deepbrid returns HTTP 401
 - Select multiple queue rows with Ctrl-click or a Shift-click range, then apply context-menu actions in display order
+- Press Ctrl+A in the queue to select all links; selected text remains legible in light mode
 - Retry blocked or failed links safely, with a pause-and-resume workflow
 - Toggle dark mode, show or hide the console, and configure visible columns
 - Open the Deepbrid dashboard directly from missing or invalid API-key prompts
@@ -100,10 +102,10 @@ On Linux, Tkinter may need to be installed through the operating system package 
 ## How it works
 
 - Paste one or more supported links or HTML containing links into the input box.
-- The app filters for hosts supported by Deepbrid and ignores unsupported ones.
+- The app filters for hosts supported by Deepbrid and ignores unsupported ones. It accepts supported links even when a host is currently unavailable, including comma-separated host aliases.
 - Queue priority follows the displayed row order and updates when links are added, removed, or sorted.
 - Rows show status, downloaded/total bytes, remaining bytes, and ETA.
-- Click a row to select it, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
+- Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
 - The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
 - The app keeps active partial files and automatically resumes queued work after startup.
 - If the API key is missing or rejected, follow the Deepbrid link in the prompt or Host Status window to retrieve or replace it.
