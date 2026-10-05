@@ -58,6 +58,7 @@ ICON_PATH = RESOURCE_ROOT / "src" / "deepbrid-logo.png"
 ICON_ICO_PATH = RESOURCE_ROOT / "src" / "deepbrid-favicon.ico"
 WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
 WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
+COLUMN_ORDER = ("filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta", "verification")
 DEFAULT_COLUMNS = ("filename", "host", "size", "time_remaining", "eta", "verification")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
@@ -325,10 +326,7 @@ class DownloaderApp:
         if saved_columns:
             try:
                 requested_columns = json.loads(saved_columns)
-                valid_columns = {
-                    "filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta",
-                    "verification",
-                }
+                valid_columns = set(COLUMN_ORDER)
                 if isinstance(requested_columns, list):
                     self.visible_columns = [column for column in requested_columns if column in valid_columns]
                     if "eta" in self.visible_columns and "time_remaining" not in self.visible_columns:
@@ -345,6 +343,29 @@ class DownloaderApp:
                         self.visible_columns = list(DEFAULT_COLUMNS)
             except json.JSONDecodeError:
                 pass
+        self.column_order = []
+        saved_column_order = self.secure_store.get_setting("column_order")
+        if saved_column_order:
+            try:
+                requested_order = json.loads(saved_column_order)
+                if isinstance(requested_order, list):
+                    self.column_order = list(dict.fromkeys(
+                        column
+                        for column in requested_order
+                        if isinstance(column, str) and column in COLUMN_ORDER
+                    ))
+            except json.JSONDecodeError:
+                pass
+        if not self.column_order:
+            self.column_order = list(COLUMN_ORDER)
+        else:
+            self.column_order.extend(
+                column for column in COLUMN_ORDER if column not in self.column_order
+            )
+        visible_set = set(self.visible_columns)
+        self.visible_columns = [
+            column for column in self.column_order if column in visible_set
+        ]
         self.output_dir = Path(
             self.secure_store.get_setting("output_directory") or str(default_download_directory())
         ).expanduser()
@@ -460,9 +481,7 @@ class DownloaderApp:
             command=lambda: self._refresh_hosts(show_popup=True),
         )
         self.refresh_hosts_button.pack(side="left", padx=(8, 0))
-        self.columns_button = ttk.Menubutton(controls, text="Columns")
-        self.columns_menu = tk.Menu(self.columns_button, tearoff=False)
-        self.columns_button.configure(menu=self.columns_menu)
+        self.columns_button = ttk.Button(controls, text="Columns", command=self._show_columns_dialog)
         self.columns_button.pack(side="left", padx=(8, 0))
         self.readme_button = ttk.Button(controls, text="About", command=self._show_readme)
         self.readme_button.pack(side="left", padx=(8, 0))
@@ -475,10 +494,7 @@ class DownloaderApp:
         table_frame.columnconfigure(0, weight=1)
         self.table = ttk.Treeview(
             table_frame,
-            columns=(
-                "filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta",
-                "verification",
-            ),
+            columns=COLUMN_ORDER,
             show="headings",
             selectmode="extended",
         )
@@ -494,7 +510,6 @@ class DownloaderApp:
             "eta": "Status",
             "verification": "Verification",
         }
-        self._build_columns_menu()
         for column, label in self.column_labels.items():
             self.table.heading(column, text=label, command=lambda key=column: self._sort_by(key))
         self.table.column("filename", width=250, minwidth=140, stretch=True)
@@ -1212,28 +1227,145 @@ class DownloaderApp:
                 ("update_download_failed", popup, update_status, check_button, release_button, update_progress, str(error))
             )
 
-    def _build_columns_menu(self) -> None:
-        self.column_visibility_vars: dict[str, tk.BooleanVar] = {}
-        for column, label in self.column_labels.items():
-            variable = tk.BooleanVar(value=column in self.visible_columns)
-            self.column_visibility_vars[column] = variable
-            self.columns_menu.add_checkbutton(
-                label=label,
-                variable=variable,
-                command=lambda key=column: self._toggle_column(key),
+    def _show_columns_dialog(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Columns")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.geometry("440x390")
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        tree = ttk.Treeview(
+            frame,
+            columns=("name", "visibility"),
+            show="headings",
+            selectmode="browse",
+            height=len(COLUMN_ORDER),
+        )
+        tree.heading("name", text="Column")
+        tree.heading("visibility", text="Visibility")
+        tree.column("name", width=250, minwidth=190, stretch=True)
+        tree.column("visibility", width=85, minwidth=80, stretch=False, anchor="center")
+        tree.grid(row=0, column=0, sticky="nsew")
+
+        working_order = list(self.column_order)
+        working_visible = set(self.visible_columns)
+        visible_variable = tk.BooleanVar(master=dialog)
+
+        def selected_column() -> str | None:
+            selected = tree.selection()
+            return selected[0] if selected else None
+
+        def update_controls() -> None:
+            column = selected_column()
+            if column is None:
+                visible_variable.set(False)
+                visibility_check.configure(state="disabled")
+                move_up_button.configure(state="disabled")
+                move_down_button.configure(state="disabled")
+                return
+            visible_variable.set(column in working_visible)
+            visibility_check.configure(state="normal")
+            position = working_order.index(column)
+            move_up_button.configure(state="normal" if position > 0 else "disabled")
+            move_down_button.configure(
+                state="normal" if position < len(working_order) - 1 else "disabled"
             )
 
-    def _toggle_column(self, column: str) -> None:
-        visible = [
-            name for name, variable in self.column_visibility_vars.items()
-            if variable.get()
-        ]
-        if not visible:
-            self.column_visibility_vars[column].set(True)
-            visible = [column]
-        self.visible_columns = visible
-        self.table.configure(displaycolumns=visible)
-        self.secure_store.set_setting("visible_columns", json.dumps(visible))
+        def render_order(selected: str | None = None) -> None:
+            tree.delete(*tree.get_children())
+            for column in working_order:
+                tree.insert(
+                    "",
+                    "end",
+                    iid=column,
+                    values=(self.column_labels[column], "Visible" if column in working_visible else "Hidden"),
+                )
+            if selected in working_order:
+                tree.selection_set(selected)
+                tree.focus(selected)
+            update_controls()
+
+        def toggle_visibility() -> None:
+            column = selected_column()
+            if column is None:
+                return
+            if visible_variable.get():
+                working_visible.add(column)
+            else:
+                working_visible.discard(column)
+            render_order(column)
+
+        def move_column(direction: int) -> None:
+            column = selected_column()
+            if column is None:
+                return
+            position = working_order.index(column)
+            destination = position + direction
+            if not 0 <= destination < len(working_order):
+                return
+            working_order[position], working_order[destination] = (
+                working_order[destination],
+                working_order[position],
+            )
+            render_order(column)
+
+        def reset_defaults() -> None:
+            working_order[:] = COLUMN_ORDER
+            working_visible.clear()
+            working_visible.update(DEFAULT_COLUMNS)
+            render_order(DEFAULT_COLUMNS[0])
+
+        def apply_changes() -> None:
+            if not working_visible:
+                messagebox.showwarning(
+                    "Columns required",
+                    "At least one column must remain visible.",
+                    parent=dialog,
+                )
+                return
+            self.column_order = list(working_order)
+            self.visible_columns = [
+                column for column in self.column_order if column in working_visible
+            ]
+            self.table.configure(displaycolumns=self.visible_columns)
+            self.secure_store.set_setting("column_order", json.dumps(self.column_order))
+            self.secure_store.set_setting("visible_columns", json.dumps(self.visible_columns))
+            dialog.destroy()
+
+        move_buttons = ttk.Frame(frame)
+        move_buttons.grid(row=0, column=1, sticky="ns", padx=(8, 0))
+        move_up_button = ttk.Button(move_buttons, text="Move up", command=lambda: move_column(-1))
+        move_up_button.pack(fill="x")
+        move_down_button = ttk.Button(
+            move_buttons,
+            text="Move down",
+            command=lambda: move_column(1),
+        )
+        move_down_button.pack(fill="x", pady=(6, 0))
+
+        visibility_check = ttk.Checkbutton(
+            frame,
+            text="Visible",
+            variable=visible_variable,
+            command=toggle_visibility,
+            state="disabled",
+        )
+        visibility_check.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        actions = ttk.Frame(frame)
+        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        ttk.Button(actions, text="Reset to defaults", command=reset_defaults).pack(side="left")
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(actions, text="Apply", command=apply_changes).pack(side="right", padx=(0, 8))
+
+        tree.bind("<<TreeviewSelect>>", lambda _event: update_controls())
+        render_order(working_order[0] if working_order else None)
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.grab_set()
 
     def _sort_by(self, column: str) -> None:
         if self.sort_column == column:
