@@ -760,7 +760,8 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
     def test_byte_duration_and_sort_values_are_consistent(self) -> None:
         self.assertNotIn("remaining", DEFAULT_COLUMNS)
-        self.assertNotIn("verification", DEFAULT_COLUMNS)
+        self.assertNotIn("status", DEFAULT_COLUMNS)
+        self.assertIn("verification", DEFAULT_COLUMNS)
         self.assertEqual(size_verification_label("completed", True), "Verified")
         self.assertEqual(size_verification_label("completed", False), "Not verified")
         self.assertEqual(size_verification_label("queued", False), "—")

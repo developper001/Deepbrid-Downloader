@@ -58,7 +58,7 @@ ICON_PATH = RESOURCE_ROOT / "src" / "deepbrid-logo.png"
 ICON_ICO_PATH = RESOURCE_ROOT / "src" / "deepbrid-favicon.ico"
 WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
 WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
-DEFAULT_COLUMNS = ("filename", "host", "status", "size", "time_remaining", "eta")
+DEFAULT_COLUMNS = ("filename", "host", "size", "time_remaining", "eta", "verification")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
 
@@ -337,6 +337,10 @@ class DownloaderApp:
                         "filename", "host", "status", "size", "remaining", "time_remaining", "eta"
                     ]:
                         self.visible_columns.remove("remaining")
+                    if self.visible_columns == [
+                        "filename", "host", "status", "size", "time_remaining", "eta"
+                    ]:
+                        self.visible_columns = list(DEFAULT_COLUMNS)
                     if not self.visible_columns:
                         self.visible_columns = list(DEFAULT_COLUMNS)
             except json.JSONDecodeError:
