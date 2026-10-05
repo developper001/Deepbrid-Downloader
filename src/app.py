@@ -1744,7 +1744,23 @@ class DownloaderApp:
         style.configure("TFrame", background=colors["background"])
         style.configure("TLabel", background=colors["background"], foreground=colors["foreground"])
         style.configure("TButton", background=colors["surface"], foreground=colors["foreground"], padding=(9, 5))
-        style.map("TButton", background=[("active", colors["accent"])])
+        style.map(
+            "TButton",
+            background=[("active", colors["accent"])],
+            foreground=[("active", colors["foreground"])],
+        )
+        style.configure(
+            "TCheckbutton",
+            background=colors["background"],
+            foreground=colors["foreground"],
+            indicatorcolor=colors["field"],
+        )
+        style.map(
+            "TCheckbutton",
+            background=[("active", colors["heading_active"])],
+            foreground=[("active", colors["foreground"])],
+            indicatorcolor=[("selected", colors["accent"]), ("!selected", colors["field"])],
+        )
         style.configure("TEntry", fieldbackground=colors["field"], foreground=colors["foreground"])
         style.configure("Treeview", background=colors["surface"], fieldbackground=colors["surface"], foreground=colors["foreground"], rowheight=25)
         style.configure("Treeview.Heading", background=colors["background"], foreground=colors["foreground"])
