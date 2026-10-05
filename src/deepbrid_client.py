@@ -224,6 +224,10 @@ class DeepbridClient:
                         on_progress(downloaded, total)
                         last_progress_report = now
 
+        if total is not None and downloaded != total:
+            raise DeepbridError(
+                f"Download size mismatch: received {downloaded} of {total} bytes."
+            )
         os.replace(partial, destination)
         on_progress(downloaded, total or downloaded)
         return True

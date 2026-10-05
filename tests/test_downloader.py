@@ -856,6 +856,22 @@ class LinkExtractionTests(unittest.TestCase):
             ("supported", "SUPPORTED: ddownload"),
         )
 
+    def test_extracts_alias_domains_when_host_is_unavailable(self) -> None:
+        hosts = {"ddl.to,ddownload.com": "down (today)"}
+
+        links = extract_supported_links(
+            "https://ddl.to/file.zip https://ddownload.com/part01.rar",
+            hosts,
+        )
+
+        self.assertEqual(
+            links,
+            [
+                ("https://ddl.to/file.zip", "down", "DOWN: ddl.to"),
+                ("https://ddownload.com/part01.rar", "down", "DOWN: ddownload.com"),
+            ],
+        )
+
 
 class SecureStoreTests(unittest.TestCase):
     def test_api_key_is_encrypted_in_sqlite_and_round_trips(self) -> None:
@@ -886,6 +902,24 @@ class SecureStoreTests(unittest.TestCase):
 
 
 class ResumeTests(unittest.TestCase):
+    def test_short_download_is_rejected_and_kept_as_partial(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            response = FakeResponse(200, {"Content-Length": "6"}, b"abc")
+
+            with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+                with self.assertRaisesRegex(DeepbridError, "received 3 of 6 bytes"):
+                    DeepbridClient("unused").download(
+                        "https://example.com/generated",
+                        "file.bin",
+                        output_dir,
+                        lambda: False,
+                        lambda *_: None,
+                    )
+
+            self.assertFalse((output_dir / "file.bin").exists())
+            self.assertEqual((output_dir / ".file.bin.part").read_bytes(), b"abc")
+
     def test_appends_when_server_honors_range_request(self) -> None:
         self._assert_resume_result(
             status=206,

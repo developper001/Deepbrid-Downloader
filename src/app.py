@@ -1524,6 +1524,7 @@ class DownloaderApp:
             foreground=colors["foreground"],
             insertbackground=colors["foreground"],
             selectbackground=colors["selection"],
+            selectforeground=colors["foreground"],
         )
         self._apply_link_input_color()
         self.console.configure(
@@ -1531,6 +1532,7 @@ class DownloaderApp:
             foreground=colors["foreground"],
             insertbackground=colors["foreground"],
             selectbackground=colors["selection"],
+            selectforeground=colors["foreground"],
         )
         self.brand_logo_label.configure(
             image=self.brand_logo_dark if self.dark_theme else self.brand_logo_light

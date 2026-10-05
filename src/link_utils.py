@@ -29,13 +29,16 @@ def _host_for(url: str) -> str:
 def supported_link_status(url: str, hosts: dict[str, str]) -> tuple[str, str] | None:
     hostname = _host_for(url)
     matches = []
-    for domain, status in hosts.items():
-        normalized_domain = domain.lower().removeprefix("www.").rstrip(".")
-        domain_matches = hostname == normalized_domain or hostname.endswith(f".{normalized_domain}")
-        if "." not in normalized_domain:
-            domain_matches = domain_matches or normalized_domain in hostname.split(".")
-        if domain_matches:
-            matches.append((len(normalized_domain), normalized_domain, status.strip()))
+    for domains, status in hosts.items():
+        for domain in domains.split(","):
+            normalized_domain = domain.strip().lower().removeprefix("www.").rstrip(".")
+            if not normalized_domain:
+                continue
+            domain_matches = hostname == normalized_domain or hostname.endswith(f".{normalized_domain}")
+            if "." not in normalized_domain:
+                domain_matches = domain_matches or normalized_domain in hostname.split(".")
+            if domain_matches:
+                matches.append((len(normalized_domain), normalized_domain, status.strip()))
     if not matches:
         return None
     _, domain, status = max(matches)
