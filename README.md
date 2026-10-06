@@ -53,6 +53,7 @@ python launcher.py
 - See per-file ETAs and an estimated total, including average-size estimates for queued files whose sizes are unknown
 - Check whether a completed download's size matched the expected size reported by its host
 - Retry blocked or failed links safely, with a pause-and-resume workflow
+- Open a searchable Settings window for the API key, download folder, appearance, startup behavior, and queue columns; preferences are saved between runs
 - Toggle dark mode, show or hide the console, and customize column visibility and order with a reset-to-defaults option
 - Keep table heading hover, the About README, and update-download progress readable in dark mode
 - Open the Deepbrid dashboard directly from missing or invalid API-key prompts

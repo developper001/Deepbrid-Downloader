@@ -318,6 +318,54 @@ class ValidationAndPresentationTests(unittest.TestCase):
         app._persist_auto_check_updates()
         self.assertEqual(saved_settings["auto_check_updates_on_startup"], "false")
 
+    def test_startup_download_preference_persists_both_checkbox_states(self) -> None:
+        saved_settings: dict[str, str] = {}
+        app = object.__new__(DownloaderApp)
+        app.secure_store = SimpleNamespace(
+            set_setting=lambda name, value: saved_settings.__setitem__(name, value)
+        )
+        app.auto_start_downloads = SimpleNamespace(get=lambda: True)
+
+        app._persist_auto_start_downloads()
+        self.assertEqual(saved_settings["auto_start_downloads_on_startup"], "true")
+
+        app.auto_start_downloads = SimpleNamespace(get=lambda: False)
+        app._persist_auto_start_downloads()
+        self.assertEqual(saved_settings["auto_start_downloads_on_startup"], "false")
+
+    def test_startup_downloads_start_when_enabled_and_queue_ready(self) -> None:
+        scheduled: list[tuple[int, object]] = []
+        app = object.__new__(DownloaderApp)
+        app.startup_download_check_pending = True
+        app.store = SimpleNamespace(recovered_work=False, next_item=lambda: object())
+        app.auto_start_downloads = SimpleNamespace(get=lambda: True)
+        app.api_key = SimpleNamespace(get=lambda: "valid-key")
+        app.root = SimpleNamespace(after=lambda delay, callback: scheduled.append((delay, callback)))
+        started: list[bool] = []
+        app._start = lambda: started.append(True)
+
+        app._maybe_start_downloads_on_startup()
+
+        self.assertFalse(app.startup_download_check_pending)
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual(scheduled[0][0], 300)
+        scheduled[0][1]()
+        self.assertEqual(started, [True])
+
+    def test_startup_downloads_stay_idle_when_preference_is_off(self) -> None:
+        scheduled: list[tuple[int, object]] = []
+        app = object.__new__(DownloaderApp)
+        app.startup_download_check_pending = True
+        app.store = SimpleNamespace(recovered_work=False, next_item=lambda: object())
+        app.auto_start_downloads = SimpleNamespace(get=lambda: False)
+        app.api_key = SimpleNamespace(get=lambda: "valid-key")
+        app.root = SimpleNamespace(after=lambda delay, callback: scheduled.append((delay, callback)))
+
+        app._maybe_start_downloads_on_startup()
+
+        self.assertFalse(app.startup_download_check_pending)
+        self.assertEqual(scheduled, [])
+
     def test_startup_update_check_respects_checkbox_state(self) -> None:
         app = object.__new__(DownloaderApp)
         app.auto_check_updates = SimpleNamespace(get=lambda: False)

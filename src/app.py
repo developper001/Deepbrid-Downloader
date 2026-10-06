@@ -288,6 +288,9 @@ class DownloaderApp:
         self.secure_store = SecureStore(DATABASE_PATH)
         saved_auto_check = self.secure_store.get_setting("auto_check_updates_on_startup")
         self.auto_check_updates = tk.BooleanVar(master=root, value=saved_auto_check != "false")
+        saved_auto_start = self.secure_store.get_setting("auto_start_downloads_on_startup")
+        self.auto_start_downloads = tk.BooleanVar(master=root, value=saved_auto_start == "true")
+        self.startup_download_check_pending = True
         self.store = QueueStore(DATABASE_PATH, self.secure_store)
         self.secure_storage_error: str | None = None
         stored_key = ""
@@ -419,43 +422,17 @@ class DownloaderApp:
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=0)
         main.columnconfigure(1, weight=1)
-        main.rowconfigure(4, weight=1)
+        main.rowconfigure(3, weight=1)
 
         self.brand_logo_light = tk.PhotoImage(file=str(WORDMARK_LIGHT_PATH))
         self.brand_logo_dark = tk.PhotoImage(file=str(WORDMARK_PATH))
         self.brand_logo_label = ttk.Label(main, image=self.brand_logo_light)
-        self.brand_logo_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 18))
-
-        key_row = ttk.Frame(main)
-        key_row.grid(row=0, column=1, sticky="ew", pady=(0, 8))
-        key_row.columnconfigure(1, weight=1)
-        ttk.Label(key_row, text="API key").grid(row=0, column=0, padx=(0, 8))
-        self.api_key_entry = ttk.Entry(key_row, textvariable=self.api_key, show="*")
-        self.api_key_entry.grid(row=0, column=1, sticky="ew")
-        self.key_visibility_button = ttk.Button(key_row, text="Show", command=self._toggle_key_visibility)
-        self.key_visibility_button.grid(row=0, column=2, padx=(8, 0))
-        self.api_key_page_button = ttk.Button(
-            key_row,
-            text="Get API key",
-            command=self._open_api_key_dashboard,
-        )
-        self.api_key_page_button.grid(row=0, column=3, padx=(8, 0))
-
-        folder_row = ttk.Frame(main)
-        folder_row.grid(row=1, column=1, sticky="ew", pady=(0, 8))
-        folder_row.columnconfigure(1, weight=1)
-        ttk.Label(folder_row, text="Download folder").grid(row=0, column=0, padx=(0, 8))
-        ttk.Entry(folder_row, textvariable=self.output_dir_text, state="readonly").grid(
-            row=0, column=1, sticky="ew"
-        )
-        ttk.Button(folder_row, text="Browse...", command=self._choose_output_folder).grid(
-            row=0, column=2, padx=(8, 0)
-        )
-        self.theme_button = ttk.Button(folder_row, text="Dark mode", command=self._toggle_theme)
-        self.theme_button.grid(row=0, column=3, padx=(8, 0))
+        self.brand_logo_label.grid(row=0, column=0, sticky="w", padx=(0, 18))
+        self.settings_button = ttk.Button(main, text="Settings", command=self._show_settings)
+        self.settings_button.grid(row=0, column=1, sticky="e", pady=(0, 8))
 
         add_row = ttk.Frame(main)
-        add_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        add_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         add_row.columnconfigure(0, weight=1)
         self.links_input = tk.Text(add_row, height=3, wrap="word", undo=True)
         self.links_input.grid(row=0, column=0, sticky="ew")
@@ -471,7 +448,7 @@ class DownloaderApp:
         self.add_links_button.configure(state="normal" if self.hosts else "disabled")
 
         controls = ttk.Frame(main)
-        controls.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        controls.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         self.start_button = ttk.Button(controls, text="Start", command=self._start)
         self.start_button.pack(side="left")
         self.stop_button = ttk.Button(controls, text="Stop", command=self._stop, state="disabled")
@@ -482,14 +459,18 @@ class DownloaderApp:
             command=lambda: self._refresh_hosts(show_popup=True),
         )
         self.refresh_hosts_button.pack(side="left", padx=(8, 0))
-        self.columns_button = ttk.Button(controls, text="Columns", command=self._show_columns_dialog)
+        self.columns_button = ttk.Button(
+            controls,
+            text="Configure columns",
+            command=self._show_columns_dialog,
+        )
         self.columns_button.pack(side="left", padx=(8, 0))
         self.readme_button = ttk.Button(controls, text="About", command=self._show_readme)
         self.readme_button.pack(side="left", padx=(8, 0))
         ttk.Label(controls, textvariable=self.status_text).pack(side="right")
 
         self.panes = ttk.Panedwindow(main, orient="vertical")
-        self.panes.grid(row=4, column=0, columnspan=2, sticky="nsew")
+        self.panes.grid(row=3, column=0, columnspan=2, sticky="nsew")
         table_frame = ttk.Frame(self.panes)
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
@@ -560,7 +541,7 @@ class DownloaderApp:
         self.panes.add(table_frame, weight=4)
 
         bottom_row = ttk.Frame(main)
-        bottom_row.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        bottom_row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         self.console_button = ttk.Button(bottom_row, text="Show console", command=self._toggle_console)
         self.console_button.pack(side="left", padx=(0, 10))
         progress_frame = ttk.Frame(bottom_row)
@@ -1082,12 +1063,6 @@ class DownloaderApp:
             ),
         )
         check_button.pack(side="left", padx=(8, 0))
-        ttk.Checkbutton(
-            actions,
-            text="Check for updates on startup",
-            variable=self.auto_check_updates,
-            command=self._persist_auto_check_updates,
-        ).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Close", command=popup.destroy).pack(side="right")
 
     def _check_for_updates(
@@ -1148,6 +1123,198 @@ class DownloaderApp:
     def _persist_auto_check_updates(self) -> None:
         enabled = self.auto_check_updates.get()
         self.secure_store.set_setting("auto_check_updates_on_startup", "true" if enabled else "false")
+
+    def _persist_auto_start_downloads(self) -> None:
+        enabled = self.auto_start_downloads.get()
+        self.secure_store.set_setting("auto_start_downloads_on_startup", "true" if enabled else "false")
+
+    def _show_settings(self, initial_filter: str = "") -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Settings")
+        dialog.geometry("720x560")
+        dialog.minsize(580, 420)
+        dialog.transient(self.root)
+        dialog.configure(background=self.theme_colors["background"])
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        filter_var = tk.StringVar(master=dialog)
+        filter_row = ttk.Frame(frame)
+        filter_row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        filter_row.columnconfigure(1, weight=1)
+        ttk.Label(filter_row, text="Filter settings").grid(row=0, column=0, padx=(0, 8))
+        filter_entry = ttk.Entry(filter_row, textvariable=filter_var)
+        filter_entry.grid(row=0, column=1, sticky="ew")
+
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            pady=(0, 10),
+        )
+        body = ttk.Frame(frame)
+        body.grid(row=2, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        settings_canvas = tk.Canvas(
+            body,
+            background=self.theme_colors["background"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        settings_canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=settings_canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        settings_canvas.configure(yscrollcommand=scrollbar.set)
+        settings_list = ttk.Frame(settings_canvas)
+        settings_window = settings_canvas.create_window((0, 0), window=settings_list, anchor="nw")
+        settings_list.columnconfigure(0, weight=1)
+        settings_list.bind(
+            "<Configure>",
+            lambda _event: settings_canvas.configure(scrollregion=settings_canvas.bbox("all")),
+        )
+        settings_canvas.bind(
+            "<Configure>",
+            lambda event: settings_canvas.itemconfigure(settings_window, width=event.width),
+        )
+        settings_rows: list[tuple[ttk.Frame, str]] = []
+
+        def add_setting(title: str, keywords: str, build_controls) -> None:
+            row = ttk.Frame(settings_list, padding=(0, 6))
+            row.columnconfigure(1, weight=1)
+            index = len(settings_rows)
+            row.grid(row=index, column=0, sticky="ew")
+            ttk.Label(row, text=title).grid(row=0, column=0, sticky="nw", padx=(0, 12))
+            controls = ttk.Frame(row)
+            controls.grid(row=0, column=1, sticky="ew")
+            controls.columnconfigure(0, weight=1)
+            build_controls(controls)
+            ttk.Separator(row, orient="horizontal").grid(
+                row=1,
+                column=0,
+                columnspan=2,
+                sticky="ew",
+                pady=(8, 0),
+            )
+            settings_rows.append((row, f"{title} {keywords}".casefold()))
+
+        no_matches = ttk.Label(settings_list, text="No matching settings")
+
+        def build_api_key(controls: ttk.Frame) -> None:
+            controls.columnconfigure(0, weight=1)
+            self.api_key_entry = ttk.Entry(controls, textvariable=self.api_key, show="*")
+            self.api_key_entry.grid(row=0, column=0, sticky="ew")
+            self.key_visibility_button = ttk.Button(
+                controls,
+                text="Show",
+                command=self._toggle_key_visibility,
+            )
+            self.key_visibility_button.grid(row=0, column=1, padx=(8, 0))
+            ttk.Button(
+                controls,
+                text="Get API key",
+                command=self._open_api_key_dashboard,
+            ).grid(row=0, column=2, padx=(8, 0))
+
+        def build_download_folder(controls: ttk.Frame) -> None:
+            controls.columnconfigure(0, weight=1)
+            ttk.Entry(controls, textvariable=self.output_dir_text, state="readonly").grid(
+                row=0,
+                column=0,
+                sticky="ew",
+            )
+            ttk.Button(controls, text="Browse...", command=self._choose_output_folder).grid(
+                row=0,
+                column=1,
+                padx=(8, 0),
+            )
+
+        dark_mode_setting = tk.BooleanVar(master=dialog, value=self.dark_theme)
+
+        def update_theme() -> None:
+            self.dark_theme = dark_mode_setting.get()
+            self._persist_theme()
+            self._apply_theme()
+            dialog.configure(background=self.theme_colors["background"])
+            settings_canvas.configure(background=self.theme_colors["background"])
+
+        add_setting("API key", "credentials token secret", build_api_key)
+        add_setting("Download folder", "location directory output path", build_download_folder)
+
+        def build_appearance(controls: ttk.Frame) -> None:
+            ttk.Checkbutton(
+                controls,
+                text="Use dark mode",
+                variable=dark_mode_setting,
+                command=update_theme,
+            ).pack(anchor="w")
+
+        add_setting("Appearance", "theme dark light colors", build_appearance)
+
+        def build_auto_start(controls: ttk.Frame) -> None:
+            ttk.Checkbutton(
+                controls,
+                text="Start queued downloads when the app opens",
+                variable=self.auto_start_downloads,
+                command=self._persist_auto_start_downloads,
+            ).pack(anchor="w")
+
+        add_setting("Startup downloads", "start download queue launch automatic", build_auto_start)
+
+        def build_auto_updates(controls: ttk.Frame) -> None:
+            ttk.Checkbutton(
+                controls,
+                text="Check for updates when the app opens",
+                variable=self.auto_check_updates,
+                command=self._persist_auto_check_updates,
+            ).pack(anchor="w")
+
+        add_setting("Startup updates", "check updates releases launch", build_auto_updates)
+
+        def build_columns(controls: ttk.Frame) -> None:
+            ttk.Button(
+                controls,
+                text="Change column visibility and order",
+                command=self._show_columns_dialog,
+            ).pack(anchor="w")
+
+        add_setting(
+            "Configure columns",
+            "columns table visibility order file name original link host host status downloaded total remaining eta status verification",
+            build_columns,
+        )
+
+        def filter_settings(*_args: str) -> None:
+            query = filter_var.get().strip().casefold()
+            visible_index = 0
+            for row, searchable_text in settings_rows:
+                if not query or query in searchable_text:
+                    row.grid(row=visible_index, column=0, sticky="ew")
+                    visible_index += 1
+                else:
+                    row.grid_remove()
+            if visible_index:
+                no_matches.grid_remove()
+            else:
+                no_matches.grid(row=0, column=0, sticky="w", pady=8)
+
+        filter_var.trace_add("write", filter_settings)
+        filter_var.set(initial_filter)
+        filter_settings()
+        if initial_filter:
+            filter_entry.focus_set()
+
+        ttk.Button(frame, text="Close", command=dialog.destroy).grid(
+            row=3,
+            column=0,
+            sticky="e",
+            pady=(10, 0),
+        )
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.grab_set()
 
     def _check_for_updates_on_startup(self) -> None:
         if not self.auto_check_updates.get():
@@ -1327,7 +1494,10 @@ class DownloaderApp:
                     "",
                     "end",
                     iid=column,
-                    values=(self.column_labels[column], "Visible" if column in working_visible else "Hidden"),
+                    values=(
+                        self.column_labels[column],
+                        "Visible" if column in working_visible else "Hidden",
+                    ),
                 )
             if selected in working_order:
                 tree.selection_set(selected)
@@ -1802,7 +1972,6 @@ class DownloaderApp:
         self.brand_logo_label.configure(
             image=self.brand_logo_dark if self.dark_theme else self.brand_logo_light
         )
-        self.theme_button.configure(text="Light mode" if self.dark_theme else "Dark mode")
         self._log("Dark theme enabled." if self.dark_theme else "Light theme enabled.")
 
     def _log(self, message: str) -> None:
@@ -1843,6 +2012,15 @@ class DownloaderApp:
         if self.root.report_callback_exception == self._exception_handler:
             self.root.report_callback_exception = self._previous_callback_exception
 
+    def _maybe_start_downloads_on_startup(self) -> None:
+        if not self.startup_download_check_pending:
+            return
+        self.startup_download_check_pending = False
+        should_start = self.store.recovered_work or self.auto_start_downloads.get()
+        if not should_start or not self.api_key.get().strip() or self.store.next_item() is None:
+            return
+        self.root.after(300, self._start)
+
     def _start(self) -> None:
         if self.worker and self.worker.is_alive():
             return
@@ -1850,7 +2028,7 @@ class DownloaderApp:
         key_error = validate_api_key(api_key)
         if key_error:
             self._show_api_key_dialog("API key required", key_error)
-            self.api_key_entry.focus_set()
+            self._show_settings("API key")
             return
         folder_error = validate_output_folder(self.output_dir_text.get())
         if folder_error:
@@ -2326,8 +2504,7 @@ class DownloaderApp:
                         limits_error,
                         status_code=limits_error_status,
                     )
-                if self.store.recovered_work and self.api_key.get().strip():
-                    self.root.after(300, self._start)
+                self._maybe_start_downloads_on_startup()
             elif event[0] == "hosts_error":
                 _, error_message, status_code = event
                 self.refresh_hosts_button.configure(state="normal")
@@ -2335,6 +2512,7 @@ class DownloaderApp:
                 self._log(error_message)
                 self.add_links_button.configure(state="normal" if self.hosts else "disabled")
                 self._refresh_rows()
+                self._maybe_start_downloads_on_startup()
                 if self._hosts_popup_update is not None:
                     self._hosts_popup_update(
                         self.hosts,
