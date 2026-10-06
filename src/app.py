@@ -376,6 +376,7 @@ class DownloaderApp:
         self.console_visible = False
         self.dark_theme = config.dark_theme
         self.key_save_after: str | None = None
+        self.closing = False
 
         self._build_ui()
         self._install_console_capture()
@@ -2494,8 +2495,24 @@ class DownloaderApp:
         return ""
 
     def _close(self) -> None:
+        if self.closing:
+            return
+        self.closing = True
         self._persist_theme()
         self.stop_event.set()
+        for cancel_event in self.active_cancel_events.values():
+            cancel_event.set()
+        if self.worker and self.worker.is_alive():
+            self.status_text.set("Stopping download before closing...")
+            self._log("Application close requested; waiting for the active download to stop safely.")
+            self.root.after(100, self._finish_close)
+            return
+        self._finish_close()
+
+    def _finish_close(self) -> None:
+        if self.worker and self.worker.is_alive():
+            self.root.after(100, self._finish_close)
+            return
         self._restore_console_capture()
         self.root.destroy()
 

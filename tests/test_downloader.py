@@ -346,6 +346,59 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertEqual(config.output_dir, downloads / "custom")
             self.assertEqual(config.visible_columns, ["filename", "progress"])
 
+
+class ApplicationShutdownTests(unittest.TestCase):
+    def test_close_signals_download_cancellation_and_waits_for_worker(self) -> None:
+        scheduled: list[tuple[int, object]] = []
+        destroyed: list[bool] = []
+        worker_states = iter((True, False))
+        stop_event = threading.Event()
+        cancel_event = threading.Event()
+        app = object.__new__(DownloaderApp)
+        app.closing = False
+        app.worker = SimpleNamespace(is_alive=lambda: next(worker_states))
+        app.stop_event = stop_event
+        app.active_cancel_events = {1: cancel_event}
+        app.root = SimpleNamespace(
+            after=lambda delay, callback: scheduled.append((delay, callback)),
+            destroy=lambda: destroyed.append(True),
+        )
+        app.status_text = SimpleNamespace(set=lambda _message: None)
+        app._persist_theme = lambda: None
+        app._log = lambda _message: None
+        app._restore_console_capture = lambda: None
+
+        app._close()
+
+        self.assertTrue(stop_event.is_set())
+        self.assertTrue(cancel_event.is_set())
+        self.assertTrue(app.closing)
+        self.assertEqual(destroyed, [])
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual(scheduled[0][0], 100)
+
+        scheduled.pop()[1]()
+
+        self.assertEqual(destroyed, [True])
+
+    def test_close_destroys_immediately_when_worker_is_not_running(self) -> None:
+        destroyed: list[bool] = []
+        stop_event = threading.Event()
+        app = object.__new__(DownloaderApp)
+        app.closing = False
+        app.worker = None
+        app.stop_event = stop_event
+        app.active_cancel_events = {}
+        app.root = SimpleNamespace(destroy=lambda: destroyed.append(True))
+        app._persist_theme = lambda: None
+        app._restore_console_capture = lambda: None
+
+        app._close()
+
+        self.assertTrue(stop_event.is_set())
+        self.assertTrue(app.closing)
+        self.assertEqual(destroyed, [True])
+
     def test_unknown_and_unsupported_items_are_selected_but_down_and_disabled_are_not(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
