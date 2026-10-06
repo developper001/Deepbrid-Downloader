@@ -57,7 +57,8 @@ python launcher.py
 - Open a searchable Settings window for the API key, download folder, appearance, startup behavior, and queue columns; preferences are saved between runs
 - Toggle dark mode, show or hide the console, and customize column visibility and order with a reset-to-defaults option
 - Keep table heading hover, the About README, and update-download progress readable in dark mode
-- Open the Deepbrid dashboard directly from missing or invalid API-key prompts
+- Open API-key Settings automatically when startup detects a missing or rejected key; access the Deepbrid key page from Settings
+- Validate the configured API key from Settings and open API-key Settings automatically at startup when it is missing or rejected
 - Check for newer releases in About and opt into verified in-app updates with download progress
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
 - Route standard output, errors, and uncaught exceptions to the in-app console

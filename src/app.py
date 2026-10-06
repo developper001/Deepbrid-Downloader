@@ -150,6 +150,12 @@ def validate_output_folder(folder: Path | str | None) -> str | None:
     return None
 
 
+def _setting_is_enabled(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return value != "false"
+
+
 def format_bytes(value: int | None) -> str:
     if value is None or value < 0:
         return "Unknown"
@@ -312,10 +318,17 @@ class DownloaderApp:
         self.legacy_logs_redacted = redact_legacy_log_file()
         self.secure_store = SecureStore(DATABASE_PATH)
         saved_auto_check = self.secure_store.get_setting("auto_check_updates_on_startup")
-        self.auto_check_updates = tk.BooleanVar(master=root, value=saved_auto_check != "false")
+        self.auto_check_updates = tk.BooleanVar(
+            master=root,
+            value=_setting_is_enabled(saved_auto_check, default=True),
+        )
         saved_auto_start = self.secure_store.get_setting("auto_start_downloads_on_startup")
-        self.auto_start_downloads = tk.BooleanVar(master=root, value=saved_auto_start == "true")
+        self.auto_start_downloads = tk.BooleanVar(
+            master=root,
+            value=_setting_is_enabled(saved_auto_start, default=True),
+        )
         self.startup_download_check_pending = True
+        self.api_key_problem_shown = False
         self.store = QueueStore(DATABASE_PATH, self.secure_store)
         self.secure_storage_error: str | None = None
         stored_key = ""
@@ -468,6 +481,7 @@ class DownloaderApp:
         if not self.legacy_logs_redacted:
             self._log("Could not redact URLs from the existing log file; check that it is writable.")
         self._refresh_hosts()
+        self.root.after_idle(self._check_api_key_on_startup)
         self.root.after_idle(self._check_for_updates_on_startup)
 
     def _build_ui(self) -> None:
@@ -779,11 +793,6 @@ class DownloaderApp:
         ttk.Label(frame, text=description, wraplength=580).pack(anchor="w", pady=(0, 8))
         limits_message = ttk.Label(frame, wraplength=580)
         refresh_message = ttk.Label(frame, wraplength=580)
-        api_key_button = ttk.Button(
-            frame,
-            text="Open Deepbrid API key page",
-            command=self._open_api_key_dashboard,
-        )
         if limits_error:
             limits_message.configure(text=f"Daily limits unavailable: {limits_error}")
             limits_message.pack(anchor="w", pady=(0, 8))
@@ -880,11 +889,26 @@ class DownloaderApp:
                     refresh_message.pack(anchor="w", pady=(0, 8))
             else:
                 refresh_message.pack_forget()
+            for message_label in (limits_message, refresh_message):
+                message_label.unbind("<Button-1>")
+                message_label.configure(
+                    foreground=self.theme_colors["foreground"],
+                    cursor="",
+                )
             if status_code == 401:
-                if not api_key_button.winfo_manager():
-                    api_key_button.pack(anchor="w", pady=(0, 8))
-            else:
-                api_key_button.pack_forget()
+                key_error_message = refresh_message if refresh_error else limits_message
+                key_error_message.configure(
+                    text=f"{key_error_message.cget('text')} Click here to update the API key in Settings.",
+                    foreground=self.theme_colors["accent"],
+                    cursor="hand2",
+                )
+                key_error_message.bind(
+                    "<Button-1>",
+                    lambda _event: self._show_settings(
+                        "API key",
+                        api_key_notice="Deepbrid rejected the configured API key (HTTP 401).",
+                    ),
+                )
             render_rows()
 
         search_var.trace_add("write", lambda *_args: render_rows())
@@ -1208,7 +1232,11 @@ class DownloaderApp:
         enabled = self.auto_start_downloads.get()
         self.secure_store.set_setting("auto_start_downloads_on_startup", "true" if enabled else "false")
 
-    def _show_settings(self, initial_filter: str = "") -> None:
+    def _show_settings(
+        self,
+        initial_filter: str = "",
+        api_key_notice: str | None = None,
+    ) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title("Settings")
         dialog.geometry("720x560")
@@ -1298,6 +1326,33 @@ class DownloaderApp:
                 text="Get API key",
                 command=self._open_api_key_dashboard,
             ).grid(row=0, column=2, padx=(8, 0))
+            key_actions = ttk.Frame(controls)
+            key_actions.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+            check_status = tk.StringVar(master=dialog, value=api_key_notice or "")
+            check_button = ttk.Button(
+                key_actions,
+                text="Check API key",
+                command=lambda: self._check_api_key(check_button, check_status),
+            )
+            check_button.pack(side="left")
+            check_status_label = ttk.Label(
+                key_actions,
+                textvariable=check_status,
+            )
+            check_status_label.pack(side="left", padx=(8, 0))
+
+            def update_check_status_style(*_args: str) -> None:
+                message = check_status.get()
+                is_warning = bool(message) and message not in {
+                    "API key is valid.",
+                    "Checking API key...",
+                }
+                check_status_label.configure(
+                    style="ApiKeyWarning.TLabel" if is_warning else "TLabel"
+                )
+
+            check_status.trace_add("write", update_check_status_style)
+            update_check_status_style()
 
         def build_download_folder(controls: ttk.Frame) -> None:
             controls.columnconfigure(0, weight=1)
@@ -2032,6 +2087,64 @@ class DownloaderApp:
         self.api_key_entry.configure(show="" if visible else "*")
         self.key_visibility_button.configure(text="Hide" if visible else "Show")
 
+    def _check_api_key(self, button: ttk.Button, status: tk.StringVar) -> None:
+        api_key = self.api_key.get().strip()
+        if not api_key:
+            status.set("Enter an API key first.")
+            return
+        button.configure(state="disabled")
+        status.set("Checking API key...")
+        threading.Thread(
+            target=self._validate_api_key_in_background,
+            args=(api_key, button, status),
+            daemon=True,
+        ).start()
+
+    def _validate_api_key_in_background(
+        self,
+        api_key: str,
+        button: ttk.Button | None,
+        status: tk.StringVar | None,
+    ) -> None:
+        try:
+            DeepbridClient(api_key).validate_api_key()
+        except DeepbridError as error:
+            message = (
+                "API key is invalid. Check it or get a new key."
+                if error.status_code == 401
+                else f"Could not check API key: {error}"
+            )
+        else:
+            message = "API key is valid."
+        self.events.put(("api_key_check", button, status, message))
+
+    def _check_api_key_on_startup(self) -> None:
+        api_key = self.api_key.get().strip()
+        if not api_key:
+            self.events.put(("startup_api_key_problem", "No API key is configured."))
+            return
+        threading.Thread(
+            target=self._validate_api_key_on_startup,
+            args=(api_key,),
+            daemon=True,
+        ).start()
+
+    def _validate_api_key_on_startup(self, api_key: str) -> None:
+        try:
+            DeepbridClient(api_key).validate_api_key()
+        except DeepbridError as error:
+            if error.status_code == 401:
+                self.events.put(
+                    ("startup_api_key_problem", "The configured API key is invalid (HTTP 401).")
+                )
+
+    def _open_api_key_settings_for_problem(self, message: str) -> None:
+        if self.api_key_problem_shown:
+            return
+        self.api_key_problem_shown = True
+        self.status_text.set(message)
+        self._show_settings("API key", api_key_notice=message)
+
     def _show_api_key_dialog(self, title: str, message: str) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title(title)
@@ -2042,19 +2155,19 @@ class DownloaderApp:
         content = ttk.Frame(dialog, padding=16)
         content.pack(fill="both", expand=True)
         ttk.Label(content, text=message, wraplength=400, justify="left").pack(anchor="w")
-        link = tk.Label(
-            content,
-            text=API_KEY_DASHBOARD_URL,
-            foreground="#0563C1",
-            cursor="hand2",
-            font=("TkDefaultFont", 9, "underline"),
-        )
-        link.pack(anchor="w", pady=(12, 0))
-        link.bind("<Button-1>", lambda _event: self._open_api_key_dashboard())
-
         buttons = ttk.Frame(content)
         buttons.pack(fill="x", pady=(16, 0))
-        ttk.Button(buttons, text="OK", command=dialog.destroy).pack(side="right")
+        ttk.Button(
+            buttons,
+            text="Open API key settings",
+            command=lambda: (dialog.destroy(), self._show_settings("API key")),
+        ).pack(side="left")
+        ttk.Button(
+            buttons,
+            text="Open Deepbrid API key page",
+            command=self._open_api_key_dashboard,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(buttons, text="Close", command=dialog.destroy).pack(side="right")
         dialog.bind("<Return>", lambda _event: dialog.destroy())
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         dialog.update_idletasks()
@@ -2103,6 +2216,7 @@ class DownloaderApp:
                 "background": "#202522",
                 "surface": "#2b332f",
                 "foreground": "#e8eee9",
+                "error": "#ff7070",
                 "field": "#171c19",
                 "accent": "#6d91ff",
                 "progress_border": "#56615b",
@@ -2117,6 +2231,7 @@ class DownloaderApp:
                 "background": "#edf2ee",
                 "surface": "#ffffff",
                 "foreground": "#202b25",
+                "error": "#b00020",
                 "field": "#ffffff",
                 "accent": "#3569f6",
                 "progress_border": "#aab5c2",
@@ -2131,6 +2246,11 @@ class DownloaderApp:
         style.configure(".", background=colors["background"], foreground=colors["foreground"])
         style.configure("TFrame", background=colors["background"])
         style.configure("TLabel", background=colors["background"], foreground=colors["foreground"])
+        style.configure(
+            "ApiKeyWarning.TLabel",
+            background=colors["background"],
+            foreground=colors["error"],
+        )
         style.configure("TButton", background=colors["surface"], foreground=colors["foreground"], padding=(9, 5))
         style.map(
             "TButton",
@@ -2235,6 +2355,8 @@ class DownloaderApp:
         if not self.startup_download_check_pending:
             return
         self.startup_download_check_pending = False
+        if self.api_key_problem_shown:
+            return
         should_start = self.store.recovered_work or self.auto_start_downloads.get()
         if not should_start or not self.api_key.get().strip() or self.store.next_item() is None:
             return
@@ -2247,7 +2369,6 @@ class DownloaderApp:
         key_error = validate_api_key(api_key)
         if key_error:
             self._show_api_key_dialog("API key required", key_error)
-            self._show_settings("API key")
             return
         folder_error = validate_output_folder(self.output_dir_text.get())
         if folder_error:
@@ -2630,7 +2751,19 @@ class DownloaderApp:
                 event = self.events.get_nowait()
             except queue.Empty:
                 break
-            if event[0] == "update_check":
+            if event[0] == "api_key_check":
+                _, button, status, message = event
+                try:
+                    if button is not None:
+                        button.configure(state="normal")
+                    if status is not None:
+                        status.set(message)
+                except tk.TclError:
+                    continue
+            elif event[0] == "startup_api_key_problem":
+                _, message = event
+                self._open_api_key_settings_for_problem(message)
+            elif event[0] == "update_check":
                 _, popup, update_status, check_button, release_button, update_progress, message, release, asset = event
                 try:
                     if not popup.winfo_exists():
@@ -2733,6 +2866,10 @@ class DownloaderApp:
                         limits_error,
                         status_code=limits_error_status,
                     )
+                if limits_error_status == 401:
+                    self._open_api_key_settings_for_problem(
+                        "Deepbrid rejected the configured API key (HTTP 401)."
+                    )
                 self._maybe_start_downloads_on_startup()
             elif event[0] == "hosts_error":
                 _, error_message, status_code = event
@@ -2741,7 +2878,12 @@ class DownloaderApp:
                 self._log(error_message)
                 self.add_links_button.configure(state="normal" if self.hosts else "disabled")
                 self._refresh_rows()
-                self._maybe_start_downloads_on_startup()
+                if status_code == 401:
+                    self._open_api_key_settings_for_problem(
+                        "Deepbrid rejected the configured API key (HTTP 401)."
+                    )
+                if status_code != 401:
+                    self._maybe_start_downloads_on_startup()
                 if self._hosts_popup_update is not None:
                     self._hosts_popup_update(
                         self.hosts,

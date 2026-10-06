@@ -44,6 +44,7 @@ from src.app import (
     format_item_eta,
     progress_indicator_values,
     size_verification_label,
+    _setting_is_enabled,
     migrate_legacy_database,
     migrate_legacy_databases,
     redact_log_urls,
@@ -335,10 +336,78 @@ class ValidationAndPresentationTests(unittest.TestCase):
         app._persist_auto_start_downloads()
         self.assertEqual(saved_settings["auto_start_downloads_on_startup"], "false")
 
+    def test_startup_download_preference_defaults_to_enabled(self) -> None:
+        self.assertTrue(_setting_is_enabled(None, default=True))
+        self.assertTrue(_setting_is_enabled("true", default=True))
+        self.assertFalse(_setting_is_enabled("false", default=True))
+
+    def test_missing_and_invalid_startup_api_keys_report_a_problem(self) -> None:
+        events: list[tuple] = []
+        app = object.__new__(DownloaderApp)
+        app.api_key = SimpleNamespace(get=lambda: "")
+        app.events = SimpleNamespace(put=events.append)
+
+        app._check_api_key_on_startup()
+
+        self.assertEqual(events, [("startup_api_key_problem", "No API key is configured.")])
+
+        events.clear()
+        with patch(
+            "src.app.DeepbridClient",
+            **{"return_value.validate_api_key.side_effect": DeepbridError("rejected", status_code=401)},
+        ):
+            app._validate_api_key_on_startup("bad-key")
+
+        self.assertEqual(
+            events,
+            [("startup_api_key_problem", "The configured API key is invalid (HTTP 401).")],
+        )
+
+    def test_settings_api_key_check_reports_valid_and_invalid_results(self) -> None:
+        events: list[tuple] = []
+        app = object.__new__(DownloaderApp)
+        app.events = SimpleNamespace(put=events.append)
+        with patch("src.app.DeepbridClient") as client:
+            app._validate_api_key_in_background("valid-key", None, None)
+        client.return_value.validate_api_key.assert_called_once_with()
+        self.assertEqual(events.pop(), ("api_key_check", None, None, "API key is valid."))
+
+        with patch(
+            "src.app.DeepbridClient",
+            **{"return_value.validate_api_key.side_effect": DeepbridError("rejected", status_code=401)},
+        ):
+            app._validate_api_key_in_background("bad-key", None, None)
+        self.assertEqual(
+            events,
+            [("api_key_check", None, None, "API key is invalid. Check it or get a new key.")],
+        )
+
+    def test_api_key_problem_opens_settings_only_once(self) -> None:
+        messages: list[str] = []
+        app = object.__new__(DownloaderApp)
+        app.api_key_problem_shown = False
+        app.status_text = SimpleNamespace(set=messages.append)
+        app._show_settings = lambda initial_filter, **kwargs: messages.append(
+            (initial_filter, kwargs)
+        )
+
+        app._open_api_key_settings_for_problem("API key rejected.")
+        app._open_api_key_settings_for_problem("Another API key error.")
+
+        self.assertTrue(app.api_key_problem_shown)
+        self.assertEqual(
+            messages,
+            [
+                "API key rejected.",
+                ("API key", {"api_key_notice": "API key rejected."}),
+            ],
+        )
+
     def test_startup_downloads_start_when_enabled_and_queue_ready(self) -> None:
         scheduled: list[tuple[int, object]] = []
         app = object.__new__(DownloaderApp)
         app.startup_download_check_pending = True
+        app.api_key_problem_shown = False
         app.store = SimpleNamespace(recovered_work=False, next_item=lambda: object())
         app.auto_start_downloads = SimpleNamespace(get=lambda: True)
         app.api_key = SimpleNamespace(get=lambda: "valid-key")
@@ -358,6 +427,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
         scheduled: list[tuple[int, object]] = []
         app = object.__new__(DownloaderApp)
         app.startup_download_check_pending = True
+        app.api_key_problem_shown = False
         app.store = SimpleNamespace(recovered_work=False, next_item=lambda: object())
         app.auto_start_downloads = SimpleNamespace(get=lambda: False)
         app.api_key = SimpleNamespace(get=lambda: "valid-key")
