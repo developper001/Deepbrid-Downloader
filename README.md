@@ -54,6 +54,7 @@ python launcher.py
 - See per-file ETAs and an estimated total, including average-size estimates for queued files whose sizes are unknown
 - Check whether a completed download's size matched the expected size reported by its host
 - Retry blocked or failed links safely, with a pause-and-resume workflow
+- Stop active downloads safely when closing the app; partial files are kept for resume
 - Open a searchable Settings window for the API key, download folder, appearance, startup behavior, and queue columns; preferences are saved between runs
 - Check the API key from Settings and switch themes directly from the dashboard; startup downloads are enabled by default
 - Toggle dark mode, show or hide the console, and customize column visibility and order with a reset-to-defaults option
@@ -121,7 +122,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults.
 - Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
 - The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
-- The app keeps active partial files and automatically resumes queued work after startup.
+- The app keeps active partial files and automatically resumes queued work after startup. Closing the window requests a safe stop and waits for the active network read to return before exit, preserving the partial file for resume.
 - If the API key is missing or rejected, the app opens the filtered API-key Settings automatically. Use the Get API key button there to retrieve a key, then use Check API key to verify it.
 - Use the About window to open the GitHub repository and check whether a newer release is available.
 
