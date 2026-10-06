@@ -72,51 +72,64 @@ class QueueRunner:
                 self.active_cancel_events.pop(item.id, None)
                 continue
             self.store.update(item.id, status="generating", error=None)
-            self.log(f"Starting queue item {item.id}: {item.url}")
-            self.events.put(StatusEvent(item.id, "Generating premium link..."))
+            self.log(f"Starting queue item {item.id}.")
+            direct_download = item.host_message == "Usenet Finder"
+            self.events.put(
+                StatusEvent(
+                    item.id,
+                    "Starting direct Usenet download..."
+                    if direct_download
+                    else "Generating premium link...",
+                )
+            )
             self.events.put(RefreshEvent())
             generated_url = None
             returned_name = None
             quick_attempts = 0
             blocked = False
 
-            while (
-                not self.stop_event.is_set()
-                and not item_cancel_event.is_set()
-                and generated_url is None
-            ):
-                try:
-                    generated_url, returned_name = client.generate_link(item.url)
-                except DeepbridError as error:
-                    quick_attempts += 1
-                    self.log(f"Link generation attempt {quick_attempts} failed: {error}")
-                    if not error.retryable:
-                        blocked = True
+            if direct_download:
+                generated_url = item.url
+                returned_name = item.filename
+                self.log(f"Using direct Usenet file URL for queue item {item.id}.")
+            else:
+                while (
+                    not self.stop_event.is_set()
+                    and not item_cancel_event.is_set()
+                    and generated_url is None
+                ):
+                    try:
+                        generated_url, returned_name = client.generate_link(item.url)
+                    except DeepbridError as error:
+                        quick_attempts += 1
+                        self.log(f"Link generation attempt {quick_attempts} failed: {error}")
+                        if not error.retryable:
+                            blocked = True
+                            self.store.update(
+                                item.id,
+                                status="blocked",
+                                error=self._stored_error(error),
+                            )
+                            self.events.put(StatusEvent(item.id, "Blocked by Deepbrid"))
+                            self.log(
+                                "Deepbrid marked this response non-retryable. The queue is paused; "
+                                "contact Deepbrid support."
+                            )
+                            break
+                        if quick_attempts < 5:
+                            status = f"Link retry {quick_attempts + 1}/5 in 3s"
+                            delay = 3
+                        else:
+                            status = "Retrying link in 1 hour"
+                            delay = 3600
                         self.store.update(
                             item.id,
-                            status="blocked",
+                            status="retrying",
                             error=self._stored_error(error),
                         )
-                        self.events.put(StatusEvent(item.id, "Blocked by Deepbrid"))
-                        self.log(
-                            "Deepbrid marked this response non-retryable. The queue is paused; "
-                            "contact Deepbrid support."
-                        )
-                        break
-                    if quick_attempts < 5:
-                        status = f"Link retry {quick_attempts + 1}/5 in 3s"
-                        delay = 3
-                    else:
-                        status = "Retrying link in 1 hour"
-                        delay = 3600
-                    self.store.update(
-                        item.id,
-                        status="retrying",
-                        error=self._stored_error(error),
-                    )
-                    self.events.put(StatusEvent(item.id, status))
-                    if item_cancel_event.wait(delay) or self.stop_event.is_set():
-                        break
+                        self.events.put(StatusEvent(item.id, status))
+                        if item_cancel_event.wait(delay) or self.stop_event.is_set():
+                            break
 
             if self.stop_event.is_set():
                 self.store.update(item.id, status="queued")

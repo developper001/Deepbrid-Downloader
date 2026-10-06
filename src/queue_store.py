@@ -128,14 +128,16 @@ class QueueStore:
         url: str,
         host_status: str = "up",
         host_message: str = "",
+        filename: str | None = None,
     ) -> bool:
         url_hash = self.secure_store.hash_text(url, URL_AAD)
         encrypted_url = self.secure_store.encrypt_text(url, URL_AAD)
         with self._connect() as connection:
             cursor = connection.execute(
-                "INSERT OR IGNORE INTO downloads (url, url_ciphertext, host_status, host_message) "
-                "VALUES (?, ?, ?, ?)",
-                (url_hash, encrypted_url, host_status, host_message),
+                "INSERT OR IGNORE INTO downloads "
+                "(url, url_ciphertext, host_status, host_message, filename) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (url_hash, encrypted_url, host_status, host_message, filename),
             )
             return cursor.rowcount > 0
 

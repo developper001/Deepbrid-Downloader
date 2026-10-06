@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Mapping
+from urllib.parse import urlsplit
 
 from .usenet_browser import UsenetBrowserSession, UsenetFinderError
 
@@ -35,7 +36,23 @@ class FinderFile:
 
     @property
     def is_accessible(self) -> bool:
-        return not self.inaccessible and bool(self.link)
+        return not self.inaccessible and is_valid_finder_link(self.link)
+
+
+def is_valid_finder_link(link: str) -> bool:
+    if not link or any(character.isspace() for character in link):
+        return False
+    try:
+        parsed = urlsplit(link)
+        _ = parsed.port
+        return (
+            parsed.scheme.lower() in {"http", "https"}
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+        )
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -123,7 +140,9 @@ class UsenetFinderClient:
         if not isinstance(value, dict):
             raise UsenetFinderError("Finder returned a malformed file entry.")
         name = value.get("name")
-        link = value.get("link", "")
+        link = value.get("link")
+        if not isinstance(link, str) or not link:
+            link = value.get("url", "")
         if not isinstance(name, str) or not isinstance(link, str):
             raise UsenetFinderError("Finder file entry is missing its name or link.")
         inaccessible = value.get("inaccessible")

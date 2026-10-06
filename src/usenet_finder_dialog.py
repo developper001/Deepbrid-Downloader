@@ -21,6 +21,7 @@ class FinderController(Protocol):
     theme_colors: dict[str, str]
     usenet_browser: UsenetBrowserSession
     def _log(self, message: str) -> None: ...
+    def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]: ...
 
 
 class UsenetFinderDialog:
@@ -39,6 +40,7 @@ class UsenetFinderDialog:
         self._has_more = False
         self._offset = 0
         self._results: dict[str, FinderResult] = {}
+        self._files: dict[str, FinderFile] = {}
         self.client = UsenetFinderClient(app.usenet_browser)
         self._poll_id: str | None = None
         self._build_ui()
@@ -80,7 +82,7 @@ class UsenetFinderDialog:
             frame,
             text=(
                 "Complete any Cloudflare check and sign in in the dedicated Chrome profile, "
-                "then return here to search. Results are not added to the download queue."
+                "then return here to search. Resolved links can be added to the download queue."
             ),
             wraplength=850,
         ).grid(row=2, column=0, sticky="w", pady=(6, 10))
@@ -138,7 +140,7 @@ class UsenetFinderDialog:
             frame,
             columns=("name", "size", "availability"),
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
             height=6,
         )
         for column, label, width in (
@@ -152,7 +154,24 @@ class UsenetFinderDialog:
         files_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.files.yview)
         files_scrollbar.grid(row=7, column=1, sticky="ns")
         self.files.configure(yscrollcommand=files_scrollbar.set)
+        self.files.bind("<<TreeviewSelect>>", self._file_selection_changed)
         frame.rowconfigure(7, weight=2)
+        file_actions = ttk.Frame(frame)
+        file_actions.grid(row=8, column=0, sticky="ew", pady=(8, 0))
+        self.add_selected_button = ttk.Button(
+            file_actions,
+            text="Add selected to queue",
+            command=self.add_selected_files,
+            state="disabled",
+        )
+        self.add_selected_button.pack(side="left")
+        self.add_accessible_button = ttk.Button(
+            file_actions,
+            text="Add all accessible to queue",
+            command=self.add_all_accessible_files,
+            state="disabled",
+        )
+        self.add_accessible_button.pack(side="left", padx=(8, 0))
 
     def open_browser(self) -> None:
         try:
@@ -172,6 +191,8 @@ class UsenetFinderDialog:
         self._results.clear()
         self.results.delete(*self.results.get_children())
         self.files.delete(*self.files.get_children())
+        self._files.clear()
+        self._update_file_actions()
         self._has_more = False
         self.more_button.configure(state="disabled")
         self._search_page(append=False)
@@ -207,6 +228,7 @@ class UsenetFinderDialog:
         if result is None:
             return
         self.files.delete(*self.files.get_children())
+        self._files.clear()
         self._begin_request("Resolving selected result...")
 
         def request() -> None:
@@ -224,6 +246,8 @@ class UsenetFinderDialog:
         self.search_button.configure(state="disabled")
         self.resolve_button.configure(state="disabled")
         self.more_button.configure(state="disabled")
+        self.add_selected_button.configure(state="disabled")
+        self.add_accessible_button.configure(state="disabled")
         self.status.set(message)
 
     def _selection_changed(self, _event: tk.Event) -> None:
@@ -248,6 +272,7 @@ class UsenetFinderDialog:
             self.more_button.configure(
                 state="normal" if self._has_more else "disabled"
             )
+            self._update_file_actions()
             if event == "error":
                 self.status.set(f"Finder request failed: {payload}")
                 continue
@@ -279,16 +304,62 @@ class UsenetFinderDialog:
 
     def _show_package(self, package: FinderPackage) -> None:
         self.files.delete(*self.files.get_children())
+        self._files.clear()
         for file in package.files:
-            self.files.insert(
+            item_id = self.files.insert(
                 "",
                 "end",
                 values=(file.name, file.size, self._availability(file)),
             )
+            self._files[item_id] = file
         package_label = f" ({package.name})" if package.name else ""
+        accessible_count = sum(file.is_accessible for file in package.files)
         self.status.set(
             f"Resolved{package_label}: {len(package.files)} file(s); "
-            f"{sum(file.is_accessible for file in package.files)} accessible."
+            f"{accessible_count} accessible."
+        )
+        self._update_file_actions()
+
+    def _file_selection_changed(self, _event: tk.Event | None = None) -> None:
+        self._update_file_actions()
+
+    def _update_file_actions(self) -> None:
+        selected = self.files.selection()
+        can_add = any(
+            self._files.get(item_id) is not None and self._files[item_id].is_accessible
+            for item_id in selected
+        )
+        self.add_selected_button.configure(
+            state="normal" if can_add and not self._request_running else "disabled"
+        )
+        can_add_all = any(file.is_accessible for file in self._files.values())
+        self.add_accessible_button.configure(
+            state="normal" if can_add_all and not self._request_running else "disabled"
+        )
+
+    def add_selected_files(self) -> None:
+        files = [
+            self._files[item_id]
+            for item_id in self.files.selection()
+            if item_id in self._files and self._files[item_id].is_accessible
+        ]
+        self._add_files_to_queue(files)
+
+    def add_all_accessible_files(self) -> None:
+        self._add_files_to_queue(
+            [file for file in self._files.values() if file.is_accessible]
+        )
+
+    def _add_files_to_queue(self, files: list[FinderFile]) -> None:
+        if not files:
+            self.status.set("No accessible files selected to add.")
+            return
+        added, duplicates, invalid = self.app.add_usenet_links(
+            [(file.link, file.name) for file in files]
+        )
+        self.status.set(
+            f"Added {added} file(s) to the download queue; skipped {duplicates} "
+            f"duplicate(s) and {invalid} invalid link(s). Click Start to download."
         )
 
     @staticmethod

@@ -94,7 +94,7 @@ class DeepbridClient:
                 "-H", shlex.quote("Content-Type: application/x-www-form-urlencoded"),
                 "-H", shlex.quote("Accept: application/json"),
                 "-H", shlex.quote(f"User-Agent: {APP_USER_AGENT}"),
-                "--data", shlex.quote(payload.decode("utf-8")),
+                "--data", shlex.quote("link=<SOURCE_URL_REDACTED>"),
             )
         )
         request = urllib.request.Request(
@@ -109,7 +109,7 @@ class DeepbridClient:
             method="POST",
         )
         try:
-            self.log(f"Generating premium link for: {original_url}")
+            self.log("Generating premium link for queued URL.")
             self.log(f"Request: {curl_command}")
             with urllib.request.urlopen(request, timeout=45) as response:
                 response_status = response.status
@@ -117,18 +117,22 @@ class DeepbridClient:
                 try:
                     result = json.loads(response_body)
                 except json.JSONDecodeError as error:
-                    logged_body = response_body.replace(self.api_key, "<REDACTED>")
+                    logged_body = self._redact_source_url(response_body, original_url)
+                    logged_body = logged_body.replace(self.api_key, "<REDACTED>")
                     details = f"HTTP {response_status}; response body: {logged_body}"
                     self.log(details)
                     raise DeepbridError(
                         f"Deepbrid returned invalid JSON\n{details}\nRequest: {curl_command}"
                     ) from error
-                logged_body = response_body.replace(self.api_key, "<REDACTED>")
+                logged_body = self._redact_source_url(response_body, original_url)
+                logged_body = logged_body.replace(self.api_key, "<REDACTED>")
                 if isinstance(result, dict) and isinstance(result.get("link"), str):
                     logged_body = logged_body.replace(result["link"], "<DOWNLOAD_LINK_REDACTED>")
                 self.log(f"HTTP {response.status}; response body: {logged_body}")
         except urllib.error.HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace").replace(self.api_key, "<REDACTED>")
+            detail = error.read().decode("utf-8", errors="replace")
+            detail = self._redact_source_url(detail, original_url)
+            detail = detail.replace(self.api_key, "<REDACTED>")
             error.close()
             self.log(f"HTTP {error.code}; response body: {detail}")
             try:
@@ -157,13 +161,27 @@ class DeepbridClient:
         if not isinstance(result, dict):
             raise DeepbridError(f"Deepbrid returned an unexpected response\nHTTP 200; response body: {logged_body}\nRequest: {curl_command}")
         if result.get("error", 0) != 0:
-            message = str(result.get("message", "Link generation failed"))
+            message = self._redact_source_url(
+                str(result.get("message", "Link generation failed")),
+                original_url,
+            )
             raise DeepbridError(f"{message}\nHTTP 200; response body: {logged_body}\nRequest: {curl_command}")
         generated_url = result.get("link")
         if not isinstance(generated_url, str) or not generated_url:
             raise DeepbridError(f"Deepbrid response did not include a download link\nHTTP 200; response body: {logged_body}\nRequest: {curl_command}")
         filename = result.get("filename")
         return generated_url, filename if isinstance(filename, str) else None
+
+    @staticmethod
+    def _redact_source_url(text: str, source_url: str) -> str:
+        for variant in {
+            source_url,
+            urllib.parse.quote(source_url, safe=""),
+            urllib.parse.quote_plus(source_url, safe=""),
+        }:
+            if variant:
+                text = text.replace(variant, "<SOURCE_URL_REDACTED>")
+        return text
 
     def download(
         self,

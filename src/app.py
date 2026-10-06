@@ -47,13 +47,14 @@ from .app_events import (
     UpdateProgressEvent,
     WorkerDoneEvent,
 )
-from .deepbrid_client import DeepbridClient, DeepbridError
+from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
 from .queue_store import QueueStore
 from .queue_runner import QueueRunner
 from .settings_dialog import SettingsDialog
 from .usenet_finder_dialog import UsenetFinderDialog
 from .usenet_browser import UsenetBrowserSession
+from .usenet_finder import is_valid_finder_link
 from .secure_store import SecureStorageError, SecureStore
 from .single_instance import acquire_single_instance
 from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
@@ -659,6 +660,33 @@ class DownloaderApp:
         self._refresh_rows()
         self._save_visible_queue_order()
 
+    def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]:
+        added_count = 0
+        duplicate_count = 0
+        invalid_count = 0
+        for link, filename in links:
+            if not is_valid_finder_link(link):
+                invalid_count += 1
+                continue
+            safe_name = safe_filename(filename, link, 0)
+            if self.store.add(
+                link,
+                host_status="up",
+                host_message="Usenet Finder",
+                filename=safe_name,
+            ):
+                added_count += 1
+            else:
+                duplicate_count += 1
+        if added_count:
+            self._refresh_rows()
+            self._save_visible_queue_order()
+        self._log(
+            f"Added {added_count} Usenet Finder link(s) to the queue; "
+            f"skipped {duplicate_count} duplicate(s) and {invalid_count} invalid link(s)."
+        )
+        return added_count, duplicate_count, invalid_count
+
     def _clear_link_placeholder(self, _event: tk.Event | None = None) -> None:
         if self.link_placeholder_active:
             self.links_input.delete("1.0", "end")
@@ -873,6 +901,8 @@ class DownloaderApp:
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
         for item in self.store.list_items():
+            if item.host_message == "Usenet Finder":
+                continue
             result = supported_link_status(item.url, hosts)
             if result is None:
                 self.store.update(

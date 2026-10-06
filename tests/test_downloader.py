@@ -225,6 +225,22 @@ class QueueStoreTests(unittest.TestCase):
             self.assertEqual(loaded.deepbrid_link, generated_url)
             self.assertTrue(loaded.size_verified)
 
+    def test_queue_item_keeps_optional_finder_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            self.assertTrue(
+                store.add(
+                    "https://usenet.example/download/123",
+                    host_status="up",
+                    host_message="Usenet Finder",
+                    filename="episode.mkv",
+                )
+            )
+            item = store.next_item()
+            assert item is not None
+            self.assertEqual(item.filename, "episode.mkv")
+            self.assertEqual(item.host_message, "Usenet Finder")
+
 
 class QueueRunnerTests(unittest.TestCase):
     def test_runner_stops_when_api_key_validation_fails(self) -> None:
@@ -254,14 +270,22 @@ class QueueRunnerTests(unittest.TestCase):
             self.assertIsInstance(events.get_nowait(), ApiKeyErrorEvent)
             self.assertIsInstance(events.get_nowait(), WorkerDoneEvent)
 
-    def test_runner_completes_queue_item_without_tk_interaction(self) -> None:
+    def test_runner_completes_queue_item_with_preserved_finder_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
             store = QueueStore(output_dir / "queue.sqlite3")
-            store.add("https://supported.example/file.zip")
+            source_url = "https://usenet.example/download/123"
+            store.add(
+                source_url,
+                host_status="up",
+                host_message="Usenet Finder",
+                filename="finder-file.mkv",
+            )
             events: queue.Queue = queue.Queue()
             stop_event = threading.Event()
             active_cancel_events: dict[int, threading.Event] = {}
+            requested_urls: list[str] = []
+            downloaded_names: list[str] = []
 
             class FakeClient:
                 def __init__(self, *_args, **_kwargs):
@@ -271,17 +295,19 @@ class QueueRunnerTests(unittest.TestCase):
                     pass
 
                 def generate_link(self, _url: str) -> tuple[str, str]:
-                    return "https://premium.example/download", "file.zip"
+                    raise AssertionError("Usenet Finder URLs must not go through link generation.")
 
                 def download(
                     self,
-                    _url,
+                    url,
                     filename,
                     directory,
                     _should_stop,
                     _on_progress,
                     **kwargs,
                 ) -> bool:
+                    requested_urls.append(url)
+                    downloaded_names.append(filename)
                     (directory / filename).write_bytes(b"file")
                     kwargs["on_size_verified"](True)
                     return True
@@ -299,10 +325,46 @@ class QueueRunnerTests(unittest.TestCase):
 
             item = store.list_items()[0]
             self.assertEqual(item.status, "completed")
+            self.assertEqual(requested_urls, [source_url])
+            self.assertEqual(downloaded_names, ["finder-file.mkv"])
+            self.assertEqual(item.deepbrid_link, source_url)
             self.assertEqual(item.downloaded, 4)
             self.assertTrue(item.size_verified)
             self.assertIsInstance(events.queue[-1], WorkerDoneEvent)
             self.assertFalse(active_cancel_events)
+
+
+class UsenetFinderQueueIntegrationTests(unittest.TestCase):
+    def test_accessible_finder_links_enter_the_normal_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app = DownloaderApp.__new__(DownloaderApp)
+            app.store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            app._refresh_rows = Mock()
+            app._save_visible_queue_order = Mock()
+            app._log = Mock()
+            link = "https://usenet.example/download/123?ticket=private"
+
+            counts = app.add_usenet_links(
+                [
+                    (link, "..\\..\\episode.mkv"),
+                    (link, "episode.mkv"),
+                    ("file:///private/file", "private-file"),
+                ]
+            )
+
+            self.assertEqual(counts, (1, 1, 1))
+            item = app.store.next_item()
+            assert item is not None
+            self.assertEqual(item.url, link)
+            self.assertEqual(item.filename, "_.._episode.mkv")
+            self.assertEqual(item.host_message, "Usenet Finder")
+            app._apply_host_statuses({})
+            item = app.store.next_item()
+            assert item is not None
+            self.assertEqual(item.host_message, "Usenet Finder")
+            self.assertEqual(item.host_status, "up")
+            app._refresh_rows.assert_called_once()
+            app._save_visible_queue_order.assert_called_once()
 
 
 class AppConfigurationTests(unittest.TestCase):
@@ -1518,16 +1580,29 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
                     "size": "2 GB",
                     "inaccessible": "missing_volumes",
                 },
+                {
+                    "name": "relative-link.bin",
+                    "link": "/private/download",
+                },
+                {
+                    "name": "finder-url-field.mkv",
+                    "url": "https://usenet-2.myfast.link:8183/get/private-id/6/finder-url-field.mkv",
+                    "size": "492.41 MB",
+                    "isVideo": True,
+                },
             ],
         }
         package = UsenetFinderClient(browser).resolve("opaque-token")
 
         self.assertEqual(package.name, "Example release")
-        self.assertEqual(len(package.files), 2)
+        self.assertEqual(len(package.files), 4)
         self.assertTrue(package.files[0].is_accessible)
         self.assertTrue(package.files[0].is_video)
         self.assertFalse(package.files[1].is_accessible)
         self.assertEqual(package.files[1].inaccessible, "missing_volumes")
+        self.assertFalse(package.files[2].is_accessible)
+        self.assertTrue(package.files[3].is_accessible)
+        self.assertEqual(package.files[3].link, package.files[3].metadata["url"])
         browser.request_json.assert_called_once_with(
             {"do": "process", "token": "opaque-token"}
         )
@@ -1833,6 +1908,32 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
 
         self.assertNotIn(download_url, "\n".join(messages))
         self.assertIn("<DOWNLOAD_LINK_REDACTED>", "\n".join(messages))
+
+    def test_premium_link_generation_does_not_log_source_url(self) -> None:
+        source_url = "https://usenet.example/download/123?ticket=private-value"
+        error = urllib.error.HTTPError(
+            "https://www.deepbrid.com/api/v1/generate/link",
+            403,
+            "Forbidden",
+            {},
+            BytesIO(
+                json.dumps(
+                    {
+                        "message": f"Cannot process {source_url}",
+                        "source": urllib.parse.quote_plus(source_url),
+                    }
+                ).encode()
+            ),
+        )
+        messages: list[str] = []
+        with patch("src.deepbrid_client.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(DeepbridError) as raised:
+                DeepbridClient("secret-test-key", log=messages.append).generate_link(source_url)
+
+        combined = "\n".join(messages) + str(raised.exception)
+        self.assertNotIn(source_url, combined)
+        self.assertNotIn(urllib.parse.quote_plus(source_url), combined)
+        self.assertIn("<SOURCE_URL_REDACTED>", combined)
 
     def test_invalid_json_logs_http_status_and_body(self) -> None:
         response = FakeResponse(200, {}, b"upstream temporarily broken")
