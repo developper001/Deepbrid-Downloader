@@ -130,6 +130,20 @@ On Linux, Tkinter may need to be installed through the operating system package 
 
 If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block is treated as non-retryable and pauses the queue. When the host reports an expected file size, the app checks the received byte count before marking the download complete; mismatches fail and keep the partial file for retry. If the host provides no expected size, the completed file is marked not verified. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
 
+## Usenet Finder prototype
+
+The experimental **Usenet Finder** button opens a separate window that probes the website's undocumented search (`?ajax=1&do=search`) and result-resolution (`?ajax=1&do=process`) endpoints. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. This prototype is isolated from the downloader queue; it does not add or download results. Finder files can be inaccessible and must not be treated as downloadable when their link is empty.
+
+Click **Open Chrome / sign in** in the Finder window. The app opens Chrome or Edge with an isolated profile stored under its application data directory and loopback-only DevTools on a fixed, nonzero port. This prevents Chrome from exposing its `navigator.webdriver` automation signal, which was present in the previous launch mode and may have caused Cloudflare's interactive verification to fail. Complete Cloudflare verification and sign in there; then return to the app and search. Search and resolve requests execute within that same browser page, so session cookies remain in the browser and are never copied into Python. The profile persists between launches. No downloader API key or account credential fields are used for Finder; obsolete Finder username/password settings are removed when the app starts.
+
+To probe it from the UI, open **Usenet Finder**, then use **Open Chrome / sign in**. The optional CLI probe also opens or reuses the dedicated Chrome profile; sign in there first and then run:
+
+```sh
+python -m scripts.probe_usenet_finder "example search" --limit 1 --resolve-first
+```
+
+The probe prints response structure and request diagnostics. Endpoint behavior may change without notice. Install `websocket-client` from the project requirements to enable local Chrome DevTools communication.
+
 ## Tests
 
 The project uses the standard library unittest suite. Run it locally with:

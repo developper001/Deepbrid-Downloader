@@ -52,6 +52,8 @@ from .link_utils import extract_http_links, extract_supported_links, supported_l
 from .queue_store import QueueStore
 from .queue_runner import QueueRunner
 from .settings_dialog import SettingsDialog
+from .usenet_finder_dialog import UsenetFinderDialog
+from .usenet_browser import UsenetBrowserSession
 from .secure_store import SecureStorageError, SecureStore
 from .single_instance import acquire_single_instance
 from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
@@ -68,6 +70,7 @@ PROJECT_ROOT = Path(sys.executable).resolve().parent if IS_FROZEN else Path(__fi
 APP_DATA_DIR = Path(user_data_dir("Deepbrid Downloader", "Deepbrid")).expanduser()
 OUTPUT_DIR = APP_DATA_DIR / "download"
 DATABASE_PATH = APP_DATA_DIR / "queue.sqlite3"
+USENET_BROWSER_PROFILE = APP_DATA_DIR / "usenet-browser-profile"
 LEGACY_DATABASE_PATH = RESOURCE_ROOT / "src" / "deepbrid_downloader.sqlite3"
 LEGACY_QUEUE_DATABASE_PATH = PROJECT_ROOT / "download" / "queue.sqlite3"
 LEGACY_STORAGE_PATH = PROJECT_ROOT / "download"
@@ -351,6 +354,10 @@ class DownloaderApp:
         self.worker: threading.Thread | None = None
         self.active_cancel_events: dict[int, threading.Event] = {}
         self.api_key = tk.StringVar(value=config.api_key)
+        self.usenet_browser = UsenetBrowserSession(
+            USENET_BROWSER_PROFILE,
+            log=self._log,
+        )
         self.status_text = tk.StringVar(value="Ready")
         self.progress_value = tk.DoubleVar(value=0)
         self.queue_progress_text = tk.StringVar(value="Queue: 0/0 files (0%)")
@@ -372,6 +379,7 @@ class DownloaderApp:
         self.hosts = config.hosts
         self.host_limits: dict[str, str] = {}
         self.hosts_popup: tk.Toplevel | None = None
+        self.usenet_finder_dialog: UsenetFinderDialog | None = None
         self._hosts_popup_update = None
         self.console_visible = False
         self.dark_theme = config.dark_theme
@@ -460,6 +468,12 @@ class DownloaderApp:
             command=lambda: self._refresh_hosts(show_popup=True),
         )
         self.refresh_hosts_button.pack(side="left", padx=(8, 0))
+        self.usenet_finder_button = ttk.Button(
+            controls,
+            text="Usenet Finder",
+            command=self._show_usenet_finder,
+        )
+        self.usenet_finder_button.pack(side="left", padx=(8, 0))
         self.columns_button = ttk.Button(
             controls,
             text="Configure columns",
@@ -1167,6 +1181,16 @@ class DownloaderApp:
         api_key_notice: str | None = None,
     ) -> None:
         SettingsDialog(self, initial_filter, api_key_notice)
+
+    def _show_usenet_finder(self) -> None:
+        if self.usenet_finder_dialog is not None:
+            try:
+                if self.usenet_finder_dialog.dialog.winfo_exists():
+                    self.usenet_finder_dialog.dialog.lift()
+                    return
+            except tk.TclError:
+                pass
+        self.usenet_finder_dialog = UsenetFinderDialog(self)
 
     def _check_for_updates_on_startup(self) -> None:
         if not self.auto_check_updates.get():

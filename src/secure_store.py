@@ -22,6 +22,11 @@ class SecureStorageError(RuntimeError):
 
 
 class SecureStore:
+    SECRET_SETTINGS = {
+        "usenet_username",
+        "usenet_password",
+    }
+
     def __init__(self, database_path: Path):
         self.database_path = database_path
         database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +98,12 @@ class SecureStore:
                 (nonce + ciphertext,),
             )
 
+    def delete_secret(self, name: str) -> None:
+        if name not in self.SECRET_SETTINGS:
+            raise ValueError("Unsupported secret setting.")
+        with self._connect() as connection:
+            connection.execute("DELETE FROM app_settings WHERE name = ?", (name,))
+
     def encrypt_text(self, value: str, purpose: bytes) -> bytes:
         nonce = os.urandom(12)
         ciphertext = AESGCM(self._get_encryption_key()).encrypt(
@@ -116,7 +127,7 @@ class SecureStore:
         ).hexdigest()
 
     def get_setting(self, name: str) -> str | None:
-        if name in {"api_key", "encryption_key"}:
+        if name in {"api_key", "encryption_key"} | self.SECRET_SETTINGS:
             raise ValueError("Secret database values cannot be read as plain settings.")
         with self._connect() as connection:
             row = connection.execute(
@@ -125,7 +136,7 @@ class SecureStore:
         return bytes(row[0]).decode("utf-8") if row else None
 
     def set_setting(self, name: str, value: str) -> None:
-        if name in {"api_key", "encryption_key"}:
+        if name in {"api_key", "encryption_key"} | self.SECRET_SETTINGS:
             raise ValueError("Secret database values must use their secure storage methods.")
         with self._connect() as connection:
             connection.execute(

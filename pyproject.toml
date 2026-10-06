@@ -12,6 +12,7 @@ dependencies = [
   "cryptography>=42",
   "filelock>=3.12",
   "platformdirs>=4",
+  "websocket-client>=1.8",
 ]
 
 [tool.setuptools]

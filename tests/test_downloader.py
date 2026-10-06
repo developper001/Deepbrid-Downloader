@@ -10,11 +10,12 @@ import shutil
 import unittest
 import uuid
 import urllib.error
+import urllib.parse
 from contextlib import closing
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
 from src.app_events import (
@@ -71,6 +72,8 @@ from src.queue_runner import QueueRunner
 from src.secure_store import SecureStore
 from src.single_instance import acquire_single_instance
 from src.update_manager import download_update_asset
+from src.usenet_finder import UsenetFinderClient, UsenetFinderError
+from src.usenet_browser import UsenetBrowserSession
 
 
 class FakeResponse:
@@ -307,6 +310,11 @@ class AppConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             database = Path(temporary_directory) / "settings.sqlite3"
             store = SecureStore(database)
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    "INSERT INTO app_settings (name, value) VALUES (?, ?)",
+                    ("usenet_password", b"obsolete-encrypted-value"),
+                )
             downloads = Path(temporary_directory) / "downloads"
             config = AppConfiguration.load(
                 store,
@@ -319,6 +327,12 @@ class AppConfigurationTests(unittest.TestCase):
 
             self.assertTrue(config.auto_check_updates)
             self.assertTrue(config.auto_start_downloads)
+            with closing(sqlite3.connect(database)) as connection:
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT value FROM app_settings WHERE name = 'usenet_password'"
+                    ).fetchone()
+                )
             self.assertEqual(config.output_dir, downloads)
             self.assertIn("progress", config.visible_columns)
             self.assertNotIn("progress_percentage", config.visible_columns)
@@ -1447,6 +1461,213 @@ class ResumeTests(unittest.TestCase):
             self.assertEqual((output_dir / "file.bin").read_bytes(), expected)
             request = open_url.call_args.args[0]
             self.assertEqual(request.get_header("Range"), expected_range)
+
+
+class UsenetFinderPrototypeTests(unittest.TestCase):
+    def test_search_parses_results_and_uses_the_undocumented_query_contract(self) -> None:
+        result_payload = {
+            "title": "Example release",
+            "token": "opaque-token",
+            "cat": "TV",
+            "size": "1.2 GB",
+            "sizeBytes": 1_200_000_000,
+            "date": "2026-10-01",
+            "sources": 2,
+            "dupes": [],
+        }
+        browser = Mock()
+        browser.request_json.return_value = {"results": [result_payload], "hasMore": True}
+        page = UsenetFinderClient(browser).search(
+            "example release",
+            category="tv-hd",
+            offset=15,
+            limit=15,
+        )
+
+        self.assertTrue(page.has_more)
+        self.assertEqual(len(page.results), 1)
+        result = page.results[0]
+        self.assertEqual(result.title, "Example release")
+        self.assertEqual(result.token, "opaque-token")
+        self.assertEqual(result.size_bytes, 1_200_000_000)
+        self.assertIn("sources", result.metadata)
+        browser.request_json.assert_called_once_with(
+            {
+                "do": "search",
+                "q": "example release",
+                "cat": "tv-hd",
+                "offset": "15",
+                "limit": "15",
+            }
+        )
+
+    def test_resolve_marks_unavailable_files_and_preserves_metadata(self) -> None:
+        browser = Mock()
+        browser.request_json.return_value = {
+            "pkg": "Example release",
+            "files": [
+                {
+                    "name": "episode.mkv",
+                    "link": "https://download.example/file",
+                    "size": "1 GB",
+                    "isVideo": True,
+                },
+                {
+                    "name": "archive.rar",
+                    "link": "",
+                    "size": "2 GB",
+                    "inaccessible": "missing_volumes",
+                },
+            ],
+        }
+        package = UsenetFinderClient(browser).resolve("opaque-token")
+
+        self.assertEqual(package.name, "Example release")
+        self.assertEqual(len(package.files), 2)
+        self.assertTrue(package.files[0].is_accessible)
+        self.assertTrue(package.files[0].is_video)
+        self.assertFalse(package.files[1].is_accessible)
+        self.assertEqual(package.files[1].inaccessible, "missing_volumes")
+        browser.request_json.assert_called_once_with(
+            {"do": "process", "token": "opaque-token"}
+        )
+
+    def test_invalid_search_inputs_and_response_shapes_are_explicit(self) -> None:
+        browser = Mock()
+        client = UsenetFinderClient(browser)
+        with self.assertRaises(ValueError):
+            client.search(" ")
+        with self.assertRaises(ValueError):
+            client.search("query", offset=-1)
+        with self.assertRaises(ValueError):
+            client.search("query", limit=101)
+
+        browser.request_json.return_value = {"results": [], "hasMore": "yes"}
+        with self.assertRaisesRegex(UsenetFinderError, "hasMore"):
+            client.search("query")
+
+    def test_browser_challenge_and_sign_in_html_produce_actionable_error(self) -> None:
+        from src.usenet_finder import parse_browser_response
+
+        with self.assertRaisesRegex(UsenetFinderError, "Complete the Cloudflare check"):
+            parse_browser_response(403, "text/html", "<html>challenge</html>")
+        with self.assertRaisesRegex(UsenetFinderError, "instead of JSON"):
+            parse_browser_response(200, "text/html", "<html>login</html>")
+
+
+class UsenetBrowserSessionTests(unittest.TestCase):
+    def test_launch_uses_a_separate_profile_and_loopback_debugger_on_fixed_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            profile = Path(temporary_directory) / "browser-profile"
+            session = UsenetBrowserSession(profile, browser_path="C:/Chrome/chrome.exe")
+            with (
+                patch.object(session, "_debug_port", return_value=None),
+                patch.object(session, "_find_free_port", return_value=9225),
+                patch("src.usenet_browser.subprocess.Popen") as popen,
+            ):
+                session.open()
+            args = popen.call_args.args[0]
+            self.assertIn(f"--user-data-dir={profile}", args)
+            self.assertIn("--remote-debugging-port=9225", args)
+            self.assertIn("--remote-debugging-address=127.0.0.1", args)
+            self.assertEqual(args[-1], "https://www.deepbrid.com/usenet-finder")
+            self.assertEqual((profile / "DeepbridDevToolsPort").read_text(), "9225")
+
+    def test_debug_port_comes_from_the_application_port_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            profile = Path(temporary_directory)
+            (profile / "DeepbridDevToolsPort").write_text("9225", encoding="ascii")
+            session = UsenetBrowserSession(profile)
+            with patch(
+                "src.usenet_browser.urllib.request.urlopen",
+                return_value=FakeResponse(
+                    200,
+                    {},
+                    b'{"Browser":"Chrome/154.0.0.0"}',
+                ),
+            ) as open_url:
+                self.assertEqual(session._debug_port(), 9225)
+            self.assertEqual(
+                open_url.call_args.args[0],
+                "http://127.0.0.1:9225/json/version",
+            )
+
+    def test_fetch_runs_inside_browser_and_never_exports_cookie_header(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            messages: list[str] = []
+            session = UsenetBrowserSession(Path(temporary_directory), log=messages.append)
+            target = {
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/one"
+            }
+            response = {
+                "status": 200,
+                "contentType": "application/json",
+                "body": '{"results":[],"hasMore":false}',
+            }
+            with (
+                patch.object(session, "_wait_for_debug_port", return_value=9222),
+                patch.object(session, "_find_finder_target", return_value=target),
+                patch.object(UsenetBrowserSession, "_evaluate", return_value=response) as evaluate,
+            ):
+                payload = session.request_json({"do": "search", "q": "test", "limit": "15"})
+
+            self.assertEqual(payload, {"results": [], "hasMore": False})
+            expression = evaluate.call_args.args[1]
+            self.assertIn("credentials:'same-origin'", expression)
+            self.assertNotIn("Cookie", expression)
+            self.assertNotIn("token", "\n".join(messages))
+
+    def test_cdp_evaluation_uses_page_runtime_and_closes_local_websocket(self) -> None:
+        class FakeWebSocket:
+            def __init__(self):
+                self.sent: list[str] = []
+                self.closed = False
+
+            def send(self, payload: str) -> None:
+                self.sent.append(payload)
+
+            def recv(self) -> str:
+                return json.dumps(
+                    {
+                        "id": 1,
+                        "result": {
+                            "result": {
+                                "value": {
+                                    "status": 200,
+                                    "contentType": "application/json",
+                                    "body": '{"results":[],"hasMore":false}',
+                                }
+                            }
+                        },
+                    }
+                )
+
+            def close(self) -> None:
+                self.closed = True
+
+        connection = FakeWebSocket()
+        with patch(
+            "src.usenet_browser.websocket.create_connection",
+            return_value=connection,
+        ) as connect:
+            response = UsenetBrowserSession._evaluate(
+                "ws://127.0.0.1:9222/devtools/page/test",
+                "fetch('/usenet-finder')",
+            )
+
+        self.assertEqual(response["status"], 200)
+        self.assertTrue(connection.closed)
+        self.assertEqual(connect.call_args.kwargs["suppress_origin"], True)
+        command = json.loads(connection.sent[0])
+        self.assertEqual(command["method"], "Runtime.evaluate")
+        self.assertTrue(command["params"]["awaitPromise"])
+
+    def test_cdp_refuses_remote_debugging_hosts(self) -> None:
+        with self.assertRaisesRegex(UsenetFinderError, "non-local"):
+            UsenetBrowserSession._evaluate(
+                "ws://attacker.example/devtools/page/test",
+                "document.cookie",
+            )
 
 
 class DeepbridDiagnosticsTests(unittest.TestCase):
