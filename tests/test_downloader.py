@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
+import threading
 import tempfile
 import sqlite3
 import shutil
@@ -15,6 +17,16 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
+from src.app_events import (
+    ApiKeyCheckEvent,
+    ApiKeyErrorEvent,
+    HostsErrorEvent,
+    HostsLoadedEvent,
+    StartupApiKeyProblemEvent,
+    StartupUpdateEvent,
+    WorkerDoneEvent,
+)
+from src.app_config import AppConfiguration
 from src.app_info import (
     GITHUB_LATEST_RELEASE_URL,
     LatestRelease,
@@ -55,6 +67,7 @@ from src.app import (
 )
 from src.link_utils import extract_supported_links, supported_link_status
 from src.queue_store import QueueStore
+from src.queue_runner import QueueRunner
 from src.secure_store import SecureStore
 from src.single_instance import acquire_single_instance
 from src.update_manager import download_update_asset
@@ -209,6 +222,130 @@ class QueueStoreTests(unittest.TestCase):
             self.assertEqual(loaded.deepbrid_link, generated_url)
             self.assertTrue(loaded.size_verified)
 
+
+class QueueRunnerTests(unittest.TestCase):
+    def test_runner_stops_when_api_key_validation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            store.add("https://supported.example/file.zip")
+            events: queue.Queue = queue.Queue()
+            stop_event = threading.Event()
+            active_cancel_events: dict[int, threading.Event] = {}
+
+            def reject_key() -> None:
+                raise DeepbridError("rejected", status_code=401)
+
+            client = SimpleNamespace(validate_api_key=reject_key)
+
+            with patch("src.queue_runner.DeepbridClient", return_value=client):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    Path(temporary_directory),
+                    events,
+                    stop_event,
+                    active_cancel_events,
+                    lambda _message: None,
+                ).run()
+
+            self.assertIsInstance(events.get_nowait(), ApiKeyErrorEvent)
+            self.assertIsInstance(events.get_nowait(), WorkerDoneEvent)
+
+    def test_runner_completes_queue_item_without_tk_interaction(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add("https://supported.example/file.zip")
+            events: queue.Queue = queue.Queue()
+            stop_event = threading.Event()
+            active_cancel_events: dict[int, threading.Event] = {}
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def generate_link(self, _url: str) -> tuple[str, str]:
+                    return "https://premium.example/download", "file.zip"
+
+                def download(
+                    self,
+                    _url,
+                    filename,
+                    directory,
+                    _should_stop,
+                    _on_progress,
+                    **kwargs,
+                ) -> bool:
+                    (directory / filename).write_bytes(b"file")
+                    kwargs["on_size_verified"](True)
+                    return True
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    events,
+                    stop_event,
+                    active_cancel_events,
+                    lambda _message: None,
+                ).run()
+
+            item = store.list_items()[0]
+            self.assertEqual(item.status, "completed")
+            self.assertEqual(item.downloaded, 4)
+            self.assertTrue(item.size_verified)
+            self.assertIsInstance(events.queue[-1], WorkerDoneEvent)
+            self.assertFalse(active_cancel_events)
+
+
+class AppConfigurationTests(unittest.TestCase):
+    def test_configuration_loads_defaults_and_persists_column_migrations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database = Path(temporary_directory) / "settings.sqlite3"
+            store = SecureStore(database)
+            downloads = Path(temporary_directory) / "downloads"
+            config = AppConfiguration.load(
+                store,
+                COLUMN_ORDER,
+                DEFAULT_COLUMNS,
+                lambda: downloads,
+                lambda: None,
+                lambda: None,
+            )
+
+            self.assertTrue(config.auto_check_updates)
+            self.assertTrue(config.auto_start_downloads)
+            self.assertEqual(config.output_dir, downloads)
+            self.assertIn("progress", config.visible_columns)
+            self.assertNotIn("progress_percentage", config.visible_columns)
+            self.assertEqual(
+                config.column_order[config.column_order.index("progress") + 1],
+                "progress_percentage",
+            )
+
+            store.set_setting("auto_start_downloads_on_startup", "false")
+            store.set_setting("dark_theme", "true")
+            store.set_setting("hosts", json.dumps({"example.com": "up"}))
+            store.set_setting("output_directory", str(downloads / "custom"))
+            store.set_setting("visible_columns", json.dumps(["filename", "progress"]))
+            config = AppConfiguration.load(
+                store,
+                COLUMN_ORDER,
+                DEFAULT_COLUMNS,
+                lambda: downloads,
+                lambda: None,
+                lambda: None,
+            )
+            self.assertFalse(config.auto_start_downloads)
+            self.assertTrue(config.dark_theme)
+            self.assertEqual(config.hosts, {"example.com": "up"})
+            self.assertEqual(config.output_dir, downloads / "custom")
+            self.assertEqual(config.visible_columns, ["filename", "progress"])
+
     def test_unknown_and_unsupported_items_are_selected_but_down_and_disabled_are_not(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
@@ -349,7 +486,10 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
         app._check_api_key_on_startup()
 
-        self.assertEqual(events, [("startup_api_key_problem", "No API key is configured.")])
+        self.assertEqual(
+            events,
+            [StartupApiKeyProblemEvent("No API key is configured.")],
+        )
 
         events.clear()
         with patch(
@@ -360,7 +500,11 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
         self.assertEqual(
             events,
-            [("startup_api_key_problem", "The configured API key is invalid (HTTP 401).")],
+            [
+                StartupApiKeyProblemEvent(
+                    "The configured API key is invalid (HTTP 401)."
+                )
+            ],
         )
 
     def test_settings_api_key_check_reports_valid_and_invalid_results(self) -> None:
@@ -370,7 +514,10 @@ class ValidationAndPresentationTests(unittest.TestCase):
         with patch("src.app.DeepbridClient") as client:
             app._validate_api_key_in_background("valid-key", None, None)
         client.return_value.validate_api_key.assert_called_once_with()
-        self.assertEqual(events.pop(), ("api_key_check", None, None, "API key is valid."))
+        self.assertEqual(
+            events.pop(),
+            ApiKeyCheckEvent(None, None, "API key is valid."),
+        )
 
         with patch(
             "src.app.DeepbridClient",
@@ -379,7 +526,13 @@ class ValidationAndPresentationTests(unittest.TestCase):
             app._validate_api_key_in_background("bad-key", None, None)
         self.assertEqual(
             events,
-            [("api_key_check", None, None, "API key is invalid. Check it or get a new key.")],
+            [
+                ApiKeyCheckEvent(
+                    None,
+                    None,
+                    "API key is invalid. Check it or get a new key.",
+                )
+            ],
         )
 
     def test_api_key_problem_opens_settings_only_once(self) -> None:
@@ -487,7 +640,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
         ):
             app._load_startup_update_status()
 
-        self.assertEqual(events, [("startup_update", release, None)])
+        self.assertEqual(events, [StartupUpdateEvent(release, None)])
 
     def test_release_version_comparison(self) -> None:
         self.assertTrue(is_newer_version("v0.2.6", "0.2.5"))
@@ -571,9 +724,9 @@ class ValidationAndPresentationTests(unittest.TestCase):
         ):
             app._load_update_status(None, None, None, None, None)
 
-        self.assertIn("newer than the latest published release", events[0][6])
-        self.assertIsNone(events[0][7])
-        self.assertIsNone(events[0][8])
+        self.assertIn("newer than the latest published release", events[0].message)
+        self.assertIsNone(events[0].release)
+        self.assertIsNone(events[0].asset)
 
     def test_release_details_select_the_current_platform_asset(self) -> None:
         windows = ReleaseAsset(
@@ -658,7 +811,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
         ):
             app._load_hosts("invalid-test-key")
 
-        self.assertEqual(events, [("hosts_error", "API key rejected", 401)])
+        self.assertEqual(events,         [HostsErrorEvent("API key rejected", 401)])
 
     def test_host_limits_error_preserves_http_401_for_popup(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
@@ -676,7 +829,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
         self.assertEqual(
             events,
-            [("hosts", {"example.com": "up"}, {}, "API key rejected", 401)],
+            [HostsLoadedEvent({"example.com": "up"}, {}, "API key rejected", 401)],
         )
 
     def test_refresh_hosts_opens_cached_popup_before_scheduling_fetch(self) -> None:
@@ -864,8 +1017,15 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(app.secure_store.get_setting("dark_theme"), "true")
 
         app.dark_theme = False
-        app.dark_theme = app._load_theme_preference()
-        self.assertTrue(app.dark_theme)
+        config = AppConfiguration.load(
+            app.secure_store,
+            COLUMN_ORDER,
+            DEFAULT_COLUMNS,
+            lambda: Path(tempfile.gettempdir()),
+            lambda: None,
+            lambda: None,
+        )
+        self.assertTrue(config.dark_theme)
 
     def test_missing_api_key_and_invalid_download_folders_have_explicit_messages(self) -> None:
         self.assertIn("API key", validate_api_key("  "))

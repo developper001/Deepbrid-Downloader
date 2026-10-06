@@ -18,6 +18,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from platformdirs import user_data_dir, user_downloads_dir
 
+from .app_config import AppConfiguration, setting_is_enabled as _setting_is_enabled
 from .app_info import (
     GITHUB_REPOSITORY_URL,
     LatestRelease,
@@ -28,9 +29,29 @@ from .app_info import (
     is_newer_version,
     platform_release_asset,
 )
-from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
+from .app_events import (
+    ApiKeyCheckEvent,
+    ApiKeyErrorEvent,
+    BackgroundEvent,
+    HostsErrorEvent,
+    HostsLoadedEvent,
+    LogEvent,
+    ProgressEvent,
+    RefreshEvent,
+    StartupApiKeyProblemEvent,
+    StartupUpdateEvent,
+    StatusEvent,
+    UpdateCheckEvent,
+    UpdateDownloadedEvent,
+    UpdateDownloadFailedEvent,
+    UpdateProgressEvent,
+    WorkerDoneEvent,
+)
+from .deepbrid_client import DeepbridClient, DeepbridError
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
 from .queue_store import QueueStore
+from .queue_runner import QueueRunner
+from .settings_dialog import SettingsDialog
 from .secure_store import SecureStorageError, SecureStore
 from .single_instance import acquire_single_instance
 from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
@@ -148,12 +169,6 @@ def validate_output_folder(folder: Path | str | None) -> str | None:
     if not folder.is_dir():
         return f"The download location is not a folder:\n{folder}"
     return None
-
-
-def _setting_is_enabled(value: str | None, default: bool) -> bool:
-    if value is None:
-        return default
-    return value != "false"
 
 
 def format_bytes(value: int | None) -> str:
@@ -317,41 +332,25 @@ class DownloaderApp:
         migrate_legacy_databases()
         self.legacy_logs_redacted = redact_legacy_log_file()
         self.secure_store = SecureStore(DATABASE_PATH)
-        saved_auto_check = self.secure_store.get_setting("auto_check_updates_on_startup")
-        self.auto_check_updates = tk.BooleanVar(
-            master=root,
-            value=_setting_is_enabled(saved_auto_check, default=True),
+        config = AppConfiguration.load(
+            self.secure_store,
+            COLUMN_ORDER,
+            DEFAULT_COLUMNS,
+            default_download_directory,
+            read_legacy_api_key,
+            remove_legacy_env,
         )
-        saved_auto_start = self.secure_store.get_setting("auto_start_downloads_on_startup")
-        self.auto_start_downloads = tk.BooleanVar(
-            master=root,
-            value=_setting_is_enabled(saved_auto_start, default=True),
-        )
+        self.auto_check_updates = tk.BooleanVar(master=root, value=config.auto_check_updates)
+        self.auto_start_downloads = tk.BooleanVar(master=root, value=config.auto_start_downloads)
         self.startup_download_check_pending = True
         self.api_key_problem_shown = False
         self.store = QueueStore(DATABASE_PATH, self.secure_store)
-        self.secure_storage_error: str | None = None
-        stored_key = ""
-        try:
-            stored_key = self.secure_store.get_api_key() or ""
-            legacy_key = read_legacy_api_key()
-            if stored_key:
-                remove_legacy_env()
-            elif legacy_key:
-                self.secure_store.save_api_key(legacy_key)
-                if self.secure_store.get_api_key() != legacy_key:
-                    raise SecureStorageError("Could not verify the encrypted API key migration.")
-                stored_key = legacy_key
-                remove_legacy_env()
-            else:
-                remove_legacy_env()
-        except (SecureStorageError, OSError) as error:
-            self.secure_storage_error = str(error)
-        self.events: queue.Queue[tuple] = queue.Queue()
+        self.secure_storage_error = config.secure_storage_error
+        self.events: queue.Queue[BackgroundEvent] = queue.Queue()
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.active_cancel_events: dict[int, threading.Event] = {}
-        self.api_key = tk.StringVar(value=stored_key)
+        self.api_key = tk.StringVar(value=config.api_key)
         self.status_text = tk.StringVar(value="Ready")
         self.progress_value = tk.DoubleVar(value=0)
         self.queue_progress_text = tk.StringVar(value="Queue: 0/0 files (0%)")
@@ -366,98 +365,16 @@ class DownloaderApp:
         self.sort_column = "filename"
         self.sort_reverse = False
         self._last_saved_priority_order: tuple[int, ...] | None = None
-        self.visible_columns = list(DEFAULT_COLUMNS)
-        saved_columns = self.secure_store.get_setting("visible_columns")
-        if saved_columns:
-            try:
-                requested_columns = json.loads(saved_columns)
-                valid_columns = set(COLUMN_ORDER)
-                if isinstance(requested_columns, list):
-                    self.visible_columns = [column for column in requested_columns if column in valid_columns]
-                    if "eta" in self.visible_columns and "time_remaining" not in self.visible_columns:
-                        self.visible_columns.insert(self.visible_columns.index("eta"), "time_remaining")
-                    if self.visible_columns == [
-                        "filename", "host", "status", "size", "remaining", "time_remaining", "eta"
-                    ]:
-                        self.visible_columns.remove("remaining")
-                    if self.visible_columns == [
-                        "filename", "host", "status", "size", "time_remaining", "eta"
-                    ]:
-                        self.visible_columns = list(DEFAULT_COLUMNS)
-                    if not self.visible_columns:
-                        self.visible_columns = list(DEFAULT_COLUMNS)
-            except json.JSONDecodeError:
-                pass
-        self.column_order = []
-        saved_column_order = self.secure_store.get_setting("column_order")
-        if saved_column_order:
-            try:
-                requested_order = json.loads(saved_column_order)
-                if isinstance(requested_order, list):
-                    self.column_order = list(dict.fromkeys(
-                        column
-                        for column in requested_order
-                        if isinstance(column, str) and column in COLUMN_ORDER
-                    ))
-            except json.JSONDecodeError:
-                pass
-        if not self.column_order:
-            self.column_order = list(COLUMN_ORDER)
-        else:
-            self.column_order.extend(
-                column for column in COLUMN_ORDER if column not in self.column_order
-            )
-        visible_set = set(self.visible_columns)
-        self.visible_columns = [
-            column for column in self.column_order if column in visible_set
-        ]
-        if self.secure_store.get_setting("progress_column_initialized") != "true":
-            self.column_order.remove("progress")
-            size_position = (
-                self.column_order.index("size") + 1
-                if "size" in self.column_order
-                else len(self.column_order)
-            )
-            self.column_order.insert(size_position, "progress")
-            if "progress" not in self.visible_columns:
-                size_position = (
-                    self.visible_columns.index("size") + 1
-                    if "size" in self.visible_columns
-                    else len(self.visible_columns)
-                )
-                self.visible_columns.insert(size_position, "progress")
-            self.secure_store.set_setting("column_order", json.dumps(self.column_order))
-            self.secure_store.set_setting("visible_columns", json.dumps(self.visible_columns))
-            self.secure_store.set_setting("progress_column_initialized", "true")
-        if self.secure_store.get_setting("progress_percentage_column_initialized") != "true":
-            self.column_order.remove("progress_percentage")
-            progress_position = (
-                self.column_order.index("progress") + 1
-                if "progress" in self.column_order
-                else len(self.column_order)
-            )
-            self.column_order.insert(progress_position, "progress_percentage")
-            self.secure_store.set_setting("column_order", json.dumps(self.column_order))
-            self.secure_store.set_setting("visible_columns", json.dumps(self.visible_columns))
-            self.secure_store.set_setting("progress_percentage_column_initialized", "true")
-        self.output_dir = Path(
-            self.secure_store.get_setting("output_directory") or str(default_download_directory())
-        ).expanduser()
+        self.visible_columns = config.visible_columns
+        self.column_order = config.column_order
+        self.output_dir = config.output_dir
         self.output_dir_text = tk.StringVar(value=str(self.output_dir))
-        self.hosts: dict[str, str] = {}
+        self.hosts = config.hosts
         self.host_limits: dict[str, str] = {}
         self.hosts_popup: tk.Toplevel | None = None
         self._hosts_popup_update = None
-        saved_hosts = self.secure_store.get_setting("hosts")
-        if saved_hosts:
-            try:
-                cached_hosts = json.loads(saved_hosts)
-                if isinstance(cached_hosts, dict):
-                    self.hosts = {str(domain): str(status) for domain, status in cached_hosts.items()}
-            except json.JSONDecodeError:
-                pass
         self.console_visible = False
-        self.dark_theme = self._load_theme_preference()
+        self.dark_theme = config.dark_theme
         self.key_save_after: str | None = None
 
         self._build_ui()
@@ -768,7 +685,7 @@ class DownloaderApp:
         try:
             hosts = DeepbridClient.fetch_hosts(api_key)
         except DeepbridError as error:
-            self.events.put(("hosts_error", str(error), error.status_code))
+            self.events.put(HostsErrorEvent(str(error), error.status_code))
         else:
             limits = {}
             limits_error = None
@@ -779,7 +696,7 @@ class DownloaderApp:
                 except DeepbridError as error:
                     limits_error = str(error)
                     limits_error_status = error.status_code
-            self.events.put(("hosts", hosts, limits, limits_error, limits_error_status))
+            self.events.put(HostsLoadedEvent(hosts, limits, limits_error, limits_error_status))
 
     def _show_hosts_popup(self, hosts: dict[str, str], limits: dict[str, str], limits_error: str | None) -> tk.Toplevel:
         if self.hosts_popup is not None:
@@ -1223,8 +1140,7 @@ class DownloaderApp:
             release = None
             asset = None
         self.events.put(
-            (
-                "update_check",
+            UpdateCheckEvent(
                 popup,
                 update_status,
                 check_button,
@@ -1249,219 +1165,7 @@ class DownloaderApp:
         initial_filter: str = "",
         api_key_notice: str | None = None,
     ) -> None:
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Settings")
-        dialog.geometry("720x560")
-        dialog.minsize(580, 420)
-        dialog.transient(self.root)
-        dialog.configure(background=self.theme_colors["background"])
-
-        frame = ttk.Frame(dialog, padding=12)
-        frame.pack(fill="both", expand=True)
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(2, weight=1)
-
-        filter_var = tk.StringVar(master=dialog)
-        filter_row = ttk.Frame(frame)
-        filter_row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        filter_row.columnconfigure(1, weight=1)
-        ttk.Label(filter_row, text="Filter settings").grid(row=0, column=0, padx=(0, 8))
-        filter_entry = ttk.Entry(filter_row, textvariable=filter_var)
-        filter_entry.grid(row=0, column=1, sticky="ew")
-
-        ttk.Separator(frame, orient="horizontal").grid(
-            row=1,
-            column=0,
-            sticky="ew",
-            pady=(0, 10),
-        )
-        body = ttk.Frame(frame)
-        body.grid(row=2, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
-        settings_canvas = tk.Canvas(
-            body,
-            background=self.theme_colors["background"],
-            highlightthickness=0,
-            borderwidth=0,
-        )
-        settings_canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(body, orient="vertical", command=settings_canvas.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        settings_canvas.configure(yscrollcommand=scrollbar.set)
-        settings_list = ttk.Frame(settings_canvas)
-        settings_window = settings_canvas.create_window((0, 0), window=settings_list, anchor="nw")
-        settings_list.columnconfigure(0, weight=1)
-        settings_list.bind(
-            "<Configure>",
-            lambda _event: settings_canvas.configure(scrollregion=settings_canvas.bbox("all")),
-        )
-        settings_canvas.bind(
-            "<Configure>",
-            lambda event: settings_canvas.itemconfigure(settings_window, width=event.width),
-        )
-        settings_rows: list[tuple[ttk.Frame, str]] = []
-
-        def add_setting(title: str, keywords: str, build_controls) -> None:
-            row = ttk.Frame(settings_list, padding=(0, 6))
-            row.columnconfigure(1, weight=1)
-            index = len(settings_rows)
-            row.grid(row=index, column=0, sticky="ew")
-            ttk.Label(row, text=title).grid(row=0, column=0, sticky="nw", padx=(0, 12))
-            controls = ttk.Frame(row)
-            controls.grid(row=0, column=1, sticky="ew")
-            controls.columnconfigure(0, weight=1)
-            build_controls(controls)
-            ttk.Separator(row, orient="horizontal").grid(
-                row=1,
-                column=0,
-                columnspan=2,
-                sticky="ew",
-                pady=(8, 0),
-            )
-            settings_rows.append((row, f"{title} {keywords}".casefold()))
-
-        no_matches = ttk.Label(settings_list, text="No matching settings")
-
-        def build_api_key(controls: ttk.Frame) -> None:
-            controls.columnconfigure(0, weight=1)
-            self.api_key_entry = ttk.Entry(controls, textvariable=self.api_key, show="*")
-            self.api_key_entry.grid(row=0, column=0, sticky="ew")
-            self.key_visibility_button = ttk.Button(
-                controls,
-                text="Show",
-                command=self._toggle_key_visibility,
-            )
-            self.key_visibility_button.grid(row=0, column=1, padx=(8, 0))
-            ttk.Button(
-                controls,
-                text="Get API key",
-                command=self._open_api_key_dashboard,
-            ).grid(row=0, column=2, padx=(8, 0))
-            key_actions = ttk.Frame(controls)
-            key_actions.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
-            check_status = tk.StringVar(master=dialog, value=api_key_notice or "")
-            check_button = ttk.Button(
-                key_actions,
-                text="Check API key",
-                command=lambda: self._check_api_key(check_button, check_status),
-            )
-            check_button.pack(side="left")
-            check_status_label = ttk.Label(
-                key_actions,
-                textvariable=check_status,
-            )
-            check_status_label.pack(side="left", padx=(8, 0))
-
-            def update_check_status_style(*_args: str) -> None:
-                message = check_status.get()
-                is_warning = bool(message) and message not in {
-                    "API key is valid.",
-                    "Checking API key...",
-                }
-                check_status_label.configure(
-                    style="ApiKeyWarning.TLabel" if is_warning else "TLabel"
-                )
-
-            check_status.trace_add("write", update_check_status_style)
-            update_check_status_style()
-
-        def build_download_folder(controls: ttk.Frame) -> None:
-            controls.columnconfigure(0, weight=1)
-            ttk.Entry(controls, textvariable=self.output_dir_text, state="readonly").grid(
-                row=0,
-                column=0,
-                sticky="ew",
-            )
-            ttk.Button(controls, text="Browse...", command=self._choose_output_folder).grid(
-                row=0,
-                column=1,
-                padx=(8, 0),
-            )
-
-        dark_mode_setting = tk.BooleanVar(master=dialog, value=self.dark_theme)
-
-        def update_theme() -> None:
-            self.dark_theme = dark_mode_setting.get()
-            self._persist_theme()
-            self._apply_theme()
-            dialog.configure(background=self.theme_colors["background"])
-            settings_canvas.configure(background=self.theme_colors["background"])
-
-        add_setting("API key", "credentials token secret", build_api_key)
-        add_setting("Download folder", "location directory output path", build_download_folder)
-
-        def build_appearance(controls: ttk.Frame) -> None:
-            ttk.Checkbutton(
-                controls,
-                text="Use dark mode",
-                variable=dark_mode_setting,
-                command=update_theme,
-            ).pack(anchor="w")
-
-        add_setting("Appearance", "theme dark light colors", build_appearance)
-
-        def build_auto_start(controls: ttk.Frame) -> None:
-            ttk.Checkbutton(
-                controls,
-                text="Start queued downloads when the app opens",
-                variable=self.auto_start_downloads,
-                command=self._persist_auto_start_downloads,
-            ).pack(anchor="w")
-
-        add_setting("Startup downloads", "start download queue launch automatic", build_auto_start)
-
-        def build_auto_updates(controls: ttk.Frame) -> None:
-            ttk.Checkbutton(
-                controls,
-                text="Check for updates when the app opens",
-                variable=self.auto_check_updates,
-                command=self._persist_auto_check_updates,
-            ).pack(anchor="w")
-
-        add_setting("Startup updates", "check updates releases launch", build_auto_updates)
-
-        def build_columns(controls: ttk.Frame) -> None:
-            ttk.Button(
-                controls,
-                text="Change column visibility and order",
-                command=self._show_columns_dialog,
-            ).pack(anchor="w")
-
-        add_setting(
-            "Configure columns",
-            "columns table visibility order file name original link host host status downloaded total remaining eta status verification",
-            build_columns,
-        )
-
-        def filter_settings(*_args: str) -> None:
-            query = filter_var.get().strip().casefold()
-            visible_index = 0
-            for row, searchable_text in settings_rows:
-                if not query or query in searchable_text:
-                    row.grid(row=visible_index, column=0, sticky="ew")
-                    visible_index += 1
-                else:
-                    row.grid_remove()
-            if visible_index:
-                no_matches.grid_remove()
-            else:
-                no_matches.grid(row=0, column=0, sticky="w", pady=8)
-
-        filter_var.trace_add("write", filter_settings)
-        filter_var.set(initial_filter)
-        filter_settings()
-        if initial_filter:
-            filter_entry.focus_set()
-
-        ttk.Button(frame, text="Close", command=dialog.destroy).grid(
-            row=3,
-            column=0,
-            sticky="e",
-            pady=(10, 0),
-        )
-        dialog.bind("<Escape>", lambda _event: dialog.destroy())
-        dialog.grab_set()
+        SettingsDialog(self, initial_filter, api_key_notice)
 
     def _check_for_updates_on_startup(self) -> None:
         if not self.auto_check_updates.get():
@@ -1474,7 +1178,7 @@ class DownloaderApp:
         except UpdateCheckError:
             return
         if is_newer_version(release.tag):
-            self.events.put(("startup_update", release, platform_release_asset(release)))
+            self.events.put(StartupUpdateEvent(release, platform_release_asset(release)))
 
     def _prompt_startup_update(
         self,
@@ -1572,17 +1276,31 @@ class DownloaderApp:
                 asset,
                 target_path.parent,
                 lambda received, total: self.events.put(
-                    ("update_progress", popup, update_status, update_progress, release.tag, received, total)
+                    UpdateProgressEvent(
+                        popup,
+                        update_status,
+                        update_progress,
+                        release.tag,
+                        received,
+                        total,
+                    )
                 ),
             )
             self.events.put(
-                ("update_downloaded", popup, update_status, check_button, release_button, update_progress, staged_path, release.tag)
+                UpdateDownloadedEvent(popup, release.tag, staged_path)
             )
         except Exception as error:
             if staged_path is not None:
                 staged_path.unlink(missing_ok=True)
             self.events.put(
-                ("update_download_failed", popup, update_status, check_button, release_button, update_progress, str(error))
+                UpdateDownloadFailedEvent(
+                    popup,
+                    update_status,
+                    check_button,
+                    release_button,
+                    update_progress,
+                    str(error),
+                )
             )
 
     def _show_columns_dialog(self) -> None:
@@ -2094,11 +1812,6 @@ class DownloaderApp:
         if items:
             self._refresh_rows()
 
-    def _toggle_key_visibility(self) -> None:
-        visible = self.api_key_entry.cget("show") == "*"
-        self.api_key_entry.configure(show="" if visible else "*")
-        self.key_visibility_button.configure(text="Hide" if visible else "Show")
-
     def _check_api_key(self, button: ttk.Button, status: tk.StringVar) -> None:
         api_key = self.api_key.get().strip()
         if not api_key:
@@ -2128,12 +1841,12 @@ class DownloaderApp:
             )
         else:
             message = "API key is valid."
-        self.events.put(("api_key_check", button, status, message))
+        self.events.put(ApiKeyCheckEvent(button, status, message))
 
     def _check_api_key_on_startup(self) -> None:
         api_key = self.api_key.get().strip()
         if not api_key:
-            self.events.put(("startup_api_key_problem", "No API key is configured."))
+            self.events.put(StartupApiKeyProblemEvent("No API key is configured."))
             return
         threading.Thread(
             target=self._validate_api_key_on_startup,
@@ -2147,7 +1860,9 @@ class DownloaderApp:
         except DeepbridError as error:
             if error.status_code == 401:
                 self.events.put(
-                    ("startup_api_key_problem", "The configured API key is invalid (HTTP 401).")
+                    StartupApiKeyProblemEvent(
+                        "The configured API key is invalid (HTTP 401)."
+                    )
                 )
 
     def _open_api_key_settings_for_problem(self, message: str) -> None:
@@ -2207,10 +1922,6 @@ class DownloaderApp:
         if pane_height > 180:
             top_height = min(pane_height - 125, max(90, int(pane_height * 0.62)))
             self.panes.sashpos(0, top_height)
-
-    def _load_theme_preference(self) -> bool:
-        saved_theme = self.secure_store.get_setting("dark_theme")
-        return saved_theme == "true"
 
     def _persist_theme(self) -> None:
         self.secure_store.set_setting("dark_theme", "true" if self.dark_theme else "false")
@@ -2327,7 +2038,7 @@ class DownloaderApp:
         self._log("Dark theme enabled." if self.dark_theme else "Light theme enabled.")
 
     def _log(self, message: str) -> None:
-        self.events.put(("log", time.strftime("%H:%M:%S"), message))
+        self.events.put(LogEvent(time.strftime("%H:%M:%S"), message))
 
     def _install_console_capture(self) -> None:
         self._previous_stdout = sys.stdout
@@ -2347,7 +2058,7 @@ class DownloaderApp:
 
     def _report_exception(self, exc_type, exc_value, exc_traceback) -> None:
         details = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)).rstrip()
-        self.events.put(("exception", time.strftime("%H:%M:%S"), details))
+        self.events.put(LogEvent(time.strftime("%H:%M:%S"), details, is_exception=True))
 
     def _report_thread_exception(self, args) -> None:
         self._report_exception(args.exc_type, args.exc_value, args.exc_traceback)
@@ -2403,11 +2114,16 @@ class DownloaderApp:
                 self.status_text.set("Queue is empty")
             return
         self.stop_event.clear()
-        self.worker = threading.Thread(
-            target=self._run_queue,
-            args=(api_key, self.output_dir),
-            daemon=True,
+        runner = QueueRunner(
+            self.store,
+            api_key,
+            self.output_dir,
+            self.events,
+            self.stop_event,
+            self.active_cancel_events,
+            self._log,
         )
+        self.worker = threading.Thread(target=runner.run, daemon=True)
         self.worker.start()
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
@@ -2421,194 +2137,6 @@ class DownloaderApp:
         self.status_text.set("Stopping after the current network read...")
         self.stop_button.configure(state="disabled")
         self._log("Stop requested; current partial download will be kept.")
-
-    def _run_queue(self, api_key: str, output_dir: Path) -> None:
-        client = DeepbridClient(api_key, log=lambda message: self._log(message.replace(api_key, "<REDACTED>")))
-        try:
-            client.validate_api_key()
-        except DeepbridError as error:
-            self.events.put(("api_key_error", error.status_code, str(error)))
-            self.events.put(("worker_done",))
-            return
-        while not self.stop_event.is_set():
-            item = self.store.next_item()
-            if item is None:
-                break
-            item_cancel_event = threading.Event()
-            self.active_cancel_events[item.id] = item_cancel_event
-            guessed_name = item.filename or safe_filename(None, item.url, item.id)
-            existing_path = output_dir / guessed_name
-            if not item.force and existing_path.is_file():
-                existing_size = existing_path.stat().st_size
-                self.store.update(
-                    item.id,
-                    status="skipped",
-                    filename=guessed_name,
-                    downloaded=existing_size,
-                    total=existing_size,
-                    error=None,
-                    force=0,
-                )
-                self._log(f"Skipped {guessed_name}; the file already exists in {output_dir}.")
-                self.events.put(("refresh",))
-                self.active_cancel_events.pop(item.id, None)
-                continue
-            self.store.update(item.id, status="generating", error=None)
-            self._log(f"Starting queue item {item.id}: {item.url}")
-            self.events.put(("status", item.id, "Generating premium link..."))
-            self.events.put(("refresh",))
-            generated_url = None
-            returned_name = None
-            quick_attempts = 0
-            blocked = False
-
-            while (
-                not self.stop_event.is_set()
-                and not item_cancel_event.is_set()
-                and generated_url is None
-            ):
-                try:
-                    generated_url, returned_name = client.generate_link(item.url)
-                except DeepbridError as error:
-                    quick_attempts += 1
-                    self._log(f"Link generation attempt {quick_attempts} failed: {error}")
-                    if not error.retryable:
-                        blocked = True
-                        self.store.update(
-                            item.id,
-                            status="blocked",
-                            error=self._stored_error(error),
-                        )
-                        self.events.put(("status", item.id, "Blocked by Deepbrid"))
-                        self._log("Deepbrid marked this response non-retryable. The queue is paused; contact Deepbrid support.")
-                        break
-                    if quick_attempts < 5:
-                        status = f"Link retry {quick_attempts + 1}/5 in 3s"
-                        delay = 3
-                    else:
-                        status = "Retrying link in 1 hour"
-                        delay = 3600
-                    self.store.update(
-                        item.id,
-                        status="retrying",
-                        error=self._stored_error(error),
-                    )
-                    self.events.put(("status", item.id, status))
-                    if item_cancel_event.wait(delay) or self.stop_event.is_set():
-                        break
-
-            if self.stop_event.is_set():
-                self.store.update(item.id, status="queued")
-                self.active_cancel_events.pop(item.id, None)
-                self._log(f"Queue item {item.id} paused.")
-                break
-            if item_cancel_event.is_set():
-                self.store.update(item.id, status="queued")
-                self.active_cancel_events.pop(item.id, None)
-                self._log(f"Queue item {item.id} was disabled before transfer; moving to the next priority.")
-                continue
-            if blocked:
-                self.active_cancel_events.pop(item.id, None)
-                self.events.put(("refresh",))
-                break
-            if not generated_url:
-                self.active_cancel_events.pop(item.id, None)
-                break
-
-            filename = item.filename or safe_filename(returned_name, item.url, item.id)
-            destination = output_dir / filename
-            self.store.update(
-                item.id,
-                filename=filename,
-                deepbrid_link=generated_url,
-                status="downloading",
-                error=None,
-            )
-            if destination.is_file() and not item.force:
-                existing_size = destination.stat().st_size
-                self.store.update(
-                    item.id,
-                    status="skipped",
-                    downloaded=existing_size,
-                    total=existing_size,
-                    force=0,
-                )
-                self._log(f"Skipped {filename}; the file already exists in {output_dir}.")
-                self.events.put(("refresh",))
-                self.active_cancel_events.pop(item.id, None)
-                continue
-            self._log(f"Downloading {filename} to {output_dir}")
-            self.events.put(("status", item.id, "Downloading file..."))
-
-            last_database_update = 0.0
-            last_ui_update = 0.0
-            last_speed_update = time.monotonic()
-            last_speed_bytes = item.downloaded
-
-            def progress(downloaded: int, total: int | None) -> None:
-                nonlocal last_database_update, last_ui_update, last_speed_update, last_speed_bytes
-                now = time.monotonic()
-                if now - last_database_update >= 1:
-                    self.store.update(item.id, downloaded=downloaded, total=total)
-                    last_database_update = now
-                if now - last_ui_update >= 1 or (total and downloaded >= total):
-                    elapsed = now - last_speed_update
-                    speed = (downloaded - last_speed_bytes) / elapsed if elapsed > 0 else 0
-                    if elapsed >= 1:
-                        last_speed_update = now
-                        last_speed_bytes = downloaded
-                    self.events.put(("progress", item.id, downloaded, total, speed))
-                    last_ui_update = now
-
-            size_verified = False
-
-            def record_size_verification(verified: bool) -> None:
-                nonlocal size_verified
-                size_verified = verified
-
-            try:
-                completed = client.download(
-                    generated_url,
-                    filename,
-                    output_dir,
-                    lambda: self.stop_event.is_set() or item_cancel_event.is_set(),
-                    progress,
-                    overwrite_existing=item.force,
-                    on_size_verified=record_size_verification,
-                )
-                if completed:
-                    final_size = (output_dir / filename).stat().st_size
-                    self.store.update(
-                        item.id,
-                        status="completed",
-                        size_verified=size_verified,
-                        downloaded=final_size,
-                        total=final_size,
-                        error=None,
-                        force=0,
-                    )
-                    self.events.put(("status", item.id, "Completed"))
-                    self._log(f"Completed {filename} ({final_size} bytes).")
-                else:
-                    partial_path = output_dir / f".{filename}.part"
-                    partial_size = partial_path.stat().st_size if partial_path.exists() else 0
-                    self.store.update(item.id, status="queued", downloaded=partial_size)
-                    self._log(f"Paused {filename} at {partial_size} bytes.")
-            except (DeepbridError, OSError) as error:
-                self.store.update(
-                    item.id,
-                    status="failed",
-                    error=self._stored_error(error),
-                )
-                self.events.put(("status", item.id, "Failed"))
-                self._log(f"Download failed for {filename}: {error}")
-
-            self.active_cancel_events.pop(item.id, None)
-            self.events.put(("refresh",))
-            if self.stop_event.is_set():
-                break
-
-        self.events.put(("worker_done",))
 
     def _refresh_rows(self) -> None:
         items = self.store.list_items()
@@ -2764,107 +2292,104 @@ class DownloaderApp:
                 event = self.events.get_nowait()
             except queue.Empty:
                 break
-            if event[0] == "api_key_check":
-                _, button, status, message = event
+            if isinstance(event, ApiKeyCheckEvent):
                 try:
-                    if button is not None:
-                        button.configure(state="normal")
-                    if status is not None:
-                        status.set(message)
+                    if event.button is not None:
+                        event.button.configure(state="normal")
+                    if event.status is not None:
+                        event.status.set(event.message)
                 except tk.TclError:
                     continue
-            elif event[0] == "startup_api_key_problem":
-                _, message = event
-                self._open_api_key_settings_for_problem(message)
-            elif event[0] == "update_check":
-                _, popup, update_status, check_button, release_button, update_progress, message, release, asset = event
+            elif isinstance(event, StartupApiKeyProblemEvent):
+                self._open_api_key_settings_for_problem(event.message)
+            elif isinstance(event, UpdateCheckEvent):
                 try:
-                    if not popup.winfo_exists():
+                    if not event.popup.winfo_exists():
                         continue
-                    check_button.configure(state="normal")
-                    update_status.set(message)
-                    update_progress.pack_forget()
-                    if release is not None:
-                        if getattr(sys, "frozen", False) and asset is not None and asset.sha256:
-                            release_button.configure(
+                    event.check_button.configure(state="normal")
+                    event.update_status.set(event.message)
+                    event.update_progress.pack_forget()
+                    if event.release is not None:
+                        if getattr(sys, "frozen", False) and event.asset is not None and event.asset.sha256:
+                            event.release_button.configure(
                                 text="Download and install",
-                                command=lambda window=popup, status=update_status, check=check_button,
-                                button=release_button, progress=update_progress, found_release=release,
-                                found_asset=asset: self._confirm_update_install(
+                                command=lambda window=event.popup, status=event.update_status,
+                                check=event.check_button, button=event.release_button,
+                                progress=event.update_progress, found_release=event.release,
+                                found_asset=event.asset: self._confirm_update_install(
                                     window, status, check, button, progress, found_release, found_asset
                                 ),
                             )
                         else:
-                            release_button.configure(
+                            event.release_button.configure(
                                 text="Open release",
-                                command=lambda target=release.release_url: webbrowser.open(target),
+                                command=lambda target=event.release.release_url: webbrowser.open(target),
                             )
-                        if not release_button.winfo_manager():
-                            release_button.pack(side="left", padx=(8, 0))
+                        if not event.release_button.winfo_manager():
+                            event.release_button.pack(side="left", padx=(8, 0))
                     else:
-                        release_button.pack_forget()
+                        event.release_button.pack_forget()
                 except tk.TclError:
                     continue
-            elif event[0] == "update_progress":
-                _, popup, update_status, update_progress, version, received, total = event
+            elif isinstance(event, UpdateProgressEvent):
                 try:
-                    if not popup.winfo_exists():
+                    if not event.popup.winfo_exists():
                         continue
-                    maximum = max(total, 1)
-                    percent = min(100, received * 100 / maximum)
-                    update_progress.configure(maximum=maximum, value=received)
-                    update_status.set(f"Downloading {version}: {percent:.0f}%")
+                    maximum = max(event.total, 1)
+                    percent = min(100, event.received * 100 / maximum)
+                    event.update_progress.configure(maximum=maximum, value=event.received)
+                    event.update_status.set(f"Downloading {event.version}: {percent:.0f}%")
                 except tk.TclError:
                     continue
-            elif event[0] == "update_downloaded":
-                _, popup, update_status, _check_button, _release_button, _progress, staged_path, version = event
+            elif isinstance(event, UpdateDownloadedEvent):
                 try:
-                    launch_update_helper(Path(staged_path))
+                    launch_update_helper(event.staged_path)
                 except UpdateInstallError as error:
-                    Path(staged_path).unlink(missing_ok=True)
+                    event.staged_path.unlink(missing_ok=True)
                     self.status_text.set(f"Update install failed: {error}")
-                    self._log(f"Could not install update {version}: {error}")
+                    self._log(f"Could not install update {event.version}: {error}")
                     try:
-                        if popup.winfo_exists():
-                            popup.destroy()
+                        if event.popup.winfo_exists():
+                            event.popup.destroy()
                     except tk.TclError:
                         pass
                     messagebox.showerror("Update failed", str(error), parent=self.root)
                 else:
-                    self.status_text.set(f"Installing {version}; restarting...")
-                    self._log(f"Installing update {version}; restarting the application.")
+                    self.status_text.set(f"Installing {event.version}; restarting...")
+                    self._log(f"Installing update {event.version}; restarting the application.")
                     try:
-                        if popup.winfo_exists():
-                            popup.destroy()
+                        if event.popup.winfo_exists():
+                            event.popup.destroy()
                     except tk.TclError:
                         pass
                     self._close()
                     return
-            elif event[0] == "update_download_failed":
-                _, popup, update_status, check_button, release_button, update_progress, error = event
-                self.status_text.set(f"Update download failed: {error}")
-                self._log(f"Update download failed: {error}")
+            elif isinstance(event, UpdateDownloadFailedEvent):
+                self.status_text.set(f"Update download failed: {event.message}")
+                self._log(f"Update download failed: {event.message}")
                 try:
-                    if popup.winfo_exists():
-                        update_status.set(f"Download failed: {error}")
-                        if check_button is not None:
-                            check_button.configure(state="normal")
-                        if release_button is not None:
-                            release_button.configure(state="normal")
-                        if check_button is not None or release_button is not None:
-                            update_progress.pack_forget()
-                        messagebox.showerror("Update download failed", error, parent=popup)
+                    if event.popup.winfo_exists():
+                        event.update_status.set(f"Download failed: {event.message}")
+                        if event.check_button is not None:
+                            event.check_button.configure(state="normal")
+                        if event.release_button is not None:
+                            event.release_button.configure(state="normal")
+                        if event.check_button is not None or event.release_button is not None:
+                            event.update_progress.pack_forget()
+                        messagebox.showerror(
+                            "Update download failed",
+                            event.message,
+                            parent=event.popup,
+                        )
                 except tk.TclError:
                     pass
-            elif event[0] == "startup_update":
-                _, release, asset = event
-                self._prompt_startup_update(release, asset)
-            elif event[0] == "refresh":
+            elif isinstance(event, StartupUpdateEvent):
+                self._prompt_startup_update(event.release, event.asset)
+            elif isinstance(event, RefreshEvent):
                 self._refresh_rows()
-            elif event[0] == "hosts":
-                _, hosts, limits, limits_error, limits_error_status = event
-                self.hosts = hosts
-                self.host_limits = limits
+            elif isinstance(event, HostsLoadedEvent):
+                self.hosts = event.hosts
+                self.host_limits = event.limits
                 self.secure_store.set_setting("hosts", json.dumps(self.hosts))
                 self._apply_host_statuses(self.hosts)
                 self.refresh_hosts_button.configure(state="normal")
@@ -2876,71 +2401,83 @@ class DownloaderApp:
                     self._hosts_popup_update(
                         self.hosts,
                         self.host_limits,
-                        limits_error,
-                        status_code=limits_error_status,
+                        event.limits_error,
+                        status_code=event.limits_error_status,
                     )
-                if limits_error_status == 401:
+                if event.limits_error_status == 401:
                     self._open_api_key_settings_for_problem(
                         "Deepbrid rejected the configured API key (HTTP 401)."
                     )
                 self._maybe_start_downloads_on_startup()
-            elif event[0] == "hosts_error":
-                _, error_message, status_code = event
+            elif isinstance(event, HostsErrorEvent):
                 self.refresh_hosts_button.configure(state="normal")
-                self.status_text.set(f"Host refresh failed: {error_message[:90]}")
-                self._log(error_message)
+                self.status_text.set(f"Host refresh failed: {event.message[:90]}")
+                self._log(event.message)
                 self.add_links_button.configure(state="normal" if self.hosts else "disabled")
                 self._refresh_rows()
-                if status_code == 401:
+                if event.status_code == 401:
                     self._open_api_key_settings_for_problem(
                         "Deepbrid rejected the configured API key (HTTP 401)."
                     )
-                if status_code != 401:
+                if event.status_code != 401:
                     self._maybe_start_downloads_on_startup()
                 if self._hosts_popup_update is not None:
                     self._hosts_popup_update(
                         self.hosts,
                         self.host_limits,
                         None,
-                        refresh_error=error_message,
-                        status_code=status_code,
+                        refresh_error=event.message,
+                        status_code=event.status_code,
                     )
-            elif event[0] in {"log", "exception"}:
-                _, timestamp, message = event
-                if event[0] == "exception" and not self.console_visible:
+            elif isinstance(event, LogEvent):
+                if event.is_exception and not self.console_visible:
                     self._toggle_console()
                 self.console.configure(state="normal")
-                self.console.insert("end", f"[{timestamp}] {message}\n")
+                self.console.insert("end", f"[{event.timestamp}] {event.message}\n")
                 self.console.see("end")
                 self.console.configure(state="disabled")
-            elif event[0] == "status":
-                _, item_id, message = event
-                if message.startswith("Link retry "):
-                    self.item_status_messages[item_id] = message
+            elif isinstance(event, StatusEvent):
+                if event.message.startswith("Link retry "):
+                    self.item_status_messages[event.item_id] = event.message
                 else:
-                    self.item_status_messages.pop(item_id, None)
-                self.status_text.set(message)
+                    self.item_status_messages.pop(event.item_id, None)
+                self.status_text.set(event.message)
                 self._refresh_rows()
-            elif event[0] == "api_key_error":
-                _, status_code, message = event
-                title = "Invalid API key" if status_code == 401 else "API key validation failed"
-                self.status_text.set("Invalid API key" if status_code == 401 else "Could not validate API key")
-                self._log(message)
-                if status_code == 401:
-                    self._show_api_key_dialog(title, message)
+            elif isinstance(event, ApiKeyErrorEvent):
+                title = (
+                    "Invalid API key"
+                    if event.status_code == 401
+                    else "API key validation failed"
+                )
+                self.status_text.set(
+                    "Invalid API key"
+                    if event.status_code == 401
+                    else "Could not validate API key"
+                )
+                self._log(event.message)
+                if event.status_code == 401:
+                    self._show_api_key_dialog(title, event.message)
                 else:
-                    messagebox.showerror(title, message)
-            elif event[0] == "progress":
-                _, item_id, downloaded, total, speed = event
-                if speed > 0:
-                    self.item_speeds[item_id] = smooth_rate(self.item_speeds.get(item_id, 0), speed, 0.2)
-                    self.average_transfer_speed = smooth_rate(self.average_transfer_speed, speed)
+                    messagebox.showerror(title, event.message)
+            elif isinstance(event, ProgressEvent):
+                if event.speed > 0:
+                    self.item_speeds[event.item_id] = smooth_rate(
+                        self.item_speeds.get(event.item_id, 0),
+                        event.speed,
+                        0.2,
+                    )
+                    self.average_transfer_speed = smooth_rate(
+                        self.average_transfer_speed,
+                        event.speed,
+                    )
                 self._refresh_rows()
-            elif event[0] == "worker_done":
+            elif isinstance(event, WorkerDoneEvent):
                 self.start_button.configure(state="normal")
                 self.stop_button.configure(state="disabled")
                 self.status_text.set("Stopped" if self.stop_event.is_set() else "Queue complete")
                 self._refresh_rows()
+            else:
+                raise TypeError(f"Unsupported background event: {event!r}")
         now = time.monotonic()
         if now - self.last_eta_refresh >= 1:
             if self.worker and self.worker.is_alive():
@@ -2955,12 +2492,6 @@ class DownloaderApp:
         if downloaded:
             return f"{downloaded / (1024 * 1024):.1f} MB"
         return ""
-
-    @staticmethod
-    def _stored_error(error: Exception) -> str:
-        if isinstance(error, DeepbridError) and error.status_code is not None:
-            return f"HTTP {error.status_code}"
-        return type(error).__name__
 
     def _close(self) -> None:
         self._persist_theme()
