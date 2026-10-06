@@ -36,7 +36,6 @@ class UsenetBrowserSession:
         self.log = log or (lambda _message: None)
         self.browser_path = browser_path
         self._process: subprocess.Popen[bytes] | None = None
-        self._port: int | None = None
 
     def open(self) -> None:
         if self._debug_port() is not None:
@@ -138,7 +137,6 @@ class UsenetBrowserSession:
                 )
             port = self._debug_port()
             if port is not None:
-                self._port = port
                 return port
             time.sleep(0.1)
         raise UsenetFinderError("Timed out waiting for the dedicated Chrome browser connection.")

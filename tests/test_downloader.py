@@ -375,7 +375,11 @@ class AppConfigurationTests(unittest.TestCase):
             with closing(sqlite3.connect(database)) as connection:
                 connection.execute(
                     "INSERT INTO app_settings (name, value) VALUES (?, ?)",
-                    ("usenet_password", b"obsolete-encrypted-value"),
+                    ("usenet_password", b"obsolete-encrypted-password"),
+                )
+                connection.execute(
+                    "INSERT INTO app_settings (name, value) VALUES (?, ?)",
+                    ("usenet_username", b"obsolete-encrypted-username"),
                 )
             downloads = Path(temporary_directory) / "downloads"
             config = AppConfiguration.load(
@@ -390,11 +394,11 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertTrue(config.auto_check_updates)
             self.assertTrue(config.auto_start_downloads)
             with closing(sqlite3.connect(database)) as connection:
-                self.assertIsNone(
-                    connection.execute(
-                        "SELECT value FROM app_settings WHERE name = 'usenet_password'"
-                    ).fetchone()
-                )
+                remaining_credentials = connection.execute(
+                    "SELECT name FROM app_settings "
+                    "WHERE name IN ('usenet_username', 'usenet_password')"
+                ).fetchall()
+            self.assertEqual(remaining_credentials, [])
             self.assertEqual(config.output_dir, downloads)
             self.assertIn("progress", config.visible_columns)
             self.assertNotIn("progress_percentage", config.visible_columns)

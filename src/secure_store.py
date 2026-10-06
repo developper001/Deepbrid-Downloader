@@ -22,7 +22,7 @@ class SecureStorageError(RuntimeError):
 
 
 class SecureStore:
-    SECRET_SETTINGS = {
+    LEGACY_SECRET_SETTINGS = {
         "usenet_username",
         "usenet_password",
     }
@@ -98,11 +98,12 @@ class SecureStore:
                 (nonce + ciphertext,),
             )
 
-    def delete_secret(self, name: str) -> None:
-        if name not in self.SECRET_SETTINGS:
-            raise ValueError("Unsupported secret setting.")
+    def delete_legacy_usenet_credentials(self) -> None:
         with self._connect() as connection:
-            connection.execute("DELETE FROM app_settings WHERE name = ?", (name,))
+            connection.executemany(
+                "DELETE FROM app_settings WHERE name = ?",
+                ((name,) for name in self.LEGACY_SECRET_SETTINGS),
+            )
 
     def encrypt_text(self, value: str, purpose: bytes) -> bytes:
         nonce = os.urandom(12)
@@ -127,7 +128,7 @@ class SecureStore:
         ).hexdigest()
 
     def get_setting(self, name: str) -> str | None:
-        if name in {"api_key", "encryption_key"} | self.SECRET_SETTINGS:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
             raise ValueError("Secret database values cannot be read as plain settings.")
         with self._connect() as connection:
             row = connection.execute(
@@ -136,7 +137,7 @@ class SecureStore:
         return bytes(row[0]).decode("utf-8") if row else None
 
     def set_setting(self, name: str, value: str) -> None:
-        if name in {"api_key", "encryption_key"} | self.SECRET_SETTINGS:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
             raise ValueError("Secret database values must use their secure storage methods.")
         with self._connect() as connection:
             connection.execute(

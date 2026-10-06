@@ -39,9 +39,8 @@ class AppConfiguration:
         api_key = ""
         secure_storage_error = None
         try:
+            secure_store.delete_legacy_usenet_credentials()
             api_key = secure_store.get_api_key() or ""
-            secure_store.delete_secret("usenet_username")
-            secure_store.delete_secret("usenet_password")
             legacy_key = read_legacy_api_key()
             if api_key:
                 remove_legacy_env()
