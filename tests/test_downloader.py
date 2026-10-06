@@ -29,6 +29,7 @@ from src.app import (
     API_KEY_DASHBOARD_URL,
     APP_DATA_DIR,
     DATABASE_PATH,
+    COLUMN_ORDER,
     DEFAULT_COLUMNS,
     DownloaderApp,
     LEGACY_DATABASE_PATH,
@@ -811,6 +812,8 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertNotIn("remaining", DEFAULT_COLUMNS)
         self.assertNotIn("status", DEFAULT_COLUMNS)
         self.assertIn("progress", DEFAULT_COLUMNS)
+        self.assertIn("progress_percentage", COLUMN_ORDER)
+        self.assertNotIn("progress_percentage", DEFAULT_COLUMNS)
         self.assertIn("verification", DEFAULT_COLUMNS)
         self.assertEqual(size_verification_label("completed", True), "Verified")
         self.assertEqual(size_verification_label("completed", False), "Not verified")
@@ -821,7 +824,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(progress_indicator_values("queued", 1000, 0), (0.0, "0%"))
         self.assertEqual(progress_indicator_values("completed", None, 1000), (1.0, "100%"))
         self.assertEqual(progress_indicator_values("downloading", 1000, 1500), (1.0, "100%"))
-        self.assertEqual(progress_indicator_values("downloading", None, 500), (None, "Downloading"))
+        self.assertEqual(progress_indicator_values("downloading", None, 500), (None, "—"))
         self.assertEqual(progress_indicator_values("queued", None, 0), (None, "—"))
         self.assertEqual(format_duration(3661), "1h 1m")
         self.assertEqual(format_item_eta("downloading", 1000, 400, 100), "6s")

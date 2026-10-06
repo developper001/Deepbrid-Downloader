@@ -65,6 +65,7 @@ COLUMN_ORDER = (
     "status",
     "size",
     "progress",
+    "progress_percentage",
     "remaining",
     "time_remaining",
     "eta",
@@ -168,7 +169,7 @@ def progress_indicator_values(
     if status == "completed":
         return 1.0, "100%"
     elif total is None or total <= 0:
-        return None, "Downloading" if status == "downloading" else "—"
+        return None, "—"
     fraction = min(1.0, max(0.0, downloaded / total))
     return fraction, f"{round(fraction * 100)}%"
 
@@ -415,6 +416,17 @@ class DownloaderApp:
             self.secure_store.set_setting("column_order", json.dumps(self.column_order))
             self.secure_store.set_setting("visible_columns", json.dumps(self.visible_columns))
             self.secure_store.set_setting("progress_column_initialized", "true")
+        if self.secure_store.get_setting("progress_percentage_column_initialized") != "true":
+            self.column_order.remove("progress_percentage")
+            progress_position = (
+                self.column_order.index("progress") + 1
+                if "progress" in self.column_order
+                else len(self.column_order)
+            )
+            self.column_order.insert(progress_position, "progress_percentage")
+            self.secure_store.set_setting("column_order", json.dumps(self.column_order))
+            self.secure_store.set_setting("visible_columns", json.dumps(self.visible_columns))
+            self.secure_store.set_setting("progress_percentage_column_initialized", "true")
         self.output_dir = Path(
             self.secure_store.get_setting("output_directory") or str(default_download_directory())
         ).expanduser()
@@ -532,7 +544,8 @@ class DownloaderApp:
             "host": "Host",
             "status": "Host status",
             "size": "Downloaded / total",
-            "progress": "Progress",
+            "progress": "Progress bar",
+            "progress_percentage": "Progress (%)",
             "remaining": "Remaining",
             "time_remaining": "ETA",
             "eta": "Status",
@@ -546,6 +559,7 @@ class DownloaderApp:
         self.table.column("status", width=120, minwidth=90, stretch=False)
         self.table.column("size", width=145, minwidth=120, stretch=False, anchor="e")
         self.table.column("progress", width=145, minwidth=125, stretch=False, anchor="center")
+        self.table.column("progress_percentage", width=95, minwidth=75, stretch=False, anchor="center")
         self.table.column("remaining", width=105, minwidth=90, stretch=False, anchor="e")
         self.table.column("time_remaining", width=95, minwidth=80, stretch=False, anchor="e")
         self.table.column("eta", width=170, minwidth=130, stretch=False)
@@ -575,6 +589,8 @@ class DownloaderApp:
         self.table.bind("<Button-2>" if sys.platform == "darwin" else "<Button-3>", self._show_link_menu)
         self.table.bind("<Control-c>", self._copy_original_link)
         self.table.bind("<Configure>", self._schedule_progress_indicator_layout, add="+")
+        self.table.bind("<B1-Motion>", self._schedule_progress_indicator_layout, add="+")
+        self.table.bind("<ButtonRelease-1>", self._schedule_progress_indicator_layout, add="+")
         self.table.bind("<Map>", self._schedule_progress_indicator_layout, add="+")
         self.table.bind("<Expose>", self._schedule_progress_indicator_layout, add="+")
         self.table.bind("<<TreeviewSelect>>", self._schedule_progress_indicator_layout, add="+")
@@ -1678,6 +1694,13 @@ class DownloaderApp:
                 item.downloaded,
             )
             return fraction if fraction is not None else -1.0
+        if column == "progress_percentage":
+            fraction, _label = progress_indicator_values(
+                item.status,
+                item.total,
+                item.downloaded,
+            )
+            return fraction is not None, fraction if fraction is not None else 0.0
         if column == "remaining":
             return max(0, item.total - item.downloaded) if item.total is not None else -1
         if column == "time_remaining":
@@ -1732,8 +1755,8 @@ class DownloaderApp:
         else:
             children = self.table.get_children("")
             first, last = (float(value) for value in self.table.yview())
-            start = max(0, int(first * len(children)) - 1)
-            end = min(len(children), math.ceil(last * len(children)) + 1)
+            start = max(0, int(first * len(children)))
+            end = min(len(children), math.ceil(last * len(children)))
             visible_rows = set(children[start:end])
 
         positioned_rows: set[str] = set()
@@ -1741,8 +1764,11 @@ class DownloaderApp:
             bounds = self.table.bbox(row_id, "progress")
             if not bounds:
                 continue
-            positioned_rows.add(row_id)
             x, y, width, height = bounds
+            height = min(height, self.table.winfo_height() - y)
+            if height <= 0:
+                continue
+            positioned_rows.add(row_id)
             canvas = self.progress_indicator_canvases.get(row_id)
             if canvas is None:
                 canvas = tk.Canvas(
@@ -1767,15 +1793,15 @@ class DownloaderApp:
                         ),
                     )
                 self.progress_indicator_canvases[row_id] = canvas
-            canvas.place(x=x, y=y, width=width, height=height)
+            canvas.place(x=x, y=y, width=width, height=height, bordermode="inside")
             selected = row_id in self.table.selection()
             background = (
                 self.theme_colors["selection"] if selected else self.theme_colors["surface"]
             )
             canvas.configure(background=background)
             canvas.delete("all")
-            fraction, label = self.progress_indicator_values[row_id]
-            bar_width = max(0, min(90, width - 58))
+            fraction, _label = self.progress_indicator_values[row_id]
+            bar_width = max(0, width - 8)
             bar_height = 10
             bar_x = 4
             bar_y = max(0, (height - bar_height) // 2)
@@ -1786,9 +1812,11 @@ class DownloaderApp:
                     bar_x + bar_width,
                     bar_y + bar_height,
                     fill=self.theme_colors["field"],
-                    outline=self.theme_colors["progress_border"],
+                    outline="",
                 )
-                filled_width = round((bar_width - 2) * fraction)
+                filled_width = round((bar_width - 1) * fraction)
+                if fraction >= 1:
+                    filled_width = bar_width - 1
                 if filled_width:
                     canvas.create_rectangle(
                         bar_x + 1,
@@ -1798,14 +1826,14 @@ class DownloaderApp:
                         fill=self.theme_colors["accent"],
                         outline="",
                     )
-            canvas.create_text(
-                width - 4,
-                height // 2,
-                text=label,
-                anchor="e",
-                fill=self.theme_colors["foreground"],
-            )
-
+                canvas.create_rectangle(
+                    bar_x,
+                    bar_y,
+                    bar_x + bar_width,
+                    bar_y + bar_height,
+                    fill="",
+                    outline=self.theme_colors["progress_border"],
+                )
         for row_id in set(self.progress_indicator_canvases) - positioned_rows:
             self.progress_indicator_canvases.pop(row_id).destroy()
 
@@ -2474,6 +2502,11 @@ class DownloaderApp:
                 queue_status = "Disabled"
             filename = item.filename or Path(item.url.split("?", 1)[0]).name or item.url
             remaining = max(0, item.total - item.downloaded) if item.total is not None else None
+            self.progress_indicator_values[row_id] = progress_indicator_values(
+                item.status,
+                item.total,
+                item.downloaded,
+            )
             values = (
                 filename,
                 item.url,
@@ -2481,6 +2514,7 @@ class DownloaderApp:
                 host_status,
                 f"{format_bytes(item.downloaded)} / {format_bytes(item.total)}",
                 "",
+                self.progress_indicator_values[row_id][1],
                 format_bytes(remaining),
                 format_item_eta(
                     item.status,
@@ -2496,11 +2530,6 @@ class DownloaderApp:
                 self.table.move(row_id, "", position)
             else:
                 self.table.insert("", "end", iid=row_id, values=values)
-            self.progress_indicator_values[row_id] = progress_indicator_values(
-                item.status,
-                item.total,
-                item.downloaded,
-            )
         for row_id in existing - seen:
             self.table.delete(row_id)
         for row_id in set(self.progress_indicator_values) - seen:
