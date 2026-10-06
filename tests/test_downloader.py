@@ -41,6 +41,7 @@ from src.app import (
     format_bytes,
     format_duration,
     format_item_eta,
+    progress_indicator_values,
     size_verification_label,
     migrate_legacy_database,
     migrate_legacy_databases,
@@ -809,12 +810,19 @@ class ValidationAndPresentationTests(unittest.TestCase):
     def test_byte_duration_and_sort_values_are_consistent(self) -> None:
         self.assertNotIn("remaining", DEFAULT_COLUMNS)
         self.assertNotIn("status", DEFAULT_COLUMNS)
+        self.assertIn("progress", DEFAULT_COLUMNS)
         self.assertIn("verification", DEFAULT_COLUMNS)
         self.assertEqual(size_verification_label("completed", True), "Verified")
         self.assertEqual(size_verification_label("completed", False), "Not verified")
         self.assertEqual(size_verification_label("queued", False), "—")
         self.assertEqual(format_bytes(1024), "1.0 KB")
         self.assertEqual(format_bytes(None), "Unknown")
+        self.assertEqual(progress_indicator_values("downloading", 1000, 500), (0.5, "50%"))
+        self.assertEqual(progress_indicator_values("queued", 1000, 0), (0.0, "0%"))
+        self.assertEqual(progress_indicator_values("completed", None, 1000), (1.0, "100%"))
+        self.assertEqual(progress_indicator_values("downloading", 1000, 1500), (1.0, "100%"))
+        self.assertEqual(progress_indicator_values("downloading", None, 500), (None, "Downloading"))
+        self.assertEqual(progress_indicator_values("queued", None, 0), (None, "—"))
         self.assertEqual(format_duration(3661), "1h 1m")
         self.assertEqual(format_item_eta("downloading", 1000, 400, 100), "6s")
         self.assertEqual(format_item_eta("downloading", 1000, 400, 0), "Calculating")
@@ -835,6 +843,14 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(app._sort_value(item, "filename"), "bravo.zip")
         self.assertEqual(app._sort_value(item, "remaining"), 400)
         self.assertEqual(app._sort_value(item, "eta"), "link retry 2/5 in 3s")
+
+    def test_progress_indicators_wait_for_theme_initialization(self) -> None:
+        app = object.__new__(DownloaderApp)
+        app._progress_indicator_layout_pending = False
+
+        app._position_progress_indicators()
+
+        self.assertFalse(app._progress_indicator_layout_pending)
 
     def test_total_eta_shows_known_work_when_queued_sizes_are_unknown(self) -> None:
         app = object.__new__(DownloaderApp)

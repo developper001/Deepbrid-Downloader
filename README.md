@@ -50,6 +50,7 @@ python launcher.py
 - Select multiple queue rows with Ctrl-click or a Shift-click range, then apply context-menu actions in display order
 - Press Ctrl+A in the queue to select all links; selected text remains legible in light mode
 - Track queue-wide progress with a compact bar that includes the active file's partial progress
+- See each link's download progress in its own column, with a readable bar and percentage
 - See per-file ETAs and an estimated total, including average-size estimates for queued files whose sizes are unknown
 - Check whether a completed download's size matched the expected size reported by its host
 - Retry blocked or failed links safely, with a pause-and-resume workflow

@@ -58,8 +58,19 @@ ICON_PATH = RESOURCE_ROOT / "src" / "deepbrid-logo.png"
 ICON_ICO_PATH = RESOURCE_ROOT / "src" / "deepbrid-favicon.ico"
 WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
 WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
-COLUMN_ORDER = ("filename", "link", "host", "status", "size", "remaining", "time_remaining", "eta", "verification")
-DEFAULT_COLUMNS = ("filename", "host", "size", "time_remaining", "eta", "verification")
+COLUMN_ORDER = (
+    "filename",
+    "link",
+    "host",
+    "status",
+    "size",
+    "progress",
+    "remaining",
+    "time_remaining",
+    "eta",
+    "verification",
+)
+DEFAULT_COLUMNS = ("filename", "host", "size", "progress", "time_remaining", "eta", "verification")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
 
@@ -147,6 +158,19 @@ def format_bytes(value: int | None) -> str:
             return f"{int(amount)} B" if suffix == "B" else f"{amount:.1f} {suffix}"
         amount /= 1024
     return "Unknown"
+
+
+def progress_indicator_values(
+    status: str,
+    total: int | None,
+    downloaded: int,
+) -> tuple[float | None, str]:
+    if status == "completed":
+        return 1.0, "100%"
+    elif total is None or total <= 0:
+        return None, "Downloading" if status == "downloading" else "—"
+    fraction = min(1.0, max(0.0, downloaded / total))
+    return fraction, f"{round(fraction * 100)}%"
 
 
 def format_duration(seconds: float | None) -> str:
@@ -320,6 +344,9 @@ class DownloaderApp:
         self.total_eta_text = tk.StringVar(value="Total remaining: calculating")
         self.item_speeds: dict[int, float] = {}
         self.item_status_messages: dict[int, str] = {}
+        self.progress_indicator_values: dict[str, tuple[float | None, str]] = {}
+        self.progress_indicator_canvases: dict[str, tk.Canvas] = {}
+        self._progress_indicator_layout_pending = False
         self.average_transfer_speed = 0.0
         self.last_eta_refresh = time.monotonic()
         self.sort_column = "filename"
@@ -370,6 +397,24 @@ class DownloaderApp:
         self.visible_columns = [
             column for column in self.column_order if column in visible_set
         ]
+        if self.secure_store.get_setting("progress_column_initialized") != "true":
+            self.column_order.remove("progress")
+            size_position = (
+                self.column_order.index("size") + 1
+                if "size" in self.column_order
+                else len(self.column_order)
+            )
+            self.column_order.insert(size_position, "progress")
+            if "progress" not in self.visible_columns:
+                size_position = (
+                    self.visible_columns.index("size") + 1
+                    if "size" in self.visible_columns
+                    else len(self.visible_columns)
+                )
+                self.visible_columns.insert(size_position, "progress")
+            self.secure_store.set_setting("column_order", json.dumps(self.column_order))
+            self.secure_store.set_setting("visible_columns", json.dumps(self.visible_columns))
+            self.secure_store.set_setting("progress_column_initialized", "true")
         self.output_dir = Path(
             self.secure_store.get_setting("output_directory") or str(default_download_directory())
         ).expanduser()
@@ -487,6 +532,7 @@ class DownloaderApp:
             "host": "Host",
             "status": "Host status",
             "size": "Downloaded / total",
+            "progress": "Progress",
             "remaining": "Remaining",
             "time_remaining": "ETA",
             "eta": "Status",
@@ -499,6 +545,7 @@ class DownloaderApp:
         self.table.column("host", width=135, minwidth=100, stretch=False)
         self.table.column("status", width=120, minwidth=90, stretch=False)
         self.table.column("size", width=145, minwidth=120, stretch=False, anchor="e")
+        self.table.column("progress", width=145, minwidth=125, stretch=False, anchor="center")
         self.table.column("remaining", width=105, minwidth=90, stretch=False, anchor="e")
         self.table.column("time_remaining", width=95, minwidth=80, stretch=False, anchor="e")
         self.table.column("eta", width=170, minwidth=130, stretch=False)
@@ -510,13 +557,30 @@ class DownloaderApp:
         table_horizontal_scrollbar = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table.xview)
         table_horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
         self.table.configure(
-            yscrollcommand=table_scrollbar.set,
-            xscrollcommand=table_horizontal_scrollbar.set,
+            yscrollcommand=lambda first, last: self._update_table_scrollbar(
+                table_scrollbar,
+                first,
+                last,
+            ),
+            xscrollcommand=lambda first, last: self._update_table_scrollbar(
+                table_horizontal_scrollbar,
+                first,
+                last,
+            ),
         )
+        table_scrollbar.configure(command=lambda *args: self._scroll_table("y", *args))
+        table_horizontal_scrollbar.configure(command=lambda *args: self._scroll_table("x", *args))
         self.table.bind("<Button-1>", self._select_table_row)
         self.table.bind("<Control-a>", self._select_all_table_rows)
         self.table.bind("<Button-2>" if sys.platform == "darwin" else "<Button-3>", self._show_link_menu)
         self.table.bind("<Control-c>", self._copy_original_link)
+        self.table.bind("<Configure>", self._schedule_progress_indicator_layout, add="+")
+        self.table.bind("<Map>", self._schedule_progress_indicator_layout, add="+")
+        self.table.bind("<Expose>", self._schedule_progress_indicator_layout, add="+")
+        self.table.bind("<<TreeviewSelect>>", self._schedule_progress_indicator_layout, add="+")
+        self.table.bind("<MouseWheel>", self._schedule_progress_indicator_layout, add="+")
+        self.table.bind("<Button-4>", self._schedule_progress_indicator_layout, add="+")
+        self.table.bind("<Button-5>", self._schedule_progress_indicator_layout, add="+")
         if sys.platform == "darwin":
             self.table.bind("<Command-c>", self._copy_original_link)
         self.link_menu = tk.Menu(self.root, tearoff=False)
@@ -1607,6 +1671,13 @@ class DownloaderApp:
             return item.host_status.casefold()
         if column == "size":
             return item.total if item.total is not None else -1
+        if column == "progress":
+            fraction, _label = progress_indicator_values(
+                item.status,
+                item.total,
+                item.downloaded,
+            )
+            return fraction if fraction is not None else -1.0
         if column == "remaining":
             return max(0, item.total - item.downloaded) if item.total is not None else -1
         if column == "time_remaining":
@@ -1620,6 +1691,123 @@ class DownloaderApp:
         if column == "verification":
             return size_verification_label(item.status, item.size_verified).casefold()
         return item.id
+
+    def _update_table_scrollbar(
+        self,
+        scrollbar: ttk.Scrollbar,
+        first: str,
+        last: str,
+    ) -> None:
+        scrollbar.set(first, last)
+        self._schedule_progress_indicator_layout()
+
+    def _scroll_table(self, axis: str, *args: str) -> None:
+        if axis == "x":
+            self.table.xview(*args)
+        else:
+            self.table.yview(*args)
+        self._schedule_progress_indicator_layout()
+
+    def _schedule_progress_indicator_layout(self, _event: tk.Event | None = None) -> None:
+        if self._progress_indicator_layout_pending:
+            return
+        self._progress_indicator_layout_pending = True
+        self.root.after_idle(self._position_progress_indicators)
+
+    def _forward_progress_cell_event(self, event: tk.Event, sequence: str) -> str:
+        x = event.x_root - self.table.winfo_rootx()
+        y = event.y_root - self.table.winfo_rooty()
+        options = {"x": x, "y": y, "state": event.state}
+        if sequence == "<MouseWheel>":
+            options["delta"] = event.delta
+        self.table.event_generate(sequence, **options)
+        return "break"
+
+    def _position_progress_indicators(self) -> None:
+        self._progress_indicator_layout_pending = False
+        if not hasattr(self, "theme_colors") or not self.table.winfo_ismapped():
+            return
+        if "progress" not in self.table["displaycolumns"]:
+            visible_rows: set[str] = set()
+        else:
+            children = self.table.get_children("")
+            first, last = (float(value) for value in self.table.yview())
+            start = max(0, int(first * len(children)) - 1)
+            end = min(len(children), math.ceil(last * len(children)) + 1)
+            visible_rows = set(children[start:end])
+
+        positioned_rows: set[str] = set()
+        for row_id in visible_rows:
+            bounds = self.table.bbox(row_id, "progress")
+            if not bounds:
+                continue
+            positioned_rows.add(row_id)
+            x, y, width, height = bounds
+            canvas = self.progress_indicator_canvases.get(row_id)
+            if canvas is None:
+                canvas = tk.Canvas(
+                    self.table,
+                    highlightthickness=0,
+                    borderwidth=0,
+                    takefocus=False,
+                )
+                for sequence in (
+                    "<Button-1>",
+                    "<Button-2>",
+                    "<Button-3>",
+                    "<MouseWheel>",
+                    "<Button-4>",
+                    "<Button-5>",
+                ):
+                    canvas.bind(
+                        sequence,
+                        lambda event, event_sequence=sequence: self._forward_progress_cell_event(
+                            event,
+                            event_sequence,
+                        ),
+                    )
+                self.progress_indicator_canvases[row_id] = canvas
+            canvas.place(x=x, y=y, width=width, height=height)
+            selected = row_id in self.table.selection()
+            background = (
+                self.theme_colors["selection"] if selected else self.theme_colors["surface"]
+            )
+            canvas.configure(background=background)
+            canvas.delete("all")
+            fraction, label = self.progress_indicator_values[row_id]
+            bar_width = max(0, min(90, width - 58))
+            bar_height = 10
+            bar_x = 4
+            bar_y = max(0, (height - bar_height) // 2)
+            if fraction is not None and bar_width:
+                canvas.create_rectangle(
+                    bar_x,
+                    bar_y,
+                    bar_x + bar_width,
+                    bar_y + bar_height,
+                    fill=self.theme_colors["field"],
+                    outline=self.theme_colors["progress_border"],
+                )
+                filled_width = round((bar_width - 2) * fraction)
+                if filled_width:
+                    canvas.create_rectangle(
+                        bar_x + 1,
+                        bar_y + 1,
+                        bar_x + 1 + filled_width,
+                        bar_y + bar_height - 1,
+                        fill=self.theme_colors["accent"],
+                        outline="",
+                    )
+            canvas.create_text(
+                width - 4,
+                height // 2,
+                text=label,
+                anchor="e",
+                fill=self.theme_colors["foreground"],
+            )
+
+        for row_id in set(self.progress_indicator_canvases) - positioned_rows:
+            self.progress_indicator_canvases.pop(row_id).destroy()
 
     def _force_redownload(self) -> None:
         items = self._selected_items()
@@ -1889,6 +2077,7 @@ class DownloaderApp:
                 "foreground": "#e8eee9",
                 "field": "#171c19",
                 "accent": "#6d91ff",
+                "progress_border": "#56615b",
                 "heading_active": "#3b4841",
                 "selection": "#2e426e",
                 "scrollbar": "#56615b",
@@ -1902,6 +2091,7 @@ class DownloaderApp:
                 "foreground": "#202b25",
                 "field": "#ffffff",
                 "accent": "#3569f6",
+                "progress_border": "#aab5c2",
                 "heading_active": "#dbe6ff",
                 "selection": "#dbe6ff",
                 "scrollbar": "#d7ded9",
@@ -1972,6 +2162,7 @@ class DownloaderApp:
         self.brand_logo_label.configure(
             image=self.brand_logo_dark if self.dark_theme else self.brand_logo_light
         )
+        self._position_progress_indicators()
         self._log("Dark theme enabled." if self.dark_theme else "Light theme enabled.")
 
     def _log(self, message: str) -> None:
@@ -2289,6 +2480,7 @@ class DownloaderApp:
                 item.host_message,
                 host_status,
                 f"{format_bytes(item.downloaded)} / {format_bytes(item.total)}",
+                "",
                 format_bytes(remaining),
                 format_item_eta(
                     item.status,
@@ -2304,8 +2496,16 @@ class DownloaderApp:
                 self.table.move(row_id, "", position)
             else:
                 self.table.insert("", "end", iid=row_id, values=values)
+            self.progress_indicator_values[row_id] = progress_indicator_values(
+                item.status,
+                item.total,
+                item.downloaded,
+            )
         for row_id in existing - seen:
             self.table.delete(row_id)
+        for row_id in set(self.progress_indicator_values) - seen:
+            self.progress_indicator_values.pop(row_id, None)
+        self._position_progress_indicators()
         self._save_visible_queue_order()
         self._update_queue_progress(items)
         self._update_total_eta(
