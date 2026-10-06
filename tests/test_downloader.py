@@ -1245,6 +1245,19 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
         self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/user")
         self.assertEqual(request.get_header("Authorization"), "Bearer valid-test-key")
 
+    def test_api_key_validation_logs_redacted_request_and_result(self) -> None:
+        secret = "sensitive-test-api-key"
+        messages: list[str] = []
+        response = FakeResponse(200, {}, b'{"type":"premium","error":0}')
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+            DeepbridClient(secret, log=messages.append).validate_api_key()
+
+        self.assertTrue(any("curl -X GET" in message for message in messages))
+        self.assertTrue(any("Authorization: Bearer <redacted>" in message for message in messages))
+        self.assertIn("API-key validation response: HTTP 200.", messages)
+        self.assertIn("API-key validation succeeded.", messages)
+        self.assertNotIn(secret, "\n".join(messages))
+
     def test_invalid_api_key_is_reported_as_non_retryable_401(self) -> None:
         error = urllib.error.HTTPError(
             "https://www.deepbrid.com/api/v1/user",

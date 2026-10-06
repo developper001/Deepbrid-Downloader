@@ -499,8 +499,20 @@ class DownloaderApp:
         self.brand_logo_dark = tk.PhotoImage(file=str(WORDMARK_PATH))
         self.brand_logo_label = ttk.Label(main, image=self.brand_logo_light)
         self.brand_logo_label.grid(row=0, column=0, sticky="w", padx=(0, 18))
-        self.settings_button = ttk.Button(main, text="Settings", command=self._show_settings)
-        self.settings_button.grid(row=0, column=1, sticky="e", pady=(0, 8))
+        header_actions = ttk.Frame(main)
+        header_actions.grid(row=0, column=1, sticky="e", pady=(0, 8))
+        self.settings_button = ttk.Button(
+            header_actions,
+            text="Settings",
+            command=self._show_settings,
+        )
+        self.settings_button.pack(side="right")
+        self.theme_button = ttk.Button(
+            header_actions,
+            text="Dark mode" if not self.dark_theme else "Light mode",
+            command=self._toggle_theme,
+        )
+        self.theme_button.pack(side="right", padx=(0, 8))
 
         add_row = ttk.Frame(main)
         add_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
@@ -2107,7 +2119,7 @@ class DownloaderApp:
         status: tk.StringVar | None,
     ) -> None:
         try:
-            DeepbridClient(api_key).validate_api_key()
+            DeepbridClient(api_key, log=self._log).validate_api_key()
         except DeepbridError as error:
             message = (
                 "API key is invalid. Check it or get a new key."
@@ -2207,6 +2219,7 @@ class DownloaderApp:
         self.dark_theme = not self.dark_theme
         self._persist_theme()
         self._apply_theme()
+        self.theme_button.configure(text="Light mode" if self.dark_theme else "Dark mode")
 
     def _apply_theme(self) -> None:
         style = ttk.Style(self.root)

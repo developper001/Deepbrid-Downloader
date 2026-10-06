@@ -29,6 +29,16 @@ class DeepbridClient:
         self.log = log or (lambda _message: None)
 
     def validate_api_key(self) -> None:
+        curl_command = " ".join(
+            (
+                "curl -X GET",
+                shlex.quote(f"{API_BASE}/user"),
+                "-H", shlex.quote("Authorization: Bearer <redacted>"),
+                "-H", shlex.quote("Accept: application/json"),
+                "-H", shlex.quote(f"User-Agent: {APP_USER_AGENT}"),
+            )
+        )
+        self.log(f"Checking API key. Request: {curl_command}")
         request = urllib.request.Request(
             f"{API_BASE}/user",
             headers={
@@ -39,9 +49,12 @@ class DeepbridClient:
         )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
+                status_code = response.status
                 result = json.loads(response.read().decode("utf-8", errors="replace"))
         except urllib.error.HTTPError as error:
+            status_code = error.code
             error.close()
+            self.log(f"API-key validation response: HTTP {status_code}.")
             if error.code == 401:
                 raise DeepbridError(
                     "Deepbrid rejected the API key (HTTP 401). Check the key and try again.",
@@ -54,7 +67,9 @@ class DeepbridClient:
                 status_code=error.code,
             ) from error
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            self.log(f"API-key validation request failed: {error}")
             raise DeepbridError(f"Could not validate the API key: {error}") from error
+        self.log(f"API-key validation response: HTTP {status_code}.")
         if not isinstance(result, dict):
             raise DeepbridError("Deepbrid returned an unexpected API-key validation response.")
         if result.get("error") in (401, "401"):
@@ -67,6 +82,7 @@ class DeepbridClient:
             raise DeepbridError(
                 f"Deepbrid could not validate the API key: {result.get('message', 'unknown API error')}"
             )
+        self.log("API-key validation succeeded.")
 
     def generate_link(self, original_url: str) -> tuple[str, str | None]:
         payload = urllib.parse.urlencode({"link": original_url}).encode("utf-8")

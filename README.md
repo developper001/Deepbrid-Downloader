@@ -46,7 +46,7 @@ python launcher.py
 - Keep API keys encrypted in SQLite instead of storing them in plain text
 - Resume interrupted transfers using hidden `.part` files and range-aware downloads
 - Open a searchable, sortable Host Status window with live availability and daily quota details
-- Show the cached host list immediately, then refresh it in the background; open the API-key page when Deepbrid returns HTTP 401
+- Show the cached host list immediately, then refresh it in the background; open API-key Settings when Deepbrid returns HTTP 401
 - Select multiple queue rows with Ctrl-click or a Shift-click range, then apply context-menu actions in display order
 - Press Ctrl+A in the queue to select all links; selected text remains legible in light mode
 - Track queue-wide progress with a compact bar that includes the active file's partial progress
@@ -55,10 +55,10 @@ python launcher.py
 - Check whether a completed download's size matched the expected size reported by its host
 - Retry blocked or failed links safely, with a pause-and-resume workflow
 - Open a searchable Settings window for the API key, download folder, appearance, startup behavior, and queue columns; preferences are saved between runs
+- Check the API key from Settings and switch themes directly from the dashboard; startup downloads are enabled by default
 - Toggle dark mode, show or hide the console, and customize column visibility and order with a reset-to-defaults option
 - Keep table heading hover, the About README, and update-download progress readable in dark mode
-- Open API-key Settings automatically when startup detects a missing or rejected key; access the Deepbrid key page from Settings
-- Validate the configured API key from Settings and open API-key Settings automatically at startup when it is missing or rejected
+- Open API-key Settings automatically at startup when the key is missing or rejected; access the Deepbrid key page from Settings
 - Check for newer releases in About and opt into verified in-app updates with download progress
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
 - Route standard output, errors, and uncaught exceptions to the in-app console
@@ -68,6 +68,10 @@ python launcher.py
 ### Main dashboard
 
 ![Deepbrid Downloader dashboard](src/img/DeepbridDownloader.png)
+
+### Settings
+
+![Searchable settings with API-key validation](src/img/Settings.png)
 
 ### Host status and quota overview
 
@@ -114,11 +118,11 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
 - The bottom progress bar tracks settled enabled links plus the active file's partial progress; its caption shows queue count and total ETA.
 - The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
-- Use the Columns dialog to show or hide fields, change their order, or reset the layout to defaults.
+- Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults.
 - Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
 - The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
 - The app keeps active partial files and automatically resumes queued work after startup.
-- If the API key is missing or rejected, follow the Deepbrid link in the prompt or Host Status window to retrieve or replace it.
+- If the API key is missing or rejected, the app opens the filtered API-key Settings automatically. Use the Get API key button there to retrieve a key, then use Check API key to verify it.
 - Use the About window to open the GitHub repository and check whether a newer release is available.
 
 ## Retry and resume behavior
