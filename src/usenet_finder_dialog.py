@@ -77,8 +77,85 @@ class UsenetFinderDialog:
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(4, weight=3)
 
+        header = ttk.Frame(frame)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header.columnconfigure(0, weight=1)
+        logo_background = self.app.theme_colors["background"]
+        logo_foreground = self.app.theme_colors["foreground"]
+        logo_accent = self.app.theme_colors["accent"]
+        self.logo = tk.Canvas(
+            header,
+            width=168,
+            height=46,
+            background=logo_background,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.logo.grid(row=0, column=0, sticky="w")
+        self.logo.create_oval(
+            4,
+            4,
+            42,
+            42,
+            outline=logo_accent,
+            width=2,
+        )
+        self.logo.create_oval(15, 4, 31, 42, outline=logo_accent, width=1)
+        self.logo.create_arc(
+            5,
+            13,
+            41,
+            33,
+            start=0,
+            extent=180,
+            style="arc",
+            outline=logo_accent,
+            width=1,
+        )
+        self.logo.create_arc(
+            5,
+            13,
+            41,
+            33,
+            start=180,
+            extent=180,
+            style="arc",
+            outline=logo_accent,
+            width=1,
+        )
+        self.logo.create_text(
+            51,
+            17,
+            anchor="w",
+            text="USENET",
+            fill=logo_foreground,
+            font=("Segoe UI", 16, "bold"),
+        )
+        self.logo.create_text(
+            53,
+            34,
+            anchor="w",
+            text="FINDER",
+            fill=logo_accent,
+            font=("Segoe UI", 8, "bold"),
+        )
+        header_actions = ttk.Frame(header)
+        header_actions.grid(row=0, column=1, sticky="e")
+        self.usenet_settings_button = ttk.Button(
+            header_actions,
+            text="Usenet settings",
+            command=lambda: self.app._show_settings("Usenet Finder"),
+        )
+        self.usenet_settings_button.pack(side="right")
+        self.open_browser_button = ttk.Button(
+            header_actions,
+            text="Open Chrome / sign in",
+            command=self.open_browser,
+        )
+        self.open_browser_button.pack(side="right", padx=(0, 8))
+
         search_row = ttk.Frame(frame)
-        search_row.grid(row=0, column=0, sticky="ew")
+        search_row.grid(row=1, column=0, sticky="ew")
         search_row.columnconfigure(1, weight=1)
         ttk.Label(search_row, text="Search").grid(row=0, column=0, padx=(0, 8))
         self.query = tk.StringVar(master=self.dialog)
@@ -94,17 +171,6 @@ class UsenetFinderDialog:
         self.search_button = ttk.Button(search_row, text="Search", command=self.search)
         self.search_button.grid(row=0, column=4, padx=(8, 0))
 
-        self.open_browser_button = ttk.Button(
-            frame,
-            text="Open Chrome / sign in",
-            command=self.open_browser,
-        )
-        self.open_browser_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Button(
-            frame,
-            text="Usenet settings",
-            command=lambda: self.app._show_settings("Usenet Finder"),
-        ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
         ttk.Label(
             frame,
             text=(
@@ -140,7 +206,7 @@ class UsenetFinderDialog:
         result_actions.grid(row=5, column=0, sticky="ew", pady=(8, 8))
         self.resolve_button = ttk.Button(
             result_actions,
-            text="Resolve selected",
+            text="Refresh selected",
             command=self.resolve_selected,
             state="disabled",
         )
