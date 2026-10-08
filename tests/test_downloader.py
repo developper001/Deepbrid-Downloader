@@ -7,6 +7,7 @@ import threading
 import tempfile
 import sqlite3
 import shutil
+import struct
 import unittest
 import uuid
 import urllib.error
@@ -1798,6 +1799,14 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
+    def test_antialiased_globe_assets_are_square_pngs_for_both_themes(self) -> None:
+        asset_directory = Path(__file__).resolve().parent.parent / "src"
+        for filename in ("usenet-globe-light.png", "usenet-globe-dark.png"):
+            with self.subTest(filename=filename):
+                asset = (asset_directory / filename).read_bytes()
+                self.assertEqual(asset[:8], b"\x89PNG\r\n\x1a\n")
+                self.assertEqual(struct.unpack(">II", asset[16:24]), (46, 46))
+
     def test_saved_search_results_are_restored_without_a_network_request(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         page = FinderSearchPage((), False)

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import queue
 import sqlite3
+import sys
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 from typing import Protocol
 
@@ -92,37 +94,15 @@ class UsenetFinderDialog:
             borderwidth=0,
         )
         self.logo.grid(row=0, column=0, sticky="w")
-        self.logo.create_oval(
-            4,
-            4,
-            42,
-            42,
-            outline=logo_accent,
-            width=2,
+        resource_root = Path(
+            getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)
         )
-        self.logo.create_oval(15, 4, 31, 42, outline=logo_accent, width=1)
-        self.logo.create_arc(
-            5,
-            13,
-            41,
-            33,
-            start=0,
-            extent=180,
-            style="arc",
-            outline=logo_accent,
-            width=1,
+        globe_filename = "usenet-globe-dark.png" if self.app.dark_theme else "usenet-globe-light.png"
+        self.globe_image = tk.PhotoImage(
+            master=self.dialog,
+            file=str(resource_root / "src" / globe_filename),
         )
-        self.logo.create_arc(
-            5,
-            13,
-            41,
-            33,
-            start=180,
-            extent=180,
-            style="arc",
-            outline=logo_accent,
-            width=1,
-        )
+        self.logo.create_image(23, 23, image=self.globe_image)
         self.logo.create_text(
             51,
             17,

@@ -78,6 +78,8 @@ jobs:
             --add-data "$PROJECT_ROOT/src/deepbrid-favicon.ico${DATA_SEP}src" \
             --add-data "$PROJECT_ROOT/src/deepbrid-wordmark.png${DATA_SEP}src" \
             --add-data "$PROJECT_ROOT/src/deepbrid-wordmark-light.png${DATA_SEP}src" \
+            --add-data "$PROJECT_ROOT/src/usenet-globe-dark.png${DATA_SEP}src" \
+            --add-data "$PROJECT_ROOT/src/usenet-globe-light.png${DATA_SEP}src" \
             --add-data "$PROJECT_ROOT/src/img${DATA_SEP}src/img" \
             launcher.py
 
