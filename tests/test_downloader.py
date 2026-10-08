@@ -72,9 +72,10 @@ from src.queue_runner import QueueRunner
 from src.secure_store import SecureStore
 from src.single_instance import acquire_single_instance
 from src.update_manager import download_update_asset
-from src.usenet_finder import UsenetFinderClient, UsenetFinderError
+from src.usenet_finder import FinderFile, FinderPackage, UsenetFinderClient, UsenetFinderError
 from src.usenet_browser import UsenetBrowserSession
 from src.usenet_finder_dialog import UsenetFinderDialog
+from src.usenet_finder_state import CACHE_TTL_SECONDS, UsenetFinderState
 
 
 class FakeResponse:
@@ -1403,6 +1404,62 @@ class SecureStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.set_setting("api_key", "sensitive-test-api-key")
 
+    def test_encrypted_settings_round_trip_without_storing_plaintext(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "queue.sqlite3"
+            store = SecureStore(database_path)
+            store.set_encrypted_setting("finder_cache", "https://private.example/file", b"test")
+
+            self.assertEqual(
+                store.get_encrypted_setting("finder_cache", b"test"),
+                "https://private.example/file",
+            )
+            with closing(sqlite3.connect(database_path)) as connection:
+                value = connection.execute(
+                    "SELECT value FROM app_settings WHERE name = 'finder_cache'"
+                ).fetchone()[0]
+            self.assertNotIn(b"private.example", bytes(value))
+
+
+class UsenetFinderStateTests(unittest.TestCase):
+    def test_search_and_resolved_package_persist_across_state_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            package = FinderPackage(
+                name="Example package",
+                files=(
+                    FinderFile(
+                        name="example.mkv",
+                        link="https://private.example/file",
+                        size="1 GB",
+                        is_video=True,
+                        inaccessible=None,
+                        metadata={"link": "https://private.example/file"},
+                    ),
+                ),
+                metadata={"pkg": "Example package"},
+            )
+            first_state = UsenetFinderState(store, clock=lambda: 1000)
+            first_state.save_search("example release", "tv-hd")
+            first_state.save_resolved("opaque-token", package)
+
+            reopened_state = UsenetFinderState(store, clock=lambda: 1001)
+            self.assertEqual(reopened_state.load_search(), ("example release", "tv-hd"))
+            self.assertEqual(reopened_state.get_resolved("opaque-token"), package)
+
+    def test_resolved_package_cache_expires_after_one_day(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            package = FinderPackage("Example", (), {})
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_resolved("opaque-token", package)
+
+            reopened_state = UsenetFinderState(
+                store,
+                clock=lambda: 1000 + CACHE_TTL_SECONDS,
+            )
+            self.assertIsNone(reopened_state.get_resolved("opaque-token"))
+
 
 class ResumeTests(unittest.TestCase):
     def test_successful_download_reports_whether_size_was_verified(self) -> None:
@@ -1644,8 +1701,10 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._files = {"old": object()}
         dialog._has_more = True
         dialog.app = SimpleNamespace(usenet_browser=Mock())
+        dialog.state = Mock()
         dialog.status = Mock()
         dialog.query = SimpleNamespace(get=Mock(return_value="example"))
+        dialog.category = SimpleNamespace(get=Mock(return_value=""))
         dialog.results = Mock()
         dialog.results.get_children.return_value = ()
         dialog.files = Mock()
@@ -1658,6 +1717,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
             dialog.search()
 
         dialog.app.usenet_browser.open.assert_called_once_with()
+        dialog.state.save_search.assert_called_once_with("example", "")
         search_page.assert_called_once_with(append=False)
         update_file_actions.assert_called_once_with()
         self.assertEqual(dialog._offset, 0)
@@ -1676,6 +1736,31 @@ class UsenetFinderDialogTests(unittest.TestCase):
 
         dialog.resolve_button.configure.assert_called_once_with(state="normal")
         resolve_selected.assert_called_once_with()
+
+
+    def test_resolving_a_cached_result_skips_the_finder_request(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog._request_running = False
+        dialog.results = Mock()
+        dialog.results.selection.return_value = ("selected-result",)
+        result = SimpleNamespace(token="opaque-token")
+        dialog._results = {"selected-result": result}
+        package = FinderPackage("Example", (), {})
+        dialog.state = Mock()
+        dialog.state.get_resolved.return_value = package
+        dialog.files = Mock()
+        dialog.status = Mock()
+        dialog.client = Mock()
+        with patch.object(dialog, "_show_package") as show_package:
+            dialog.resolve_selected()
+
+        dialog.state.get_resolved.assert_called_once_with("opaque-token")
+        show_package.assert_called_once_with(package)
+        dialog.client.resolve.assert_not_called()
+        dialog.status.set.assert_called_once_with(
+            "Loaded saved resolution (0 file(s)); cached for up to 24 hours."
+        )
+
 
 class UsenetBrowserSessionTests(unittest.TestCase):
     def test_launch_uses_a_separate_profile_and_loopback_debugger_on_fixed_port(self) -> None:

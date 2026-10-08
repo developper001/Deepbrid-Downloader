@@ -146,6 +146,26 @@ class SecureStore:
                 (name, value.encode("utf-8")),
             )
 
+    def get_encrypted_setting(self, name: str, purpose: bytes) -> str | None:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
+            raise ValueError("Reserved database settings cannot be read as encrypted settings.")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM app_settings WHERE name = ?", (name,)
+            ).fetchone()
+        return self.decrypt_text(bytes(row[0]), purpose) if row else None
+
+    def set_encrypted_setting(self, name: str, value: str, purpose: bytes) -> None:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
+            raise ValueError("Reserved database settings cannot be written as encrypted settings.")
+        encrypted = self.encrypt_text(value, purpose)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO app_settings (name, value) VALUES (?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+                (name, encrypted),
+            )
+
     def _get_encryption_key(self) -> bytes:
         encryption_key = self._read_encryption_key()
         if encryption_key is None:

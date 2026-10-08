@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import sqlite3
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -14,12 +15,15 @@ from .usenet_finder import (
     UsenetFinderError,
 )
 from .usenet_browser import UsenetBrowserSession
+from .secure_store import SecureStorageError, SecureStore
+from .usenet_finder_state import UsenetFinderState, UsenetFinderStateError
 
 
 class FinderController(Protocol):
     root: tk.Tk
     theme_colors: dict[str, str]
     usenet_browser: UsenetBrowserSession
+    secure_store: SecureStore
     def _log(self, message: str) -> None: ...
     def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]: ...
 
@@ -42,8 +46,17 @@ class UsenetFinderDialog:
         self._results: dict[str, FinderResult] = {}
         self._files: dict[str, FinderFile] = {}
         self.client = UsenetFinderClient(app.usenet_browser)
+        self.state = UsenetFinderState(app.secure_store)
         self._poll_id: str | None = None
         self._build_ui()
+        try:
+            query, category = self.state.load_search()
+        except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+            app._log(f"Could not restore Usenet Finder search settings: {error}")
+            self.status.set("Could not restore the previous Usenet Finder search.")
+        else:
+            self.query.set(query)
+            self.category.set(category)
         self.dialog.protocol("WM_DELETE_WINDOW", self.close)
         self.dialog.bind("<Escape>", lambda _event: self.close())
         self.query_entry.focus_set()
@@ -192,6 +205,13 @@ class UsenetFinderDialog:
             return
         if not self.open_browser():
             return
+        query = self.query.get().strip()
+        category = self.category.get().strip()
+        if query:
+            try:
+                self.state.save_search(query, category)
+            except (SecureStorageError, sqlite3.Error) as error:
+                self.app._log(f"Could not save Usenet Finder search settings: {error}")
         self._offset = 0
         self._results.clear()
         self.results.delete(*self.results.get_children())
@@ -232,6 +252,18 @@ class UsenetFinderDialog:
         result = self._results.get(selection[0])
         if result is None:
             return
+        try:
+            package = self.state.get_resolved(result.token)
+        except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not read Usenet Finder resolved-link cache: {error}")
+            package = None
+        if package is not None:
+            self._show_package(package)
+            self.status.set(
+                f"Loaded saved resolution ({len(package.files)} file(s)); "
+                "cached for up to 24 hours."
+            )
+            return
         self.files.delete(*self.files.get_children())
         self._files.clear()
         self._begin_request("Resolving selected result...")
@@ -239,6 +271,15 @@ class UsenetFinderDialog:
         def request() -> None:
             try:
                 package = self.client.resolve(result.token)
+                try:
+                    self.state.save_resolved(result.token, package)
+                except (
+                    UsenetFinderStateError,
+                    SecureStorageError,
+                    sqlite3.Error,
+                    TypeError,
+                ) as error:
+                    self.app._log(f"Could not cache Usenet Finder resolved links: {error}")
                 self._events.put(("resolve", package))
             except (UsenetFinderError, ValueError) as error:
                 self.app._log(f"Finder result resolution failed: {error}")
