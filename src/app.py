@@ -1217,6 +1217,7 @@ class DownloaderApp:
             try:
                 if self.usenet_finder_dialog.dialog.winfo_exists():
                     self.usenet_finder_dialog.dialog.lift()
+                    self.usenet_finder_dialog.open_browser()
                     return
             except tk.TclError:
                 pass

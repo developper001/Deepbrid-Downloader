@@ -48,6 +48,7 @@ class UsenetFinderDialog:
         self.dialog.bind("<Escape>", lambda _event: self.close())
         self.query_entry.focus_set()
         self._poll_id = self.dialog.after(100, self._process_events)
+        self.open_browser()
 
     def _build_ui(self) -> None:
         frame = ttk.Frame(self.dialog, padding=12)
@@ -82,7 +83,8 @@ class UsenetFinderDialog:
             frame,
             text=(
                 "Complete any Cloudflare check and sign in in the dedicated Chrome profile, "
-                "then return here to search. Resolved links can be added to the download queue."
+                "then return here to search. Keep this Chrome window open while using Finder; "
+                "it provides the signed-in session. Resolved links can be added to the queue."
             ),
             wraplength=850,
         ).grid(row=2, column=0, sticky="w", pady=(6, 10))

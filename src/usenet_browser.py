@@ -16,6 +16,7 @@ from typing import Callable, Mapping
 import websocket
 
 
+LOGIN_URL = "https://www.deepbrid.com/login"
 FINDER_URL = "https://www.deepbrid.com/usenet-finder"
 DEBUGGER_TIMEOUT = 20
 DEBUG_PORT_FILE = "DeepbridDevToolsPort"
@@ -63,7 +64,7 @@ class UsenetBrowserSession:
             "--remote-debugging-address=127.0.0.1",
             "--no-first-run",
             "--no-default-browser-check",
-            FINDER_URL,
+            LOGIN_URL,
         ]
         options: dict[str, object] = {
             "stdin": subprocess.DEVNULL,

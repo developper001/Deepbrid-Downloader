@@ -1649,7 +1649,7 @@ class UsenetBrowserSessionTests(unittest.TestCase):
             self.assertIn(f"--user-data-dir={profile}", args)
             self.assertIn("--remote-debugging-port=9225", args)
             self.assertIn("--remote-debugging-address=127.0.0.1", args)
-            self.assertEqual(args[-1], "https://www.deepbrid.com/usenet-finder")
+            self.assertEqual(args[-1], "https://www.deepbrid.com/login")
             self.assertEqual((profile / "DeepbridDevToolsPort").read_text(), "9225")
 
     def test_debug_port_comes_from_the_application_port_file(self) -> None:
