@@ -55,6 +55,7 @@ from .settings_dialog import SettingsDialog
 from .usenet_finder_dialog import UsenetFinderDialog
 from .usenet_browser import UsenetBrowserSession
 from .usenet_finder import is_valid_finder_link
+from .usenet_finder_state import CACHE_DURATION_SETTING, valid_cache_duration_hours
 from .secure_store import SecureStorageError, SecureStore
 from .single_instance import acquire_single_instance
 from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
@@ -384,6 +385,7 @@ class DownloaderApp:
         self._hosts_popup_update = None
         self.console_visible = False
         self.dark_theme = config.dark_theme
+        self.usenet_finder_cache_duration_hours = config.usenet_finder_cache_duration_hours
         self.key_save_after: str | None = None
         self.closing = False
 
@@ -1204,6 +1206,11 @@ class DownloaderApp:
     def _persist_auto_start_downloads(self) -> None:
         enabled = self.auto_start_downloads.get()
         self.secure_store.set_setting("auto_start_downloads_on_startup", "true" if enabled else "false")
+
+    def _set_usenet_finder_cache_duration(self, hours: int) -> None:
+        validated_hours = valid_cache_duration_hours(hours)
+        self.secure_store.set_setting(CACHE_DURATION_SETTING, str(validated_hours))
+        self.usenet_finder_cache_duration_hours = validated_hours
 
     def _show_settings(
         self,

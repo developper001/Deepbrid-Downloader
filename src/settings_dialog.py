@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import sqlite3
 import tkinter as tk
 from tkinter import ttk
 from typing import Protocol
+
+from .usenet_finder_state import (
+    DEFAULT_CACHE_DURATION_HOURS,
+    MAX_CACHE_DURATION_HOURS,
+    MIN_CACHE_DURATION_HOURS,
+    valid_cache_duration_hours,
+)
 
 
 class SettingsController(Protocol):
@@ -13,6 +21,7 @@ class SettingsController(Protocol):
     auto_start_downloads: tk.BooleanVar
     auto_check_updates: tk.BooleanVar
     dark_theme: bool
+    usenet_finder_cache_duration_hours: int
 
     def _open_api_key_dashboard(self) -> None: ...
     def _check_api_key(self, button: ttk.Button, status: tk.StringVar) -> None: ...
@@ -21,6 +30,7 @@ class SettingsController(Protocol):
     def _apply_theme(self) -> None: ...
     def _persist_auto_start_downloads(self) -> None: ...
     def _persist_auto_check_updates(self) -> None: ...
+    def _set_usenet_finder_cache_duration(self, hours: int) -> None: ...
     def _show_columns_dialog(self) -> None: ...
 
 
@@ -36,7 +46,7 @@ class SettingsDialog:
         self.dialog.title("Settings")
         self.dialog.geometry("720x560")
         self.dialog.minsize(580, 420)
-        self.dialog.transient(app.root)
+        self.dialog.resizable(True, True)
         self.dialog.configure(background=app.theme_colors["background"])
 
         frame = ttk.Frame(self.dialog, padding=12)
@@ -205,6 +215,63 @@ class SettingsDialog:
             ).pack(anchor="w")
 
         add_setting("Startup updates", "check updates releases launch", build_auto_updates)
+
+        cache_duration = tk.StringVar(
+            master=self.dialog,
+            value=str(
+                valid_cache_duration_hours(
+                    getattr(
+                        app,
+                        "usenet_finder_cache_duration_hours",
+                        DEFAULT_CACHE_DURATION_HOURS,
+                    )
+                )
+            ),
+        )
+        cache_status = tk.StringVar(master=self.dialog)
+
+        def save_cache_duration(*_args: object) -> None:
+            try:
+                hours = valid_cache_duration_hours(cache_duration.get())
+                app._set_usenet_finder_cache_duration(hours)
+            except (ValueError, OSError, sqlite3.Error) as error:
+                cache_status.set(str(error))
+                return
+            cache_duration.set(str(hours))
+            cache_status.set("Saved.")
+
+        def build_finder_cache(controls: ttk.Frame) -> None:
+            ttk.Label(controls, text="Keep search results and resolved links for").grid(
+                row=0,
+                column=0,
+                sticky="w",
+            )
+            duration = ttk.Spinbox(
+                controls,
+                from_=MIN_CACHE_DURATION_HOURS,
+                to=MAX_CACHE_DURATION_HOURS,
+                increment=1,
+                textvariable=cache_duration,
+                width=7,
+                command=save_cache_duration,
+            )
+            duration.grid(row=0, column=1, padx=(8, 4), sticky="w")
+            ttk.Label(controls, text="hours (1-720)").grid(row=0, column=2, sticky="w")
+            ttk.Label(controls, textvariable=cache_status).grid(
+                row=1,
+                column=0,
+                columnspan=3,
+                sticky="w",
+                pady=(4, 0),
+            )
+            duration.bind("<Return>", save_cache_duration)
+            duration.bind("<FocusOut>", save_cache_duration)
+
+        add_setting(
+            "Usenet Finder cache",
+            "usenet finder search resolved links cache duration expiry",
+            build_finder_cache,
+        )
 
         def build_columns(controls: ttk.Frame) -> None:
             ttk.Button(

@@ -72,10 +72,23 @@ from src.queue_runner import QueueRunner
 from src.secure_store import SecureStore
 from src.single_instance import acquire_single_instance
 from src.update_manager import download_update_asset
-from src.usenet_finder import FinderFile, FinderPackage, UsenetFinderClient, UsenetFinderError
+from src.usenet_finder import (
+    FinderFile,
+    FinderPackage,
+    FinderResult,
+    FinderSearchPage,
+    UsenetFinderClient,
+    UsenetFinderError,
+)
 from src.usenet_browser import UsenetBrowserSession
 from src.usenet_finder_dialog import UsenetFinderDialog
-from src.usenet_finder_state import CACHE_TTL_SECONDS, UsenetFinderState
+from src.usenet_finder_state import (
+    CACHE_DURATION_SETTING,
+    CACHE_TTL_SECONDS,
+    DEFAULT_CACHE_DURATION_HOURS,
+    UsenetFinderState,
+    valid_cache_duration_hours,
+)
 
 
 class FakeResponse:
@@ -395,6 +408,10 @@ class AppConfigurationTests(unittest.TestCase):
 
             self.assertTrue(config.auto_check_updates)
             self.assertTrue(config.auto_start_downloads)
+            self.assertEqual(
+                config.usenet_finder_cache_duration_hours,
+                DEFAULT_CACHE_DURATION_HOURS,
+            )
             with closing(sqlite3.connect(database)) as connection:
                 remaining_credentials = connection.execute(
                     "SELECT name FROM app_settings "
@@ -414,6 +431,7 @@ class AppConfigurationTests(unittest.TestCase):
             store.set_setting("hosts", json.dumps({"example.com": "up"}))
             store.set_setting("output_directory", str(downloads / "custom"))
             store.set_setting("visible_columns", json.dumps(["filename", "progress"]))
+            store.set_setting(CACHE_DURATION_SETTING, "48")
             config = AppConfiguration.load(
                 store,
                 COLUMN_ORDER,
@@ -427,6 +445,7 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertEqual(config.hosts, {"example.com": "up"})
             self.assertEqual(config.output_dir, downloads / "custom")
             self.assertEqual(config.visible_columns, ["filename", "progress"])
+            self.assertEqual(config.usenet_finder_cache_duration_hours, 48)
 
 
 class ApplicationShutdownTests(unittest.TestCase):
@@ -562,6 +581,18 @@ class ApplicationShutdownTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_usenet_finder_cache_duration_setting_is_persisted(self) -> None:
+        saved_settings: dict[str, str] = {}
+        app = object.__new__(DownloaderApp)
+        app.secure_store = SimpleNamespace(
+            set_setting=lambda name, value: saved_settings.__setitem__(name, value)
+        )
+
+        app._set_usenet_finder_cache_duration(36)
+
+        self.assertEqual(app.usenet_finder_cache_duration_hours, 36)
+        self.assertEqual(saved_settings[CACHE_DURATION_SETTING], "36")
+
     def test_single_instance_lock_rejects_second_owner_and_releases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             application_id = f"DeepbridDownloaderTest{uuid.uuid4().hex}"
@@ -1447,6 +1478,59 @@ class UsenetFinderStateTests(unittest.TestCase):
             self.assertEqual(reopened_state.load_search(), ("example release", "tv-hd"))
             self.assertEqual(reopened_state.get_resolved("opaque-token"), package)
 
+    def test_search_results_persist_and_are_reused_across_state_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            page = FinderSearchPage(
+                results=(
+                    FinderResult(
+                        title="Example release",
+                        token="opaque-token",
+                        category="TV",
+                        size="1 GB",
+                        size_bytes=1_000_000_000,
+                        date="2026-10-01",
+                        metadata={"sources": 2},
+                    ),
+                ),
+                has_more=True,
+            )
+            first_state = UsenetFinderState(store, clock=lambda: 1000)
+            first_state.save_search_page("example", "TV", 0, 15, page)
+
+            reopened_state = UsenetFinderState(store, clock=lambda: 1001)
+            self.assertEqual(reopened_state.get_search_page("example", "TV", 0, 15), page)
+            self.assertIsNone(reopened_state.get_search_page("example", "", 0, 15))
+
+    def test_search_results_expire_using_configured_cache_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            page = FinderSearchPage((), False)
+            state = UsenetFinderState(
+                store,
+                clock=lambda: 1000,
+                cache_duration_hours=2,
+            )
+            state.save_search_page("example", "", 0, 15, page)
+
+            reopened_state = UsenetFinderState(
+                store,
+                clock=lambda: 1000 + 2 * 60 * 60,
+                cache_duration_hours=2,
+            )
+            self.assertIsNone(reopened_state.get_search_page("example", "", 0, 15))
+
+    def test_search_cache_uses_the_configured_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(
+                store,
+                clock=lambda: 1000,
+                cache_duration_hours=2,
+            )
+            self.assertEqual(state.cache_duration_hours_value(), 2)
+            self.assertEqual(state.cache_ttl_seconds(), 2 * 60 * 60)
+
     def test_resolved_package_cache_expires_after_one_day(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
@@ -1459,6 +1543,13 @@ class UsenetFinderStateTests(unittest.TestCase):
                 clock=lambda: 1000 + CACHE_TTL_SECONDS,
             )
             self.assertIsNone(reopened_state.get_resolved("opaque-token"))
+
+    def test_cache_duration_accepts_only_whole_hours_in_supported_range(self) -> None:
+        self.assertEqual(valid_cache_duration_hours(1), 1)
+        self.assertEqual(valid_cache_duration_hours("720"), 720)
+        for invalid in ("0", "721", "1.5", "abc"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                valid_cache_duration_hours(invalid)
 
 
 class ResumeTests(unittest.TestCase):
@@ -1693,6 +1784,33 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
+    def test_search_page_cache_hit_skips_the_network_request(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        page = FinderSearchPage((), False)
+        dialog.query = SimpleNamespace(get=lambda: "example")
+        dialog.category = SimpleNamespace(get=lambda: "TV")
+        dialog._offset = 0
+        dialog.PAGE_SIZE = 15
+        dialog._results = {}
+        dialog.state = Mock()
+        dialog.state.get_search_page.return_value = page
+        dialog.state.cache_duration_hours_value.return_value = 24
+        dialog.client = Mock()
+        dialog.status = Mock()
+        with (
+            patch.object(dialog, "_show_search_page") as show_search_page,
+            patch.object(dialog, "_begin_request") as begin_request,
+        ):
+            dialog._search_page(append=False)
+
+        dialog.state.get_search_page.assert_called_once_with("example", "TV", 0, 15)
+        show_search_page.assert_called_once_with(page, False)
+        begin_request.assert_not_called()
+        dialog.client.search.assert_not_called()
+        dialog.status.set.assert_called_once_with(
+            "Loaded 0 cached result(s); cached for 24 hour(s)."
+        )
+
     def test_search_opens_the_browser_before_starting_the_request(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         dialog._request_running = False
@@ -1747,6 +1865,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._results = {"selected-result": result}
         package = FinderPackage("Example", (), {})
         dialog.state = Mock()
+        dialog.state.cache_duration_hours_value.return_value = DEFAULT_CACHE_DURATION_HOURS
         dialog.state.get_resolved.return_value = package
         dialog.files = Mock()
         dialog.status = Mock()
@@ -1758,7 +1877,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         show_package.assert_called_once_with(package)
         dialog.client.resolve.assert_not_called()
         dialog.status.set.assert_called_once_with(
-            "Loaded saved resolution (0 file(s)); cached for up to 24 hours."
+            "Loaded saved resolution (0 file(s)); cached for 24 hour(s)."
         )
 
 

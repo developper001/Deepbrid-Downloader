@@ -11,6 +11,7 @@ from .usenet_finder import (
     FinderFile,
     FinderPackage,
     FinderResult,
+    FinderSearchPage,
     UsenetFinderClient,
     UsenetFinderError,
 )
@@ -46,7 +47,10 @@ class UsenetFinderDialog:
         self._results: dict[str, FinderResult] = {}
         self._files: dict[str, FinderFile] = {}
         self.client = UsenetFinderClient(app.usenet_browser)
-        self.state = UsenetFinderState(app.secure_store)
+        self.state = UsenetFinderState(
+            app.secure_store,
+            cache_duration_hours=lambda: app.usenet_finder_cache_duration_hours,
+        )
         self._poll_id: str | None = None
         self._build_ui()
         try:
@@ -233,11 +237,38 @@ class UsenetFinderDialog:
             self.status.set("Enter a search query.")
             return
         offset = self._offset
+        try:
+            page = self.state.get_search_page(query, category, offset, self.PAGE_SIZE)
+        except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not read Usenet Finder search cache: {error}")
+            page = None
+        if page is not None:
+            self._show_search_page(page, append)
+            self.status.set(
+                f"Loaded {len(self._results)} cached result(s); "
+                f"cached for {self.state.cache_duration_hours_value()} hour(s)."
+            )
+            return
         self._begin_request("Searching...")
 
         def request() -> None:
             try:
                 page = self.client.search(query, category, offset, self.PAGE_SIZE)
+                try:
+                    self.state.save_search_page(
+                        query,
+                        category,
+                        offset,
+                        self.PAGE_SIZE,
+                        page,
+                    )
+                except (
+                    UsenetFinderStateError,
+                    SecureStorageError,
+                    sqlite3.Error,
+                    TypeError,
+                ) as error:
+                    self.app._log(f"Could not cache Usenet Finder search results: {error}")
                 self._events.put(("search", (page, append)))
             except (UsenetFinderError, ValueError) as error:
                 self.app._log(f"Finder search failed: {error}")
@@ -261,7 +292,7 @@ class UsenetFinderDialog:
             self._show_package(package)
             self.status.set(
                 f"Loaded saved resolution ({len(package.files)} file(s)); "
-                "cached for up to 24 hours."
+                f"cached for {self.state.cache_duration_hours_value()} hour(s)."
             )
             return
         self.files.delete(*self.files.get_children())
@@ -326,29 +357,32 @@ class UsenetFinderDialog:
                 continue
             if event == "search":
                 page, append = payload
-                if not append:
-                    self.results.delete(*self.results.get_children())
-                    self._results.clear()
-                    self._offset = 0
-                for result in page.results:
-                    item_id = self.results.insert(
-                        "",
-                        "end",
-                        values=(result.title, result.category, result.size, result.date),
-                    )
-                    self._results[item_id] = result
-                self._offset += len(page.results)
-                self._has_more = page.has_more
-                self.more_button.configure(
-                    state="normal" if page.has_more and page.results else "disabled"
-                )
-                self.status.set(
-                    f"Loaded {len(self._results)} result(s). "
-                    f"{'More results available.' if page.has_more else 'No more results.'}"
-                )
+                self._show_search_page(page, append)
             elif event == "resolve":
                 self._show_package(payload)
         self._poll_id = self.dialog.after(100, self._process_events)
+
+    def _show_search_page(self, page: FinderSearchPage, append: bool) -> None:
+        if not append:
+            self.results.delete(*self.results.get_children())
+            self._results.clear()
+            self._offset = 0
+        for result in page.results:
+            item_id = self.results.insert(
+                "",
+                "end",
+                values=(result.title, result.category, result.size, result.date),
+            )
+            self._results[item_id] = result
+        self._offset += len(page.results)
+        self._has_more = page.has_more
+        self.more_button.configure(
+            state="normal" if page.has_more and page.results else "disabled"
+        )
+        self.status.set(
+            f"Loaded {len(self._results)} result(s). "
+            f"{'More results available.' if page.has_more else 'No more results.'}"
+        )
 
     def _show_package(self, package: FinderPackage) -> None:
         self.files.delete(*self.files.get_children())

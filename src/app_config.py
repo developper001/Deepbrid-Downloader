@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Callable
 
 from .secure_store import SecureStorageError, SecureStore
+from .usenet_finder_state import (
+    CACHE_DURATION_SETTING,
+    DEFAULT_CACHE_DURATION_HOURS,
+    valid_cache_duration_hours,
+)
 
 
 def setting_is_enabled(value: str | None, default: bool) -> bool:
@@ -25,6 +30,7 @@ class AppConfiguration:
     output_dir: Path
     hosts: dict[str, str]
     dark_theme: bool
+    usenet_finder_cache_duration_hours: int
 
     @classmethod
     def load(
@@ -162,6 +168,15 @@ class AppConfiguration:
             if isinstance(cached_hosts, dict)
             else {}
         )
+        saved_cache_duration = secure_store.get_setting(CACHE_DURATION_SETTING)
+        try:
+            cache_duration_hours = (
+                valid_cache_duration_hours(saved_cache_duration)
+                if saved_cache_duration is not None
+                else DEFAULT_CACHE_DURATION_HOURS
+            )
+        except ValueError:
+            cache_duration_hours = DEFAULT_CACHE_DURATION_HOURS
 
         return cls(
             api_key=api_key,
@@ -179,4 +194,5 @@ class AppConfiguration:
             output_dir=output_dir,
             hosts=hosts,
             dark_theme=secure_store.get_setting("dark_theme") == "true",
+            usenet_finder_cache_duration_hours=cache_duration_hours,
         )
