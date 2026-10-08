@@ -77,7 +77,11 @@ If premium-link generation fails transiently, the app makes up to five attempts 
 
 The **Usenet Finder** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; check the queue and click **Start** to download them.
 
-The last query and category are saved and restored when the Finder window is reopened. If the first page of that search is still cached, it is shown immediately without requiring another Search click. Finder also restores the last selected result and its resolved file links while they remain within the configured cache duration. Search result pages and successfully resolved packages are cached locally in encrypted form. Their shared cache duration is configurable in Settings from 1 to 720 hours (24 hours by default); use **Usenet settings** in the Finder window to change it or clear both caches.
+![Usenet Finder search results and resolved files](src/img/UsenetFinder.png)
+
+The last query and category are saved and restored when the Finder window is reopened. If the first page of that search is still cached, it is shown immediately without requiring another Search click. Finder also restores the last selected row and its resolved file links while they remain within the configured cache duration. Search result pages and successfully resolved packages are cached locally in encrypted form. Their shared cache duration is configurable in Settings from 1 to 720 hours (24 hours by default); use **Usenet settings** in the Finder window to change it or clear both caches.
+
+![Usenet Finder search history and category selection](src/img/UsenetFinderSearchHistoryAndCategory.png)
 
 The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; choose **[Clear search history]** in the search history or use **Clear search history** in Settings to remove them. Result categories populate the category picker, and loaded results can be filtered or sorted by clicking a column heading. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
 
