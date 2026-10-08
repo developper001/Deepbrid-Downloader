@@ -68,6 +68,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - The app keeps active partial files and automatically resumes queued work after startup. Closing the window requests a safe stop and waits for the active network read to return before exit, preserving the partial file for resume.
 - If the API key is missing or rejected, the app opens the filtered API-key Settings automatically. Use the Get API key button there to retrieve a key, then use Check API key to verify it.
 - Use the About window to open the GitHub repository and check whether a newer release is available.
+- In Settings, use **Start after login** to toggle automatic startup on Windows/Linux or open macOS Login Items settings to add the app there. This starts the app after signing in; queued-download auto-start remains a separate option.
 
 ## Retry and resume behavior
 

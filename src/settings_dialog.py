@@ -6,6 +6,7 @@ from tkinter import filedialog, ttk
 from typing import Protocol
 
 from .secure_store import SecureStorageError
+from .startup_manager import StartupManager
 from .usenet_finder_state import (
     DEFAULT_CACHE_DURATION_HOURS,
     MAX_CACHE_DURATION_HOURS,
@@ -25,6 +26,7 @@ class SettingsController(Protocol):
     usenet_finder_cache_duration_hours: int
     append_output_log_enabled: bool
     append_output_log_path: tk.StringVar
+    startup_manager: StartupManager
 
     def _log(self, message: str) -> None: ...
     def _open_api_key_dashboard(self) -> None: ...
@@ -33,6 +35,7 @@ class SettingsController(Protocol):
     def _persist_theme(self) -> None: ...
     def _apply_theme(self) -> None: ...
     def _persist_auto_start_downloads(self) -> None: ...
+    def _configure_startup(self, button: ttk.Button, status: tk.StringVar) -> None: ...
     def _persist_auto_check_updates(self) -> None: ...
     def _set_usenet_finder_cache_duration(self, hours: int) -> None: ...
     def _clear_usenet_finder_cache(self) -> None: ...
@@ -207,6 +210,35 @@ class SettingsDialog:
             ).pack(anchor="w")
 
         add_setting("Appearance", "theme dark light colors", build_appearance)
+
+        startup_status = tk.StringVar(master=self.dialog)
+
+        def build_startup_login(controls: ttk.Frame) -> None:
+            startup_manager = app.startup_manager
+            if startup_manager.platform_name == "darwin":
+                button_text = "Open Login Items settings"
+            else:
+                button_text = (
+                    "Disable auto-start"
+                    if startup_manager.is_enabled()
+                    else "Enable auto-start"
+                )
+            startup_button = ttk.Button(
+                controls,
+                text=button_text,
+                command=lambda: app._configure_startup(startup_button, startup_status),
+            )
+            startup_button.pack(side="left")
+            ttk.Label(controls, textvariable=startup_status).pack(
+                side="left",
+                padx=(8, 0),
+            )
+
+        add_setting(
+            "Start after login",
+            "startup login automatically launch open computer boot",
+            build_startup_login,
+        )
 
         def build_auto_start(controls: ttk.Frame) -> None:
             ttk.Checkbutton(

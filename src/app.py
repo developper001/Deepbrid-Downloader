@@ -68,6 +68,7 @@ from .usenet_finder_state import (
 )
 from .secure_store import SecureStorageError, SecureStore
 from .single_instance import acquire_single_instance
+from .startup_manager import StartupConfigurationError, StartupManager
 from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
 
 
@@ -377,6 +378,7 @@ class DownloaderApp:
             USENET_BROWSER_PROFILE,
             log=self._log,
         )
+        self.startup_manager = StartupManager(project_root=PROJECT_ROOT)
         self.status_text = tk.StringVar(value="Ready")
         self.progress_value = tk.DoubleVar(value=0)
         self.queue_progress_text = tk.StringVar(value="Queue: 0/0 files (0%)")
@@ -1296,6 +1298,24 @@ class DownloaderApp:
     def _persist_auto_start_downloads(self) -> None:
         enabled = self.auto_start_downloads.get()
         self.secure_store.set_setting("auto_start_downloads_on_startup", "true" if enabled else "false")
+
+    def _configure_startup(self, button: ttk.Button, status: tk.StringVar) -> None:
+        try:
+            message = self.startup_manager.configure()
+        except StartupConfigurationError as error:
+            self._log(f"Could not configure automatic startup: {error}")
+            status.set(f"Could not configure startup: {error}")
+            return
+        self._log(message)
+        status.set(message)
+        if self.startup_manager.supports_toggle:
+            button.configure(
+                text=(
+                    "Disable auto-start"
+                    if self.startup_manager.is_enabled()
+                    else "Enable auto-start"
+                )
+            )
 
     def _set_usenet_finder_cache_duration(self, hours: int) -> None:
         validated_hours = valid_cache_duration_hours(hours)

@@ -17,7 +17,7 @@ from contextlib import closing
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
 from src.app_events import (
@@ -74,6 +74,11 @@ from src.queue_store import QueueStore
 from src.queue_runner import QueueRunner
 from src.secure_store import SecureStore
 from src.single_instance import acquire_single_instance
+from src.startup_manager import (
+    MACOS_LOGIN_ITEMS_URL,
+    StartupConfigurationError,
+    StartupManager,
+)
 from src.update_manager import download_update_asset
 from src.usenet_finder import (
     FinderFile,
@@ -591,6 +596,133 @@ class ApplicationShutdownTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_linux_startup_configuration_creates_and_removes_autostart_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            home = Path(temporary_directory) / "user home"
+            project_root = Path(temporary_directory) / "project folder"
+            project_root.mkdir()
+            manager = StartupManager(
+                platform_name="linux",
+                home=home,
+                executable=Path(temporary_directory) / "python with spaces",
+                project_root=project_root,
+                frozen=False,
+            )
+
+            enabled_message = manager.configure()
+
+            entry = manager.startup_file.read_text(encoding="utf-8")
+            self.assertIn(
+                "Exec="
+                + " ".join(
+                    manager._desktop_exec_argument(argument)
+                    for argument in (
+                        str((Path(temporary_directory) / "python with spaces").resolve()),
+                        "-m",
+                        "src.app",
+                    )
+                ),
+                entry,
+            )
+            self.assertIn(f"Path={project_root}", entry)
+            self.assertTrue(manager.is_enabled())
+            self.assertIn("will start after", enabled_message)
+
+            disabled_message = manager.configure()
+
+            self.assertFalse(manager.is_enabled())
+            self.assertIn("disabled", disabled_message)
+
+    def test_linux_startup_entry_uses_packaged_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            manager = StartupManager(
+                platform_name="linux",
+                home=Path(temporary_directory),
+                executable=Path(temporary_directory) / "Deepbrid Downloader",
+                frozen=True,
+            )
+
+            manager.configure()
+
+            entry = manager.startup_file.read_text(encoding="utf-8")
+            self.assertIn(
+                "Exec="
+                + manager._desktop_exec_argument(
+                    str((Path(temporary_directory) / "Deepbrid Downloader").resolve())
+                ),
+                entry,
+            )
+            self.assertNotIn("-m", entry)
+
+    def test_windows_startup_command_uses_launcher_without_console_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            executable = Path(temporary_directory) / "python.exe"
+            pythonw = executable.with_name("pythonw.exe")
+            pythonw.touch()
+            project_root = Path(temporary_directory) / "project"
+            manager = StartupManager(
+                platform_name="win32",
+                home=Path(temporary_directory),
+                executable=executable,
+                project_root=project_root,
+                frozen=False,
+            )
+
+            command = manager._windows_command()
+
+            self.assertIn(str(pythonw), command)
+            self.assertIn(str(project_root / "launcher.py"), command)
+
+    def test_windows_startup_configuration_adds_and_removes_run_value(self) -> None:
+        manager = StartupManager(platform_name="win32")
+        registry_key = MagicMock()
+        winreg = SimpleNamespace(
+            HKEY_CURRENT_USER=object(),
+            REG_SZ=1,
+            CreateKey=Mock(return_value=registry_key),
+            SetValueEx=Mock(),
+            DeleteValue=Mock(),
+        )
+        with (
+            patch.dict("sys.modules", {"winreg": winreg}),
+            patch.object(manager, "is_enabled", return_value=False),
+            patch.object(manager, "_windows_command", return_value='"app.exe"'),
+        ):
+            enabled_message = manager.configure()
+        winreg.SetValueEx.assert_called_once_with(
+            registry_key.__enter__.return_value,
+            "DeepbridDownloader",
+            0,
+            winreg.REG_SZ,
+            '"app.exe"',
+        )
+        self.assertIn("will start after", enabled_message)
+
+        with (
+            patch.dict("sys.modules", {"winreg": winreg}),
+            patch.object(manager, "is_enabled", return_value=True),
+        ):
+            disabled_message = manager.configure()
+        winreg.DeleteValue.assert_called_once_with(
+            registry_key.__enter__.return_value,
+            "DeepbridDownloader",
+        )
+        self.assertIn("disabled", disabled_message)
+
+    def test_macos_startup_action_opens_login_items_settings(self) -> None:
+        manager = StartupManager(platform_name="darwin")
+        with patch("src.startup_manager.subprocess.Popen") as popen:
+            message = manager.configure()
+
+        popen.assert_called_once_with(["open", MACOS_LOGIN_ITEMS_URL])
+        self.assertIn("Login Items", message)
+
+    def test_unknown_platform_startup_action_reports_unsupported(self) -> None:
+        manager = StartupManager(platform_name="freebsd")
+
+        with self.assertRaisesRegex(StartupConfigurationError, "not supported"):
+            manager.configure()
+
     def test_usenet_finder_cache_duration_setting_is_persisted(self) -> None:
         saved_settings: dict[str, str] = {}
         app = object.__new__(DownloaderApp)
