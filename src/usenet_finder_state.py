@@ -147,6 +147,14 @@ class UsenetFinderState:
         self._remove_expired_resolved_packages()
         self._save_resolved_cache()
 
+    def clear_cache(self) -> None:
+        self.secure_store.delete_encrypted_setting(SEARCH_CACHE_SETTING)
+        self.secure_store.delete_encrypted_setting(RESOLVED_CACHE_SETTING)
+        self._search_pages.clear()
+        self._resolved_packages.clear()
+        self._search_cache_loaded = True
+        self._resolved_cache_loaded = True
+
     @staticmethod
     def _search_cache_key(query: str, category: str, offset: int, limit: int) -> str:
         return json.dumps((query.strip(), category.strip(), offset, limit))

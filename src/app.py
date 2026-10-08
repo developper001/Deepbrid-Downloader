@@ -55,7 +55,11 @@ from .settings_dialog import SettingsDialog
 from .usenet_finder_dialog import UsenetFinderDialog
 from .usenet_browser import UsenetBrowserSession
 from .usenet_finder import is_valid_finder_link
-from .usenet_finder_state import CACHE_DURATION_SETTING, valid_cache_duration_hours
+from .usenet_finder_state import (
+    CACHE_DURATION_SETTING,
+    UsenetFinderState,
+    valid_cache_duration_hours,
+)
 from .secure_store import SecureStorageError, SecureStore
 from .single_instance import acquire_single_instance
 from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
@@ -436,12 +440,12 @@ class DownloaderApp:
             command=self._show_settings,
         )
         self.settings_button.pack(side="right")
-        self.theme_button = ttk.Button(
+        self.usenet_finder_button = ttk.Button(
             header_actions,
-            text="Dark mode" if not self.dark_theme else "Light mode",
-            command=self._toggle_theme,
+            text="Usenet Finder",
+            command=self._show_usenet_finder,
         )
-        self.theme_button.pack(side="right", padx=(0, 8))
+        self.usenet_finder_button.pack(side="right", padx=(0, 8))
 
         add_row = ttk.Frame(main)
         add_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
@@ -471,18 +475,18 @@ class DownloaderApp:
             command=lambda: self._refresh_hosts(show_popup=True),
         )
         self.refresh_hosts_button.pack(side="left", padx=(8, 0))
-        self.usenet_finder_button = ttk.Button(
-            controls,
-            text="Usenet Finder",
-            command=self._show_usenet_finder,
-        )
-        self.usenet_finder_button.pack(side="left", padx=(8, 0))
         self.columns_button = ttk.Button(
             controls,
             text="Configure columns",
             command=self._show_columns_dialog,
         )
         self.columns_button.pack(side="left", padx=(8, 0))
+        self.theme_button = ttk.Button(
+            controls,
+            text="Dark mode" if not self.dark_theme else "Light mode",
+            command=self._toggle_theme,
+        )
+        self.theme_button.pack(side="left", padx=(8, 0))
         self.readme_button = ttk.Button(controls, text="About", command=self._show_readme)
         self.readme_button.pack(side="left", padx=(8, 0))
         ttk.Label(controls, textvariable=self.status_text).pack(side="right")
@@ -1211,6 +1215,20 @@ class DownloaderApp:
         validated_hours = valid_cache_duration_hours(hours)
         self.secure_store.set_setting(CACHE_DURATION_SETTING, str(validated_hours))
         self.usenet_finder_cache_duration_hours = validated_hours
+
+    def _clear_usenet_finder_cache(self) -> None:
+        dialog = self.usenet_finder_dialog
+        if dialog is not None:
+            try:
+                if dialog.dialog.winfo_exists():
+                    dialog.state.clear_cache()
+                    return
+            except tk.TclError:
+                pass
+        UsenetFinderState(
+            self.secure_store,
+            cache_duration_hours=lambda: self.usenet_finder_cache_duration_hours,
+        ).clear_cache()
 
     def _show_settings(
         self,

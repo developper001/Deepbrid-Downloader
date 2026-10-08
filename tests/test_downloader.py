@@ -1551,6 +1551,20 @@ class UsenetFinderStateTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 valid_cache_duration_hours(invalid)
 
+    def test_clear_cache_removes_search_and_resolved_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_search_page("example", "", 0, 15, FinderSearchPage((), False))
+            state.save_resolved("opaque-token", FinderPackage("Example", (), {}))
+
+            state.clear_cache()
+
+            self.assertIsNone(state.get_search_page("example", "", 0, 15))
+            self.assertIsNone(state.get_resolved("opaque-token"))
+            self.assertIsNone(store.get_encrypted_setting("usenet_finder_search_cache", b"usenet-finder-search-cache-v1"))
+            self.assertIsNone(store.get_encrypted_setting("usenet_finder_resolved_cache", b"usenet-finder-resolved-cache-v1"))
+
 
 class ResumeTests(unittest.TestCase):
     def test_successful_download_reports_whether_size_was_verified(self) -> None:
@@ -1784,6 +1798,24 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
+    def test_saved_search_results_are_restored_without_a_network_request(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        page = FinderSearchPage((), False)
+        dialog.state = Mock()
+        dialog.state.get_search_page.return_value = page
+        dialog.state.cache_duration_hours_value.return_value = 48
+        dialog.app = SimpleNamespace(_log=Mock())
+        dialog._results = {}
+        dialog.status = Mock()
+        with patch.object(dialog, "_show_search_page") as show_search_page:
+            dialog._restore_cached_results("example", "TV")
+
+        dialog.state.get_search_page.assert_called_once_with("example", "TV", 0, 15)
+        show_search_page.assert_called_once_with(page, append=False)
+        dialog.status.set.assert_called_once_with(
+            "Restored 0 cached result(s); cached for 48 hour(s)."
+        )
+
     def test_search_page_cache_hit_skips_the_network_request(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         page = FinderSearchPage((), False)

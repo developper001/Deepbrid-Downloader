@@ -166,6 +166,12 @@ class SecureStore:
                 (name, encrypted),
             )
 
+    def delete_encrypted_setting(self, name: str) -> None:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
+            raise ValueError("Reserved database settings cannot be deleted as encrypted settings.")
+        with self._connect() as connection:
+            connection.execute("DELETE FROM app_settings WHERE name = ?", (name,))
+
     def _get_encryption_key(self) -> bytes:
         encryption_key = self._read_encryption_key()
         if encryption_key is None:

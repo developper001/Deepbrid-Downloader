@@ -27,6 +27,7 @@ class FinderController(Protocol):
     secure_store: SecureStore
     def _log(self, message: str) -> None: ...
     def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]: ...
+    def _show_settings(self, initial_filter: str = "") -> None: ...
 
 
 class UsenetFinderDialog:
@@ -53,19 +54,22 @@ class UsenetFinderDialog:
         )
         self._poll_id: str | None = None
         self._build_ui()
+        restored_search: tuple[str, str] | None = None
         try:
-            query, category = self.state.load_search()
+            restored_search = self.state.load_search()
         except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
             app._log(f"Could not restore Usenet Finder search settings: {error}")
             self.status.set("Could not restore the previous Usenet Finder search.")
         else:
-            self.query.set(query)
-            self.category.set(category)
+            self.query.set(restored_search[0])
+            self.category.set(restored_search[1])
         self.dialog.protocol("WM_DELETE_WINDOW", self.close)
         self.dialog.bind("<Escape>", lambda _event: self.close())
         self.query_entry.focus_set()
         self._poll_id = self.dialog.after(100, self._process_events)
         self.open_browser()
+        if restored_search is not None and restored_search[0]:
+            self._restore_cached_results(*restored_search)
 
     def _build_ui(self) -> None:
         frame = ttk.Frame(self.dialog, padding=12)
@@ -96,6 +100,11 @@ class UsenetFinderDialog:
             command=self.open_browser,
         )
         self.open_browser_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Button(
+            frame,
+            text="Usenet settings",
+            command=lambda: self.app._show_settings("Usenet Finder"),
+        ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
         ttk.Label(
             frame,
             text=(
@@ -229,6 +238,20 @@ class UsenetFinderDialog:
     def load_more(self) -> None:
         if not self._request_running and self._has_more:
             self._search_page(append=True)
+
+    def _restore_cached_results(self, query: str, category: str) -> None:
+        try:
+            page = self.state.get_search_page(query, category, 0, self.PAGE_SIZE)
+        except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not restore cached Usenet Finder search results: {error}")
+            return
+        if page is None:
+            return
+        self._show_search_page(page, append=False)
+        self.status.set(
+            f"Restored {len(self._results)} cached result(s); "
+            f"cached for {self.state.cache_duration_hours_value()} hour(s)."
+        )
 
     def _search_page(self, *, append: bool) -> None:
         query = self.query.get().strip()

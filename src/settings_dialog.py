@@ -23,6 +23,7 @@ class SettingsController(Protocol):
     dark_theme: bool
     usenet_finder_cache_duration_hours: int
 
+    def _log(self, message: str) -> None: ...
     def _open_api_key_dashboard(self) -> None: ...
     def _check_api_key(self, button: ttk.Button, status: tk.StringVar) -> None: ...
     def _choose_output_folder(self) -> None: ...
@@ -31,6 +32,7 @@ class SettingsController(Protocol):
     def _persist_auto_start_downloads(self) -> None: ...
     def _persist_auto_check_updates(self) -> None: ...
     def _set_usenet_finder_cache_duration(self, hours: int) -> None: ...
+    def _clear_usenet_finder_cache(self) -> None: ...
     def _show_columns_dialog(self) -> None: ...
 
 
@@ -230,6 +232,16 @@ class SettingsDialog:
         )
         cache_status = tk.StringVar(master=self.dialog)
 
+        def clear_finder_cache() -> None:
+            try:
+                app._clear_usenet_finder_cache()
+            except (OSError, sqlite3.Error) as error:
+                app._log(f"Could not clear Usenet Finder cache: {error}")
+                cache_status.set(f"Could not clear cache: {error}")
+                return
+            app._log("Cleared Usenet Finder search and resolved-link caches.")
+            cache_status.set("Cache cleared.")
+
         def save_cache_duration(*_args: object) -> None:
             try:
                 hours = valid_cache_duration_hours(cache_duration.get())
@@ -264,12 +276,17 @@ class SettingsDialog:
                 sticky="w",
                 pady=(4, 0),
             )
+            ttk.Button(
+                controls,
+                text="Clear cached search results and resolved links",
+                command=clear_finder_cache,
+            ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
             duration.bind("<Return>", save_cache_duration)
             duration.bind("<FocusOut>", save_cache_duration)
 
         add_setting(
             "Usenet Finder cache",
-            "usenet finder search resolved links cache duration expiry",
+            "usenet usenet finder search resolved links cache duration expiry clear",
             build_finder_cache,
         )
 
