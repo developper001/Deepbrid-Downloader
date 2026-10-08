@@ -6,7 +6,7 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Protocol
 
 from .usenet_finder import (
@@ -250,7 +250,13 @@ class UsenetFinderDialog:
         try:
             self.app.usenet_browser.open()
         except UsenetFinderError as error:
-            self.status.set(str(error))
+            self.status.set("Chrome or Edge is required to use Usenet Finder.")
+            self.app._log(f"Could not open Usenet Finder browser: {error}")
+            messagebox.showerror(
+                "Browser required for Usenet Finder",
+                str(error),
+                parent=self.dialog,
+            )
             return False
         self.status.set(
             "In the dedicated Chrome window, complete any Cloudflare check and sign in; "

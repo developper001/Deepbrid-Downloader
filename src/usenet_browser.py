@@ -49,9 +49,32 @@ class UsenetBrowserSession:
             return
         browser = self.browser_path or self._find_browser()
         if browser is None:
+            if sys.platform == "darwin":
+                install_help = (
+                    "Install Google Chrome or Microsoft Edge for macOS, then reopen Finder.\n\n"
+                    "Chrome: https://www.google.com/chrome/\n"
+                    "Edge: https://www.microsoft.com/edge/download"
+                )
+            elif sys.platform.startswith("linux"):
+                install_help = (
+                    "Install Google Chrome or Microsoft Edge for Linux, then reopen Finder. "
+                    "On Ubuntu or Debian, download and install the .deb package from either "
+                    "browser's website. Other Linux distributions can use the package offered "
+                    "for that distribution.\n\n"
+                    "Chrome: https://www.google.com/chrome/\n"
+                    "Edge: https://www.microsoft.com/edge/download"
+                )
+            else:
+                install_help = (
+                    "Install Google Chrome or Microsoft Edge, then reopen Finder.\n\n"
+                    "Chrome: https://www.google.com/chrome/\n"
+                    "Edge: https://www.microsoft.com/edge/download"
+                )
             raise UsenetFinderError(
-                "Could not find Google Chrome or Microsoft Edge. Install a current version, "
-                "or set DEEPBRID_CHROME_PATH to its executable."
+                "Usenet Finder requires Google Chrome or Microsoft Edge, but neither browser "
+                "was found.\n\n"
+                f"{install_help}\n\n"
+                "If the browser is already installed, set DEEPBRID_CHROME_PATH to its executable."
             )
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         port = self._find_free_port()

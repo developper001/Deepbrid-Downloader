@@ -1923,6 +1923,21 @@ class UsenetFinderDialogTests(unittest.TestCase):
 
 
 class UsenetBrowserSessionTests(unittest.TestCase):
+    def test_missing_browser_error_explains_requirement_and_install_options(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            session = UsenetBrowserSession(Path(temporary_directory))
+            with (
+                patch.object(session, "_debug_port", return_value=None),
+                patch.object(session, "_close_legacy_automated_browser", return_value=False),
+                patch.object(session, "_find_browser", return_value=None),
+                patch("src.usenet_browser.sys.platform", "linux"),
+                self.assertRaisesRegex(UsenetFinderError, "requires Google Chrome or Microsoft Edge") as error,
+            ):
+                session.open()
+        self.assertIn("https://www.google.com/chrome/", str(error.exception))
+        self.assertIn("https://www.microsoft.com/edge/download", str(error.exception))
+        self.assertIn("Ubuntu or Debian", str(error.exception))
+
     def test_launch_uses_a_separate_profile_and_loopback_debugger_on_fixed_port(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             profile = Path(temporary_directory) / "browser-profile"
