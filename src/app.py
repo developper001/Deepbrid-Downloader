@@ -993,7 +993,7 @@ class DownloaderApp:
         popup.title("Deepbrid Downloader README")
         popup.geometry("980x760")
         popup.minsize(700, 500)
-        popup.transient(self.root)
+        popup.resizable(True, True)
         popup.configure(background=colors["background"])
         popup.grab_set()
 
