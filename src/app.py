@@ -1001,51 +1001,50 @@ class DownloaderApp:
         container.columnconfigure(0, weight=1)
         container.rowconfigure(0, weight=1)
 
-        canvas = tk.Canvas(
+        output = tk.Text(
             container,
             background=colors["background"],
+            foreground=colors["foreground"],
             highlightthickness=0,
             borderwidth=0,
+            wrap="word",
+            padx=4,
+            pady=4,
         )
-        canvas.grid(row=0, column=0, sticky="nsew")
-        yscrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        output.grid(row=0, column=0, sticky="nsew")
+        yscrollbar = ttk.Scrollbar(container, orient="vertical", command=output.yview)
         yscrollbar.grid(row=0, column=1, sticky="ns")
-        xscrollbar = ttk.Scrollbar(container, orient="horizontal", command=canvas.xview)
+        xscrollbar = ttk.Scrollbar(container, orient="horizontal", command=output.xview)
         xscrollbar.grid(row=1, column=0, sticky="ew")
-        canvas.configure(yscrollcommand=yscrollbar.set, xscrollcommand=xscrollbar.set)
+        output.configure(yscrollcommand=yscrollbar.set, xscrollcommand=xscrollbar.set)
 
         def _on_mouse_wheel(event: tk.Event) -> None:
-            if not canvas.winfo_exists():
-                return
             if getattr(event, "delta", 0):
                 delta = int(-event.delta / 48)
                 if not delta:
                     delta = -1 if event.delta > 0 else 1
             else:
                 delta = {4: -1, 5: 1}.get(getattr(event, "num", None), 0)
-            try:
-                canvas.yview_scroll(delta, "units")
-            except tk.TclError:
-                return
+            output.yview_scroll(delta, "units")
 
         popup.bind("<MouseWheel>", _on_mouse_wheel, add="+")
         popup.bind("<Shift-MouseWheel>", _on_mouse_wheel, add="+")
-        frame = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=frame, anchor="nw")
         badge_row: ttk.Frame | None = None
+        readme_images: list[tk.PhotoImage] = []
 
         def render_line(raw_line: str) -> None:
             nonlocal badge_row
             stripped = raw_line.strip()
             if not stripped:
                 badge_row = None
+                output.insert("end", "\n")
                 return
 
             badge = _parse_linked_image_badge(stripped)
             if badge:
                 if badge_row is None:
-                    badge_row = ttk.Frame(frame)
-                    badge_row.pack(anchor="w", pady=(2, 8))
+                    badge_row = ttk.Frame(output)
+                    output.window_create("end", window=badge_row, padx=0, pady=2)
                 label = ttk.Label(
                     badge_row,
                     text=badge[0],
@@ -1059,6 +1058,8 @@ class DownloaderApp:
                     lambda _event, target=badge[1]: self._open_readme_link(target),
                 )
                 return
+            if badge_row is not None:
+                output.insert("end", "\n")
             badge_row = None
 
             image_match = re.match(r"!\[[^\]]*\]\(([^)]+)\)", stripped)
@@ -1066,64 +1067,49 @@ class DownloaderApp:
                 image_path = (README_PATH.parent / image_match.group(1)).resolve()
                 if image_path.exists():
                     preview = tk.PhotoImage(file=str(image_path))
-                    label = ttk.Label(frame, image=preview)
-                    label.image = preview
-                    label.pack(anchor="w", pady=(8, 4))
+                    readme_images.append(preview)
+                    output.image_create("end", image=preview, align="top", padx=0, pady=4)
+                    output.insert("end", "\n")
                 else:
-                    ttk.Label(frame, text=f"Missing image: {image_path.name}").pack(anchor="w", pady=(8, 4))
+                    output.insert("end", f"Missing image: {image_path.name}\n")
                 return
 
             heading_match = re.match(r"^(#+)\s+(.*)$", stripped)
             if heading_match:
                 level = len(heading_match.group(1))
-                text = heading_match.group(2)
+                heading_text = heading_match.group(2)
                 font_size = 14 - min(level - 1, 4)
-                label = tk.Label(
-                    frame,
-                    text=text,
+                tag = f"heading-{level}"
+                output.tag_configure(
+                    tag,
                     font=("Segoe UI", font_size, "bold"),
-                    anchor="w",
-                    justify="left",
                     background=colors["surface"],
                     foreground=colors["foreground"],
-                    padx=6,
-                    pady=3,
+                    lmargin1=6,
+                    lmargin2=6,
+                    rmargin=6,
+                    spacing1=10 if level == 1 else 6,
+                    spacing3=4,
                 )
-                label.pack(anchor="w", pady=(10 if level == 1 else 6, 4))
+                start = output.index("end-1c")
+                output.insert("end", f"{heading_text}\n")
+                output.tag_add(tag, start, "end-1c")
                 return
 
             if stripped.startswith("- ") or stripped.startswith("* "):
-                label = tk.Label(
-                    frame,
-                    text=stripped[2:],
-                    justify="left",
-                    anchor="w",
-                    background=colors["background"],
-                    foreground=colors["foreground"],
-                )
-                label.pack(anchor="w", pady=(2, 2))
+                output.insert("end", f"{stripped[2:]}\n")
                 return
 
             if stripped.startswith("```"):
                 return
 
-            label = tk.Label(
-                frame,
-                text=stripped,
-                justify="left",
-                anchor="w",
-                wraplength=850,
-                background=colors["background"],
-                foreground=colors["foreground"],
-            )
-            label.pack(anchor="w", pady=(2, 2))
+            output.insert("end", f"{stripped}\n")
 
         for line in self.readme_text().splitlines():
             render_line(line)
 
-        frame.update_idletasks()
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        canvas.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        output.image_references = readme_images
+        output.configure(state="disabled")
 
         actions = ttk.Frame(container)
         actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
