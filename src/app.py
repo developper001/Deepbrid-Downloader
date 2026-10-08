@@ -1016,12 +1016,12 @@ class DownloaderApp:
         )
         output.grid(row=0, column=0, sticky="nsew")
         body_font = tkfont.nametofont("TkDefaultFont", root=popup).copy()
-        body_font.configure(size=body_font.cget("size") + 1)
+        body_font.configure(size=body_font.cget("size") + 2)
         output.configure(font=body_font)
         bold_font = body_font.copy()
         bold_font.configure(weight="bold")
         code_font = tkfont.nametofont("TkFixedFont", root=popup).copy()
-        code_font.configure(size=code_font.cget("size") + 1)
+        code_font.configure(size=code_font.cget("size") + 2)
         output.body_font = body_font
         output.bold_font = bold_font
         output.code_font = code_font
@@ -1131,7 +1131,7 @@ class DownloaderApp:
             if heading_match:
                 level = len(heading_match.group(1))
                 heading_text = heading_match.group(2)
-                font_size = 16 - min(level - 1, 4)
+                font_size = 17 - min(level - 1, 4)
                 tag = f"heading-{level}"
                 output.tag_configure(
                     tag,
