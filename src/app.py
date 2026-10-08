@@ -1010,6 +1010,8 @@ class DownloaderApp:
             wrap="word",
             padx=4,
             pady=4,
+            insertwidth=0,
+            takefocus=False,
         )
         output.grid(row=0, column=0, sticky="nsew")
         yscrollbar = ttk.Scrollbar(container, orient="vertical", command=output.yview)
@@ -1083,12 +1085,11 @@ class DownloaderApp:
                 output.tag_configure(
                     tag,
                     font=("Segoe UI", font_size, "bold"),
-                    background=colors["surface"],
                     foreground=colors["foreground"],
+                    background=colors["background"],
                     lmargin1=6,
                     lmargin2=6,
                     rmargin=6,
-                    spacing1=10 if level == 1 else 6,
                     spacing3=4,
                 )
                 start = output.index("end-1c")
