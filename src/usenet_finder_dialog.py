@@ -154,9 +154,8 @@ class UsenetFinderDialog:
         ttk.Label(
             frame,
             text=(
-                "Complete any Cloudflare check and sign in in the dedicated Chrome profile, "
-                "then return here to search. Keep this Chrome window open while using Finder; "
-                "it provides the signed-in session. Resolved links can be added to the queue."
+                "Sign in using the dedicated Chrome window, then return here to search. "
+                "Keep Chrome open while using Finder."
             ),
             wraplength=850,
         ).grid(row=2, column=0, sticky="w", pady=(6, 10))

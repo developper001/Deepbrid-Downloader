@@ -104,6 +104,7 @@ COLUMN_ORDER = (
 DEFAULT_COLUMNS = ("filename", "host", "size", "progress", "time_remaining", "eta", "verification")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
+DEEPBRID_DASHBOARD_URL = "https://www.deepbrid.com/dashboard"
 
 
 def _filter_and_sort_host_rows(
@@ -1126,13 +1127,8 @@ class DownloaderApp:
 
         actions = ttk.Frame(container)
         actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(
-            actions,
-            text="GitHub repository",
-            command=lambda: webbrowser.open(GITHUB_REPOSITORY_URL),
-        ).pack(side="left")
         update_status = tk.StringVar(master=popup, value=f"Current version: {APP_VERSION}")
-        ttk.Label(actions, textvariable=update_status).pack(side="left", padx=(8, 0))
+        ttk.Label(actions, textvariable=update_status).pack(side="left")
         update_progress = ttk.Progressbar(actions, length=150, mode="determinate", maximum=100)
         release_button = ttk.Button(actions, text="Open release")
         check_button = ttk.Button(
@@ -1147,6 +1143,16 @@ class DownloaderApp:
             ),
         )
         check_button.pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="GitHub repository",
+            command=lambda: webbrowser.open(GITHUB_REPOSITORY_URL),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="Deepbrid dashboard",
+            command=lambda: webbrowser.open(DEEPBRID_DASHBOARD_URL),
+        ).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Close", command=popup.destroy).pack(side="right")
 
     def _check_for_updates(
