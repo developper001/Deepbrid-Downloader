@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 import traceback
 import webbrowser
 from collections.abc import Callable
@@ -1014,6 +1015,33 @@ class DownloaderApp:
             takefocus=False,
         )
         output.grid(row=0, column=0, sticky="nsew")
+        body_font = tkfont.nametofont("TkDefaultFont", root=popup).copy()
+        body_font.configure(size=body_font.cget("size") + 1)
+        output.configure(font=body_font)
+        bold_font = body_font.copy()
+        bold_font.configure(weight="bold")
+        code_font = tkfont.nametofont("TkFixedFont", root=popup).copy()
+        code_font.configure(size=code_font.cget("size") + 1)
+        output.body_font = body_font
+        output.bold_font = bold_font
+        output.code_font = code_font
+        output.tag_configure("strong", font=bold_font)
+        output.tag_configure(
+            "inline-code",
+            font=code_font,
+            background=colors["field"],
+        )
+        output.tag_configure(
+            "code-block",
+            font=code_font,
+            foreground=colors["foreground"],
+            background=colors["field"],
+            lmargin1=12,
+            lmargin2=12,
+            rmargin=8,
+            spacing1=3,
+            spacing3=3,
+        )
         yscrollbar = ttk.Scrollbar(container, orient="vertical", command=output.yview)
         yscrollbar.grid(row=0, column=1, sticky="ns")
         xscrollbar = ttk.Scrollbar(container, orient="horizontal", command=output.xview)
@@ -1033,10 +1061,33 @@ class DownloaderApp:
         popup.bind("<Shift-MouseWheel>", _on_mouse_wheel, add="+")
         badge_row: ttk.Frame | None = None
         readme_images: list[tk.PhotoImage] = []
+        in_code_block = False
+
+        def insert_markdown_text(text: str) -> None:
+            position = 0
+            for match in re.finditer(r"\*\*(.+?)\*\*|`([^`]+)`", text):
+                output.insert("end", text[position:match.start()])
+                if match.group(1) is not None:
+                    output.insert("end", match.group(1), "strong")
+                else:
+                    output.insert("end", match.group(2), "inline-code")
+                position = match.end()
+            output.insert("end", text[position:])
 
         def render_line(raw_line: str) -> None:
-            nonlocal badge_row
+            nonlocal badge_row, in_code_block
             stripped = raw_line.strip()
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                badge_row = None
+                output.insert("end", "\n")
+                return
+            if in_code_block:
+                start = output.index("end-1c")
+                output.insert("end", f"{raw_line}\n")
+                output.tag_add("code-block", start, "end-1c")
+                return
+
             if not stripped:
                 badge_row = None
                 output.insert("end", "\n")
@@ -1080,7 +1131,7 @@ class DownloaderApp:
             if heading_match:
                 level = len(heading_match.group(1))
                 heading_text = heading_match.group(2)
-                font_size = 14 - min(level - 1, 4)
+                font_size = 16 - min(level - 1, 4)
                 tag = f"heading-{level}"
                 output.tag_configure(
                     tag,
@@ -1093,18 +1144,32 @@ class DownloaderApp:
                     spacing3=4,
                 )
                 start = output.index("end-1c")
-                output.insert("end", f"{heading_text}\n")
+                insert_markdown_text(heading_text)
+                output.insert("end", "\n")
                 output.tag_add(tag, start, "end-1c")
                 return
 
-            if stripped.startswith("- ") or stripped.startswith("* "):
-                output.insert("end", f"{stripped[2:]}\n")
+            bullet_match = re.match(r"^(\s*)[-*]\s+(.*)$", raw_line)
+            if bullet_match:
+                indent = len(bullet_match.group(1))
+                level = min(indent // 2, 4)
+                tag = f"list-{level}"
+                output.tag_configure(
+                    tag,
+                    lmargin1=14 + level * 18,
+                    lmargin2=30 + level * 18,
+                    rmargin=8,
+                    spacing3=2,
+                )
+                start = output.index("end-1c")
+                output.insert("end", "\u2022   ")
+                insert_markdown_text(bullet_match.group(2))
+                output.insert("end", "\n")
+                output.tag_add(tag, start, "end-1c")
                 return
 
-            if stripped.startswith("```"):
-                return
-
-            output.insert("end", f"{stripped}\n")
+            insert_markdown_text(stripped)
+            output.insert("end", "\n")
 
         for line in self.readme_text().splitlines():
             render_line(line)
