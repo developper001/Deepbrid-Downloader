@@ -38,7 +38,7 @@ class UsenetFinderDialog:
     def __init__(self, app: FinderController):
         self.app = app
         self.dialog = tk.Toplevel(app.root)
-        self.dialog.title("Usenet Finder (experimental)")
+        self.dialog.title("Usenet Finder")
         self.dialog.geometry("900x650")
         self.dialog.minsize(680, 480)
         self.dialog.resizable(True, True)
