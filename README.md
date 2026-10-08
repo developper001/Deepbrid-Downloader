@@ -79,6 +79,8 @@ The **Usenet Finder** button opens a separate window that searches Usenet result
 
 The last query and category are saved and restored when the Finder window is reopened. If the first page of that search is still cached, it is shown immediately without requiring another Search click. Search result pages and successfully resolved packages are cached locally in encrypted form. Their shared cache duration is configurable in Settings from 1 to 720 hours (24 hours by default); use **Usenet settings** in the Finder window to change it or clear both caches.
 
+The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; result categories populate the category picker, and loaded results can be filtered or sorted by clicking a column heading. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
+
 Usenet Finder requires Google Chrome or Microsoft Edge to be installed. The app opens a dedicated browser window automatically and uses an isolated profile stored under the application's data directory with loopback-only DevTools. If neither browser is found, the app explains how to install one:
 
 - Windows: download Chrome or Edge from its official site, run the installer, then reopen Finder.
@@ -118,6 +120,7 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 - Open API-key Settings automatically at startup when the key is missing or rejected; access the Deepbrid key page from Settings
 - Check for newer releases in About and opt into verified in-app updates with download progress
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
+- Optionally append application output to a chosen log file from Settings; logging is disabled by default and URLs are redacted
 - Route standard output, errors, and uncaught exceptions to the in-app console
 - Build the Windows executable with the Deepbrid icon and no separate console window
 - Open the full project README directly from the About window

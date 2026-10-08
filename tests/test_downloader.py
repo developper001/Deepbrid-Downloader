@@ -12,6 +12,7 @@ import unittest
 import uuid
 import urllib.error
 import urllib.parse
+from datetime import datetime
 from contextlib import closing
 from io import BytesIO
 from pathlib import Path
@@ -50,6 +51,7 @@ from src.app import (
     LEGACY_QUEUE_DATABASE_PATH,
     OUTPUT_DIR,
     _ConsoleStream,
+    append_output_log_line,
     default_download_directory,
     _filter_and_sort_host_rows,
     _parse_linked_image_badge,
@@ -413,6 +415,8 @@ class AppConfigurationTests(unittest.TestCase):
                 config.usenet_finder_cache_duration_hours,
                 DEFAULT_CACHE_DURATION_HOURS,
             )
+            self.assertFalse(config.append_output_log_enabled)
+            self.assertIsNone(config.append_output_log_path)
             with closing(sqlite3.connect(database)) as connection:
                 remaining_credentials = connection.execute(
                     "SELECT name FROM app_settings "
@@ -433,6 +437,9 @@ class AppConfigurationTests(unittest.TestCase):
             store.set_setting("output_directory", str(downloads / "custom"))
             store.set_setting("visible_columns", json.dumps(["filename", "progress"]))
             store.set_setting(CACHE_DURATION_SETTING, "48")
+            log_path = downloads / "diagnostics.log"
+            store.set_setting("append_output_log_enabled", "true")
+            store.set_setting("append_output_log_path", str(log_path))
             config = AppConfiguration.load(
                 store,
                 COLUMN_ORDER,
@@ -447,6 +454,8 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertEqual(config.output_dir, downloads / "custom")
             self.assertEqual(config.visible_columns, ["filename", "progress"])
             self.assertEqual(config.usenet_finder_cache_duration_hours, 48)
+            self.assertTrue(config.append_output_log_enabled)
+            self.assertEqual(config.append_output_log_path, log_path)
 
 
 class ApplicationShutdownTests(unittest.TestCase):
@@ -1137,6 +1146,59 @@ class ValidationAndPresentationTests(unittest.TestCase):
         stream.flush()
         self.assertEqual(messages, ["first", "second"])
 
+    def test_output_log_appends_lines_and_redacts_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "logs" / "application.log"
+            append_output_log_line(
+                path,
+                "12:34:56",
+                "Request failed for https://example.test/path?token=secret",
+            )
+            append_output_log_line(path, "12:34:57", "Another diagnostic")
+
+            logged = path.read_text(encoding="utf-8")
+            self.assertIn("[12:34:56] Request failed for <URL REDACTED>", logged)
+            self.assertIn("[12:34:57] Another diagnostic", logged)
+            self.assertNotIn("token=secret", logged)
+
+    def test_output_log_setting_creates_file_and_persists_enabled_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "settings.sqlite3")
+            app = object.__new__(DownloaderApp)
+            app.secure_store = store
+            app.append_output_log_path = SimpleNamespace(set=Mock())
+            app._log = Mock()
+            app._output_log_error_reported = False
+            target = Path(temporary_directory) / "logs" / "app.log"
+
+            app._set_append_output_log(True, str(target))
+
+            self.assertTrue(target.is_file())
+            self.assertEqual(store.get_setting("append_output_log_enabled"), "true")
+            self.assertEqual(store.get_setting("append_output_log_path"), str(target))
+            self.assertTrue(app.append_output_log_enabled)
+            app.append_output_log_path.set.assert_called_once_with(str(target))
+
+    def test_main_add_links_warns_when_duplicates_are_skipped(self) -> None:
+        app = object.__new__(DownloaderApp)
+        app.hosts = {"example.com": "up"}
+        app.link_placeholder_active = False
+        app.links_input = Mock()
+        app.links_input.get.return_value = "https://example.com/file"
+        app.store = Mock()
+        app.store.add.return_value = False
+        app.root = object()
+        app.status_text = SimpleNamespace(set=Mock())
+        app._log = Mock()
+        app._refresh_rows = Mock()
+        app._save_visible_queue_order = Mock()
+
+        with patch("src.app.messagebox.showwarning") as showwarning:
+            app._add_link()
+
+        showwarning.assert_called_once()
+        self.assertIn("1 duplicate link", showwarning.call_args.args[1])
+
     def test_default_download_directory_prefers_existing_user_downloads(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             downloads = Path(temporary_directory) / "Downloads"
@@ -1478,6 +1540,27 @@ class UsenetFinderStateTests(unittest.TestCase):
             reopened_state = UsenetFinderState(store, clock=lambda: 1001)
             self.assertEqual(reopened_state.load_search(), ("example release", "tv-hd"))
             self.assertEqual(reopened_state.get_resolved("opaque-token"), package)
+            self.assertEqual(
+                reopened_state.get_resolved_with_expiry("opaque-token"),
+                (package, 1000 + CACHE_TTL_SECONDS),
+            )
+            self.assertEqual(
+                reopened_state.load_search_history(),
+                [("example release", "tv-hd")],
+            )
+
+    def test_search_history_keeps_recent_unique_query_and_category_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_search("first", "TV")
+            state.save_search("second", "Movies")
+            state.save_search("first", "TV")
+
+            self.assertEqual(
+                state.load_search_history()[:2],
+                [("first", "TV"), ("second", "Movies")],
+            )
 
     def test_search_results_persist_and_are_reused_across_state_instances(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1501,6 +1584,10 @@ class UsenetFinderStateTests(unittest.TestCase):
 
             reopened_state = UsenetFinderState(store, clock=lambda: 1001)
             self.assertEqual(reopened_state.get_search_page("example", "TV", 0, 15), page)
+            self.assertEqual(
+                reopened_state.get_search_page_with_expiry("example", "TV", 0, 15),
+                (page, 1000 + CACHE_TTL_SECONDS),
+            )
             self.assertIsNone(reopened_state.get_search_page("example", "", 0, 15))
 
     def test_search_results_expire_using_configured_cache_duration(self) -> None:
@@ -1811,18 +1898,21 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         page = FinderSearchPage((), False)
         dialog.state = Mock()
-        dialog.state.get_search_page.return_value = page
-        dialog.state.cache_duration_hours_value.return_value = 48
+        dialog.state.get_search_page_with_expiry.return_value = (page, 2000)
         dialog.app = SimpleNamespace(_log=Mock())
         dialog._results = {}
+        dialog._result_records = []
         dialog.status = Mock()
         with patch.object(dialog, "_show_search_page") as show_search_page:
             dialog._restore_cached_results("example", "TV")
 
-        dialog.state.get_search_page.assert_called_once_with("example", "TV", 0, 15)
-        show_search_page.assert_called_once_with(page, append=False)
+        dialog.state.get_search_page_with_expiry.assert_called_once_with(
+            "example", "TV", 0, 15
+        )
+        show_search_page.assert_called_once_with(page, append=False, cached_expiry=2000)
         dialog.status.set.assert_called_once_with(
-            "Restored 0 cached result(s); cached for 48 hour(s)."
+            "Restored 0 cached result(s); cache expires "
+            f"{datetime.fromtimestamp(2000).strftime('%Y-%m-%d %H:%M')}."
         )
 
     def test_search_page_cache_hit_skips_the_network_request(self) -> None:
@@ -1833,9 +1923,9 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._offset = 0
         dialog.PAGE_SIZE = 15
         dialog._results = {}
+        dialog._result_records = []
         dialog.state = Mock()
-        dialog.state.get_search_page.return_value = page
-        dialog.state.cache_duration_hours_value.return_value = 24
+        dialog.state.get_search_page_with_expiry.return_value = (page, 2000)
         dialog.client = Mock()
         dialog.status = Mock()
         with (
@@ -1844,13 +1934,13 @@ class UsenetFinderDialogTests(unittest.TestCase):
         ):
             dialog._search_page(append=False)
 
-        dialog.state.get_search_page.assert_called_once_with("example", "TV", 0, 15)
-        show_search_page.assert_called_once_with(page, False)
+        dialog.state.get_search_page_with_expiry.assert_called_once_with(
+            "example", "TV", 0, 15
+        )
+        show_search_page.assert_called_once_with(page, False, cached_expiry=2000)
         begin_request.assert_not_called()
         dialog.client.search.assert_not_called()
-        dialog.status.set.assert_called_once_with(
-            "Loaded 0 cached result(s); cached for 24 hour(s)."
-        )
+        self.assertIn("Loaded 0 cached result(s); cache expires ", dialog.status.set.call_args.args[0])
 
     def test_search_opens_the_browser_before_starting_the_request(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
@@ -1884,6 +1974,34 @@ class UsenetFinderDialogTests(unittest.TestCase):
         self.assertEqual(dialog._results, {})
         self.assertEqual(dialog._files, {})
 
+    def test_results_can_be_sorted_and_filtered_locally(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        first = FinderResult("Alpha", "a", "TV", "2 GB", 2_000, "2026-01-01", {})
+        second = FinderResult("Beta release", "b", "Movies", "1 GB", 1_000, "2026-02-01", {})
+        dialog._result_records = [first, second]
+        dialog._results = {}
+        dialog._sort_column = "title"
+        dialog._sort_reverse = False
+        dialog.result_filter = SimpleNamespace(get=lambda: "beta")
+        dialog.results = Mock()
+        dialog.results.get_children.return_value = ()
+        dialog.results.insert.side_effect = lambda _parent, _index, **_kwargs: "beta-row"
+
+        dialog._refresh_result_rows()
+
+        self.assertEqual(
+            dialog.results.insert.call_args.kwargs["values"],
+            ("Beta release", "Movies", "1 GB", "2026-02-01"),
+        )
+        self.assertEqual(dialog._results, {"beta-row": second})
+
+        dialog.result_filter = SimpleNamespace(get=lambda: "")
+        dialog._sort_results("size")
+        self.assertEqual(
+            [call.kwargs["values"][0] for call in dialog.results.insert.call_args_list[-2:]],
+            ["Beta release", "Alpha"],
+        )
+
     def test_selecting_a_result_starts_resolution_automatically(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         dialog._request_running = False
@@ -1906,23 +2024,48 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._results = {"selected-result": result}
         package = FinderPackage("Example", (), {})
         dialog.state = Mock()
-        dialog.state.cache_duration_hours_value.return_value = DEFAULT_CACHE_DURATION_HOURS
-        dialog.state.get_resolved.return_value = package
+        dialog.state.get_resolved_with_expiry.return_value = (package, 2000)
         dialog.files = Mock()
         dialog.status = Mock()
         dialog.client = Mock()
         with patch.object(dialog, "_show_package") as show_package:
             dialog.resolve_selected()
 
-        dialog.state.get_resolved.assert_called_once_with("opaque-token")
+        dialog.state.get_resolved_with_expiry.assert_called_once_with("opaque-token")
         show_package.assert_called_once_with(package)
         dialog.client.resolve.assert_not_called()
         dialog.status.set.assert_called_once_with(
-            "Loaded saved resolution (0 file(s)); cached for 24 hour(s)."
+            "Loaded saved resolution (0 file(s)); cache expires "
+            f"{datetime.fromtimestamp(2000).strftime('%Y-%m-%d %H:%M')}."
         )
 
 
 class UsenetBrowserSessionTests(unittest.TestCase):
+    def test_browser_connection_check_requires_a_deepbrid_tab(self) -> None:
+        session = UsenetBrowserSession(Path("unused"))
+        with (
+            patch.object(session, "_debug_port", return_value=9222),
+            patch.object(
+                session,
+                "_find_finder_target",
+                return_value={"url": "https://www.deepbrid.com/login"},
+            ),
+        ):
+            self.assertIn("connection is working", session.test_connection())
+
+        with (
+            patch.object(session, "_debug_port", return_value=None),
+            patch.object(session, "_find_browser", return_value=None),
+            self.assertRaisesRegex(UsenetFinderError, "Chrome or Microsoft Edge was not found"),
+        ):
+            session.test_connection()
+        with (
+            patch.object(session, "_debug_port", return_value=None),
+            patch.object(session, "_find_browser", return_value="chrome"),
+            self.assertRaisesRegex(UsenetFinderError, "not connected"),
+        ):
+            session.test_connection()
+
     def test_missing_browser_error_explains_requirement_and_install_options(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             session = UsenetBrowserSession(Path(temporary_directory))

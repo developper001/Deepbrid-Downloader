@@ -4,7 +4,9 @@ import queue
 import sqlite3
 import sys
 import threading
+import time
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Protocol
@@ -48,6 +50,10 @@ class UsenetFinderDialog:
         self._has_more = False
         self._offset = 0
         self._results: dict[str, FinderResult] = {}
+        self._result_records: list[FinderResult] = []
+        self._sort_column = "title"
+        self._sort_reverse = False
+        self._browser_check_running = False
         self._files: dict[str, FinderFile] = {}
         self.client = UsenetFinderClient(app.usenet_browser)
         self.state = UsenetFinderState(
@@ -56,6 +62,12 @@ class UsenetFinderDialog:
         )
         self._poll_id: str | None = None
         self._build_ui()
+        try:
+            self.query_history = self.state.load_search_history()
+        except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+            app._log(f"Could not restore Usenet Finder search history: {error}")
+            self.query_history = []
+        self.query_entry.configure(values=tuple(query for query, _category in self.query_history))
         restored_search: tuple[str, str] | None = None
         try:
             restored_search = self.state.load_search()
@@ -69,6 +81,7 @@ class UsenetFinderDialog:
         self.dialog.bind("<Escape>", lambda _event: self.close())
         self.query_entry.focus_set()
         self._poll_id = self.dialog.after(100, self._process_events)
+        self.dialog.after(1000, self._check_browser_health)
         self.open_browser()
         if restored_search is not None and restored_search[0]:
             self._restore_cached_results(*restored_search)
@@ -133,18 +146,34 @@ class UsenetFinderDialog:
             command=self.open_browser,
         )
         self.open_browser_button.pack(side="right", padx=(0, 8))
+        self.browser_status = tk.StringVar(master=self.dialog, value="Browser: checking")
+        ttk.Label(header_actions, textvariable=self.browser_status).pack(
+            side="right",
+            padx=(0, 8),
+        )
 
         search_row = ttk.Frame(frame)
         search_row.grid(row=1, column=0, sticky="ew")
         search_row.columnconfigure(1, weight=1)
         ttk.Label(search_row, text="Search").grid(row=0, column=0, padx=(0, 8))
         self.query = tk.StringVar(master=self.dialog)
-        self.query_entry = ttk.Entry(search_row, textvariable=self.query)
+        self.query_entry = ttk.Combobox(
+            search_row,
+            textvariable=self.query,
+            values=(),
+        )
         self.query_entry.grid(row=0, column=1, sticky="ew")
         self.query_entry.bind("<Return>", lambda _event: self.search())
+        self.query_entry.bind("<<ComboboxSelected>>", self._search_history_selected)
         ttk.Label(search_row, text="Category").grid(row=0, column=2, padx=(12, 8))
         self.category = tk.StringVar(master=self.dialog)
-        ttk.Entry(search_row, textvariable=self.category, width=14).grid(
+        self.category_picker = ttk.Combobox(
+            search_row,
+            textvariable=self.category,
+            values=("",),
+            width=18,
+        )
+        self.category_picker.grid(
             row=0,
             column=3,
         )
@@ -160,6 +189,14 @@ class UsenetFinderDialog:
             wraplength=850,
         ).grid(row=2, column=0, sticky="w", pady=(6, 10))
 
+        filter_row = ttk.Frame(frame)
+        filter_row.grid(row=3, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(filter_row, text="Filter results").pack(side="left", padx=(0, 8))
+        self.result_filter = tk.StringVar(master=self.dialog)
+        filter_entry = ttk.Entry(filter_row, textvariable=self.result_filter)
+        filter_entry.pack(side="left", fill="x", expand=True)
+        self.result_filter.trace_add("write", lambda *_args: self._refresh_result_rows())
+
         self.results = ttk.Treeview(
             frame,
             columns=("title", "category", "size", "date"),
@@ -172,7 +209,11 @@ class UsenetFinderDialog:
             ("size", "Size", 100),
             ("date", "Date", 150),
         ):
-            self.results.heading(column, text=label)
+            self.results.heading(
+                column,
+                text=label,
+                command=lambda selected_column=column: self._sort_results(selected_column),
+            )
             self.results.column(column, width=width, anchor="w")
         self.results.grid(row=4, column=0, sticky="nsew")
         results_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.results.yview)
@@ -223,6 +264,10 @@ class UsenetFinderDialog:
         ):
             self.files.heading(column, text=label)
             self.files.column(column, width=width, anchor="w")
+        self.files.tag_configure(
+            "inaccessible",
+            foreground=self.app.theme_colors["error"],
+        )
         self.files.grid(row=7, column=0, sticky="nsew")
         files_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.files.yview)
         files_scrollbar.grid(row=7, column=1, sticky="ns")
@@ -264,6 +309,26 @@ class UsenetFinderDialog:
         )
         return True
 
+    def _search_history_selected(self, _event: tk.Event | None = None) -> None:
+        selected_query = self.query.get()
+        for query, category in self.query_history:
+            if query == selected_query:
+                self.category.set(category)
+                break
+
+    def _check_browser_health(self) -> None:
+        if not self.dialog.winfo_exists():
+            return
+        if not self._browser_check_running:
+            self._browser_check_running = True
+
+            def check() -> None:
+                connected = self.app.usenet_browser._debug_port() is not None
+                self._events.put(("browser_health", connected))
+
+            threading.Thread(target=check, daemon=True).start()
+        self.dialog.after(30000, self._check_browser_health)
+
     def search(self) -> None:
         if self._request_running:
             return
@@ -274,7 +339,14 @@ class UsenetFinderDialog:
         if query:
             try:
                 self.state.save_search(query, category)
-            except (SecureStorageError, sqlite3.Error) as error:
+                if hasattr(self, "query_entry"):
+                    self.query_history = self.state.load_search_history()
+                    self.query_entry.configure(
+                        values=tuple(
+                            item_query for item_query, _item_category in self.query_history
+                        )
+                    )
+            except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
                 self.app._log(f"Could not save Usenet Finder search settings: {error}")
         self._offset = 0
         self._results.clear()
@@ -292,16 +364,22 @@ class UsenetFinderDialog:
 
     def _restore_cached_results(self, query: str, category: str) -> None:
         try:
-            page = self.state.get_search_page(query, category, 0, self.PAGE_SIZE)
+            cached = self.state.get_search_page_with_expiry(
+                query,
+                category,
+                0,
+                self.PAGE_SIZE,
+            )
         except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
             self.app._log(f"Could not restore cached Usenet Finder search results: {error}")
             return
-        if page is None:
+        if cached is None:
             return
-        self._show_search_page(page, append=False)
+        page, expires_at = cached
+        self._show_search_page(page, append=False, cached_expiry=expires_at)
         self.status.set(
-            f"Restored {len(self._results)} cached result(s); "
-            f"cached for {self.state.cache_duration_hours_value()} hour(s)."
+            f"Restored {len(self._result_records)} cached result(s); "
+            f"cache expires {datetime.fromtimestamp(expires_at).strftime('%Y-%m-%d %H:%M')}."
         )
 
     def _search_page(self, *, append: bool) -> None:
@@ -312,15 +390,21 @@ class UsenetFinderDialog:
             return
         offset = self._offset
         try:
-            page = self.state.get_search_page(query, category, offset, self.PAGE_SIZE)
+            cached = self.state.get_search_page_with_expiry(
+                query,
+                category,
+                offset,
+                self.PAGE_SIZE,
+            )
         except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
             self.app._log(f"Could not read Usenet Finder search cache: {error}")
-            page = None
-        if page is not None:
-            self._show_search_page(page, append)
+            cached = None
+        if cached is not None:
+            page, expires_at = cached
+            self._show_search_page(page, append, cached_expiry=expires_at)
             self.status.set(
-                f"Loaded {len(self._results)} cached result(s); "
-                f"cached for {self.state.cache_duration_hours_value()} hour(s)."
+                f"Loaded {len(self._result_records)} cached result(s); "
+                f"cache expires {datetime.fromtimestamp(expires_at).strftime('%Y-%m-%d %H:%M')}."
             )
             return
         self._begin_request("Searching...")
@@ -358,15 +442,16 @@ class UsenetFinderDialog:
         if result is None:
             return
         try:
-            package = self.state.get_resolved(result.token)
+            cached_resolution = self.state.get_resolved_with_expiry(result.token)
         except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
             self.app._log(f"Could not read Usenet Finder resolved-link cache: {error}")
-            package = None
-        if package is not None:
+            cached_resolution = None
+        if cached_resolution is not None:
+            package, expires_at = cached_resolution
             self._show_package(package)
             self.status.set(
                 f"Loaded saved resolution ({len(package.files)} file(s)); "
-                f"cached for {self.state.cache_duration_hours_value()} hour(s)."
+                f"cache expires {datetime.fromtimestamp(expires_at).strftime('%Y-%m-%d %H:%M')}."
             )
             return
         self.files.delete(*self.files.get_children())
@@ -417,6 +502,12 @@ class UsenetFinderDialog:
                 event, payload = self._events.get_nowait()
             except queue.Empty:
                 break
+            if event == "browser_health":
+                self._browser_check_running = False
+                self.browser_status.set(
+                    "Browser: connected" if payload else "Browser: not connected"
+                )
+                continue
             self._request_running = False
             self.search_button.configure(state="normal")
             self.resolve_button.configure(
@@ -431,32 +522,84 @@ class UsenetFinderDialog:
                 continue
             if event == "search":
                 page, append = payload
-                self._show_search_page(page, append)
+                expires_at = time.time() + self.state.cache_ttl_seconds()
+                self._show_search_page(page, append, cached_expiry=expires_at)
             elif event == "resolve":
                 self._show_package(payload)
         self._poll_id = self.dialog.after(100, self._process_events)
 
-    def _show_search_page(self, page: FinderSearchPage, append: bool) -> None:
+    def _show_search_page(
+        self,
+        page: FinderSearchPage,
+        append: bool,
+        *,
+        cached_expiry: float | None = None,
+    ) -> None:
         if not append:
-            self.results.delete(*self.results.get_children())
-            self._results.clear()
+            self._result_records.clear()
             self._offset = 0
-        for result in page.results:
+        self._result_records.extend(page.results)
+        categories = sorted(
+            {result.category for result in self._result_records if result.category}
+        )
+        self.category_picker.configure(values=("", *categories))
+        self._refresh_result_rows()
+        self._offset += len(page.results)
+        self._has_more = page.has_more
+        self.more_button.configure(
+            state="normal" if page.has_more and page.results else "disabled"
+        )
+        message = (
+            f"Loaded {len(self._result_records)} result(s). "
+            f"{'More results available.' if page.has_more else 'No more results.'}"
+        )
+        if cached_expiry is not None:
+            message += (
+                f" Cached results expire "
+                f"{datetime.fromtimestamp(cached_expiry).strftime('%Y-%m-%d %H:%M')}."
+            )
+        self.status.set(message)
+
+    def _refresh_result_rows(self) -> None:
+        self.results.delete(*self.results.get_children())
+        self._results.clear()
+        filter_text = self.result_filter.get().strip().casefold()
+        records = self._result_records
+        if self._sort_column == "size":
+            records = sorted(
+                records,
+                key=lambda result: (
+                    result.size_bytes is None,
+                    result.size_bytes if result.size_bytes is not None else 0,
+                ),
+                reverse=self._sort_reverse,
+            )
+        else:
+            records = sorted(
+                records,
+                key=lambda result: str(getattr(result, self._sort_column)).casefold(),
+                reverse=self._sort_reverse,
+            )
+        for result in records:
+            searchable = " ".join(
+                (result.title, result.category, result.size, result.date)
+            ).casefold()
+            if filter_text and filter_text not in searchable:
+                continue
             item_id = self.results.insert(
                 "",
                 "end",
                 values=(result.title, result.category, result.size, result.date),
             )
             self._results[item_id] = result
-        self._offset += len(page.results)
-        self._has_more = page.has_more
-        self.more_button.configure(
-            state="normal" if page.has_more and page.results else "disabled"
-        )
-        self.status.set(
-            f"Loaded {len(self._results)} result(s). "
-            f"{'More results available.' if page.has_more else 'No more results.'}"
-        )
+
+    def _sort_results(self, column: str) -> None:
+        if self._sort_column == column:
+            self._sort_reverse = not self._sort_reverse
+        else:
+            self._sort_column = column
+            self._sort_reverse = False
+        self._refresh_result_rows()
 
     def _show_package(self, package: FinderPackage) -> None:
         self.files.delete(*self.files.get_children())
@@ -466,6 +609,7 @@ class UsenetFinderDialog:
                 "",
                 "end",
                 values=(file.name, file.size, self._availability(file)),
+                tags=("inaccessible",) if not file.is_accessible else (),
             )
             self._files[item_id] = file
         package_label = f" ({package.name})" if package.name else ""
@@ -517,6 +661,12 @@ class UsenetFinderDialog:
             f"Added {added} file(s) to the download queue; skipped {duplicates} "
             f"duplicate(s) and {invalid} invalid link(s). Click Start to download."
         )
+        if duplicates:
+            messagebox.showwarning(
+                "Duplicate Usenet files skipped",
+                f"{duplicates} link(s) were already in the download queue and were skipped.",
+                parent=self.dialog,
+            )
 
     @staticmethod
     def _availability(file: FinderFile) -> str:

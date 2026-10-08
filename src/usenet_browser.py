@@ -38,6 +38,26 @@ class UsenetBrowserSession:
         self.browser_path = browser_path
         self._process: subprocess.Popen[bytes] | None = None
 
+    def test_connection(self) -> str:
+        port = self._debug_port()
+        if port is None:
+            if self._find_browser() is None:
+                raise UsenetFinderError(
+                    "Google Chrome or Microsoft Edge was not found. Install one from "
+                    "https://www.google.com/chrome/ or "
+                    "https://www.microsoft.com/edge/download, then reopen Usenet Finder."
+                )
+            raise UsenetFinderError(
+                "The dedicated Chrome or Edge browser is not connected. Open Usenet Finder "
+                "and keep its browser window open."
+            )
+        if self._find_finder_target(port) is None:
+            raise UsenetFinderError(
+                "The browser connection works, but its active tab is not on Deepbrid. "
+                "Open https://www.deepbrid.com/login in the dedicated browser."
+            )
+        return "Browser connection is working; the dedicated tab is on Deepbrid."
+
     def open(self) -> None:
         if self._debug_port() is not None:
             self.log("Reusing the dedicated Deepbrid Chrome profile.")
@@ -184,7 +204,13 @@ class UsenetBrowserSession:
             if isinstance(browser, str) and browser.startswith(("Chrome/", "Edg/")):
                 return port
             return None
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ):
             return None
 
     def _close_legacy_automated_browser(self) -> bool:

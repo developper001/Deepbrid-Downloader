@@ -19,7 +19,12 @@ from tkinter import filedialog, messagebox, ttk
 
 from platformdirs import user_data_dir, user_downloads_dir
 
-from .app_config import AppConfiguration, setting_is_enabled as _setting_is_enabled
+from .app_config import (
+    OUTPUT_LOG_ENABLED_SETTING,
+    OUTPUT_LOG_PATH_SETTING,
+    AppConfiguration,
+    setting_is_enabled as _setting_is_enabled,
+)
 from .app_info import (
     GITHUB_REPOSITORY_URL,
     LatestRelease,
@@ -262,6 +267,12 @@ def redact_log_urls(contents: str) -> str:
     return re.sub(r"https?://[^\s\"'<>]+", "<URL REDACTED>", contents, flags=re.IGNORECASE)
 
 
+def append_output_log_line(path: Path, timestamp: str, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as output:
+        output.write(f"[{timestamp}] {redact_log_urls(message)}\n")
+
+
 def redact_legacy_log_file() -> bool:
     if not LOG_PATH.exists():
         return True
@@ -392,6 +403,12 @@ class DownloaderApp:
         self.console_visible = False
         self.dark_theme = config.dark_theme
         self.usenet_finder_cache_duration_hours = config.usenet_finder_cache_duration_hours
+        self.append_output_log_enabled = config.append_output_log_enabled
+        self.append_output_log_path = tk.StringVar(
+            master=root,
+            value=str(config.append_output_log_path or ""),
+        )
+        self._output_log_error_reported = False
         self.key_save_after: str | None = None
         self.closing = False
 
@@ -665,6 +682,12 @@ class DownloaderApp:
         self.link_placeholder_active = False
         self.status_text.set(f"Added {added_count}; skipped {duplicate_count} duplicate(s)")
         self._log(f"Extracted {len(links)} supported link(s); added {added_count}, skipped {duplicate_count} duplicate(s).")
+        if duplicate_count:
+            messagebox.showwarning(
+                "Duplicate links skipped",
+                f"{duplicate_count} duplicate link(s) were already in the download queue and were skipped.",
+                parent=self.root,
+            )
         self._refresh_rows()
         self._save_visible_queue_order()
 
@@ -1278,6 +1301,55 @@ class DownloaderApp:
         validated_hours = valid_cache_duration_hours(hours)
         self.secure_store.set_setting(CACHE_DURATION_SETTING, str(validated_hours))
         self.usenet_finder_cache_duration_hours = validated_hours
+
+    def _set_append_output_log(self, enabled: bool, path_text: str) -> None:
+        path_text = path_text.strip()
+        if enabled and not path_text:
+            raise ValueError("Choose an output log file before enabling file logging.")
+        path = Path(path_text).expanduser() if path_text else None
+        if enabled and path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8"):
+                pass
+        self.secure_store.set_setting(OUTPUT_LOG_ENABLED_SETTING, "true" if enabled else "false")
+        self.secure_store.set_setting(OUTPUT_LOG_PATH_SETTING, str(path) if path else "")
+        self.append_output_log_enabled = enabled
+        self.append_output_log_path.set(str(path) if path else "")
+        self._output_log_error_reported = False
+        self._log(
+            f"Append-only output logging enabled at {path}."
+            if enabled
+            else "Append-only output logging disabled."
+        )
+
+    def _test_usenet_browser_connection(
+        self,
+        status: tk.StringVar,
+        button: ttk.Button,
+    ) -> None:
+        status.set("Testing browser connection...")
+        button.configure(state="disabled")
+
+        def test() -> None:
+            try:
+                result = self.usenet_browser.test_connection()
+            except UsenetFinderError as error:
+                result = f"Connection test failed: {error}"
+
+            def finish() -> None:
+                try:
+                    if button.winfo_exists():
+                        button.configure(state="normal")
+                        status.set(result)
+                except tk.TclError:
+                    return
+
+            try:
+                self.root.after(0, finish)
+            except tk.TclError:
+                return
+
+        threading.Thread(target=test, daemon=True).start()
 
     def _clear_usenet_finder_cache(self) -> None:
         dialog = self.usenet_finder_dialog
@@ -2574,6 +2646,35 @@ class DownloaderApp:
                         status_code=event.status_code,
                     )
             elif isinstance(event, LogEvent):
+                if self.append_output_log_enabled:
+                    try:
+                        append_output_log_line(
+                            Path(self.append_output_log_path.get()),
+                            event.timestamp,
+                            event.message,
+                        )
+                    except OSError as error:
+                        self.append_output_log_enabled = False
+                        try:
+                            self.secure_store.set_setting(
+                                OUTPUT_LOG_ENABLED_SETTING,
+                                "false",
+                            )
+                        except (OSError, sqlite3.Error):
+                            pass
+                        if not self._output_log_error_reported:
+                            self._output_log_error_reported = True
+                            failure_message = (
+                                f"Output file logging disabled after an append failure: {error}"
+                            )
+                            self.status_text.set(failure_message)
+                            self.console.configure(state="normal")
+                            self.console.insert(
+                                "end",
+                                f"[{event.timestamp}] {failure_message}\n",
+                            )
+                            self.console.see("end")
+                            self.console.configure(state="disabled")
                 if event.is_exception and not self.console_visible:
                     self._toggle_console()
                 self.console.configure(state="normal")

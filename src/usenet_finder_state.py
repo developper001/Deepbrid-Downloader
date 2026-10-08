@@ -10,6 +10,7 @@ from .usenet_finder import FinderFile, FinderPackage, FinderResult, FinderSearch
 
 
 SEARCH_SETTING = "usenet_finder_last_search"
+SEARCH_HISTORY_SETTING = "usenet_finder_search_history"
 RESOLVED_CACHE_SETTING = "usenet_finder_resolved_cache"
 SEARCH_CACHE_SETTING = "usenet_finder_search_cache"
 RESOLVED_CACHE_PURPOSE = b"usenet-finder-resolved-cache-v1"
@@ -19,6 +20,7 @@ DEFAULT_CACHE_DURATION_HOURS = 24
 MIN_CACHE_DURATION_HOURS = 1
 MAX_CACHE_DURATION_HOURS = 720
 CACHE_TTL_SECONDS = DEFAULT_CACHE_DURATION_HOURS * 60 * 60
+MAX_SEARCH_HISTORY = 10
 
 
 class UsenetFinderStateError(ValueError):
@@ -89,10 +91,40 @@ class UsenetFinderState:
         return value["query"], value["category"]
 
     def save_search(self, query: str, category: str) -> None:
+        query = query.strip()
+        category = category.strip()
         self.secure_store.set_setting(
             SEARCH_SETTING,
             json.dumps({"query": query, "category": category}),
         )
+        history = self.load_search_history()
+        current = (query, category)
+        history = [entry for entry in history if entry != current]
+        self.secure_store.set_setting(
+            SEARCH_HISTORY_SETTING,
+            json.dumps([current, *history[: MAX_SEARCH_HISTORY - 1]]),
+        )
+
+    def load_search_history(self) -> list[tuple[str, str]]:
+        saved = self.secure_store.get_setting(SEARCH_HISTORY_SETTING)
+        if saved is None:
+            return []
+        try:
+            value = json.loads(saved)
+        except json.JSONDecodeError as error:
+            raise UsenetFinderStateError("Saved Usenet Finder search history is malformed.") from error
+        if not isinstance(value, list):
+            raise UsenetFinderStateError("Saved Usenet Finder search history is invalid.")
+        history = []
+        for entry in value:
+            if (
+                isinstance(entry, list)
+                and len(entry) == 2
+                and all(isinstance(item, str) for item in entry)
+                and entry[0].strip()
+            ):
+                history.append((entry[0], entry[1]))
+        return history[:MAX_SEARCH_HISTORY]
 
     def get_search_page(
         self,
@@ -101,17 +133,28 @@ class UsenetFinderState:
         offset: int,
         limit: int,
     ) -> FinderSearchPage | None:
+        cached = self.get_search_page_with_expiry(query, category, offset, limit)
+        return cached[0] if cached else None
+
+    def get_search_page_with_expiry(
+        self,
+        query: str,
+        category: str,
+        offset: int,
+        limit: int,
+    ) -> tuple[FinderSearchPage, float] | None:
         self._load_search_cache()
         cache_key = self._search_cache_key(query, category, offset, limit)
         cached = self._search_pages.get(cache_key)
         if cached is None:
             return None
         cached_at, page = cached
-        if self.clock() - cached_at >= self.cache_ttl_seconds():
+        expires_at = cached_at + self.cache_ttl_seconds()
+        if self.clock() >= expires_at:
             del self._search_pages[cache_key]
             self._save_search_cache()
             return None
-        return page
+        return page, expires_at
 
     def save_search_page(
         self,
@@ -130,16 +173,24 @@ class UsenetFinderState:
         self._save_search_cache()
 
     def get_resolved(self, token: str) -> FinderPackage | None:
+        cached = self.get_resolved_with_expiry(token)
+        return cached[0] if cached else None
+
+    def get_resolved_with_expiry(
+        self,
+        token: str,
+    ) -> tuple[FinderPackage, float] | None:
         self._load_resolved_cache()
         cached = self._resolved_packages.get(token)
         if cached is None:
             return None
         resolved_at, package = cached
-        if self.clock() - resolved_at >= self.cache_ttl_seconds():
+        expires_at = resolved_at + self.cache_ttl_seconds()
+        if self.clock() >= expires_at:
             del self._resolved_packages[token]
             self._save_resolved_cache()
             return None
-        return package
+        return package, expires_at
 
     def save_resolved(self, token: str, package: FinderPackage) -> None:
         self._load_resolved_cache()

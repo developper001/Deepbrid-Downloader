@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 from typing import Protocol
 
 from .usenet_finder_state import (
@@ -22,6 +22,8 @@ class SettingsController(Protocol):
     auto_check_updates: tk.BooleanVar
     dark_theme: bool
     usenet_finder_cache_duration_hours: int
+    append_output_log_enabled: bool
+    append_output_log_path: tk.StringVar
 
     def _log(self, message: str) -> None: ...
     def _open_api_key_dashboard(self) -> None: ...
@@ -34,6 +36,12 @@ class SettingsController(Protocol):
     def _set_usenet_finder_cache_duration(self, hours: int) -> None: ...
     def _clear_usenet_finder_cache(self) -> None: ...
     def _show_columns_dialog(self) -> None: ...
+    def _set_append_output_log(self, enabled: bool, path: str) -> None: ...
+    def _test_usenet_browser_connection(
+        self,
+        status: tk.StringVar,
+        button: ttk.Button,
+    ) -> None: ...
 
 
 class SettingsDialog:
@@ -288,6 +296,98 @@ class SettingsDialog:
             "Usenet Finder cache",
             "usenet usenet finder search resolved links cache duration expiry clear",
             build_finder_cache,
+        )
+
+        browser_test_status = tk.StringVar(master=self.dialog)
+
+        def build_browser_connection_test(controls: ttk.Frame) -> None:
+            test_button = ttk.Button(
+                controls,
+                text="Test browser connection",
+                command=lambda: app._test_usenet_browser_connection(
+                    browser_test_status,
+                    test_button,
+                ),
+            )
+            test_button.pack(side="left")
+            ttk.Label(controls, textvariable=browser_test_status).pack(
+                side="left",
+                padx=(8, 0),
+            )
+
+        add_setting(
+            "Usenet browser",
+            "usenet finder chrome edge browser connection test",
+            build_browser_connection_test,
+        )
+
+        output_log_enabled = tk.BooleanVar(
+            master=self.dialog,
+            value=app.append_output_log_enabled,
+        )
+        output_log_path = tk.StringVar(
+            master=self.dialog,
+            value=str(app.append_output_log_path.get()),
+        )
+        output_log_status = tk.StringVar(master=self.dialog)
+
+        def save_output_log() -> None:
+            try:
+                app._set_append_output_log(output_log_enabled.get(), output_log_path.get())
+            except (OSError, ValueError, sqlite3.Error) as error:
+                output_log_enabled.set(app.append_output_log_enabled)
+                output_log_path.set(str(app.append_output_log_path.get()))
+                output_log_status.set(f"Could not save output log setting: {error}")
+                return
+            output_log_status.set(
+                "Output is appended to the selected file."
+                if output_log_enabled.get()
+                else "Output logging is disabled."
+            )
+
+        def browse_output_log() -> None:
+            selected = filedialog.asksaveasfilename(
+                parent=self.dialog,
+                title="Choose output log file",
+                initialfile=output_log_path.get() or "deepbrid-output.log",
+                defaultextension=".log",
+                filetypes=(("Log files", "*.log"), ("Text files", "*.txt"), ("All files", "*")),
+            )
+            if selected:
+                output_log_path.set(selected)
+                save_output_log()
+
+        def build_output_log(controls: ttk.Frame) -> None:
+            ttk.Checkbutton(
+                controls,
+                text="Append application output to a file",
+                variable=output_log_enabled,
+                command=save_output_log,
+            ).grid(row=0, column=0, columnspan=2, sticky="w")
+            ttk.Entry(controls, textvariable=output_log_path, state="readonly").grid(
+                row=1,
+                column=0,
+                sticky="ew",
+                pady=(6, 0),
+            )
+            ttk.Button(controls, text="Browse...", command=browse_output_log).grid(
+                row=1,
+                column=1,
+                padx=(8, 0),
+                pady=(6, 0),
+            )
+            ttk.Label(controls, textvariable=output_log_status).grid(
+                row=2,
+                column=0,
+                columnspan=2,
+                sticky="w",
+                pady=(4, 0),
+            )
+
+        add_setting(
+            "Output log file",
+            "logging output append file diagnostics long term",
+            build_output_log,
         )
 
         def build_columns(controls: ttk.Frame) -> None:
