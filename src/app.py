@@ -1008,6 +1008,7 @@ class DownloaderApp:
             foreground=colors["foreground"],
             highlightthickness=0,
             borderwidth=0,
+            relief="flat",
             wrap="word",
             padx=4,
             pady=4,
@@ -1042,7 +1043,11 @@ class DownloaderApp:
             spacing1=3,
             spacing3=3,
         )
-        yscrollbar = ttk.Scrollbar(container, orient="vertical", command=output.yview)
+        def scroll_readme(*args: str) -> None:
+            output.yview(*args)
+            output.update_idletasks()
+
+        yscrollbar = ttk.Scrollbar(container, orient="vertical", command=scroll_readme)
         yscrollbar.grid(row=0, column=1, sticky="ns")
         xscrollbar = ttk.Scrollbar(container, orient="horizontal", command=output.xview)
         xscrollbar.grid(row=1, column=0, sticky="ew")
@@ -1055,7 +1060,7 @@ class DownloaderApp:
                     delta = -1 if event.delta > 0 else 1
             else:
                 delta = {4: -1, 5: 1}.get(getattr(event, "num", None), 0)
-            output.yview_scroll(delta, "units")
+            scroll_readme("scroll", delta, "units")
 
         popup.bind("<MouseWheel>", _on_mouse_wheel, add="+")
         popup.bind("<Shift-MouseWheel>", _on_mouse_wheel, add="+")
