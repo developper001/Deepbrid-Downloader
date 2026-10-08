@@ -11,8 +11,10 @@ from .usenet_finder import FinderFile, FinderPackage, FinderResult, FinderSearch
 
 SEARCH_SETTING = "usenet_finder_last_search"
 SEARCH_HISTORY_SETTING = "usenet_finder_search_history"
+LAST_SELECTED_RESULT_SETTING = "usenet_finder_last_selected_result"
 RESOLVED_CACHE_SETTING = "usenet_finder_resolved_cache"
 SEARCH_CACHE_SETTING = "usenet_finder_search_cache"
+LAST_SELECTED_RESULT_PURPOSE = b"usenet-finder-last-selected-result-v1"
 RESOLVED_CACHE_PURPOSE = b"usenet-finder-resolved-cache-v1"
 SEARCH_CACHE_PURPOSE = b"usenet-finder-search-cache-v1"
 CACHE_DURATION_SETTING = "usenet_finder_cache_duration_hours"
@@ -126,6 +128,58 @@ class UsenetFinderState:
                 history.append((entry[0], entry[1]))
         return history[:MAX_SEARCH_HISTORY]
 
+    def clear_search_history(self) -> None:
+        self.secure_store.set_setting(SEARCH_HISTORY_SETTING, "[]")
+
+    def save_last_selected_result(
+        self,
+        query: str,
+        category: str,
+        token: str,
+        offset: int,
+    ) -> None:
+        self.secure_store.set_encrypted_setting(
+            LAST_SELECTED_RESULT_SETTING,
+            json.dumps(
+                {
+                    "query": query.strip(),
+                    "category": category.strip(),
+                    "token": token,
+                    "offset": offset,
+                }
+            ),
+            LAST_SELECTED_RESULT_PURPOSE,
+        )
+
+    def load_last_selected_result(self) -> tuple[str, str, str, int] | None:
+        saved = self.secure_store.get_encrypted_setting(
+            LAST_SELECTED_RESULT_SETTING,
+            LAST_SELECTED_RESULT_PURPOSE,
+        )
+        if saved is None:
+            return None
+        try:
+            value = json.loads(saved)
+        except json.JSONDecodeError as error:
+            raise UsenetFinderStateError(
+                "Saved Usenet Finder result selection is malformed."
+            ) from error
+        if (
+            not isinstance(value, dict)
+            or not isinstance(value.get("query"), str)
+            or not isinstance(value.get("category"), str)
+            or not isinstance(value.get("token"), str)
+            or not value["token"]
+            or not isinstance(value.get("offset"), int)
+            or isinstance(value.get("offset"), bool)
+            or value["offset"] < 0
+        ):
+            raise UsenetFinderStateError("Saved Usenet Finder result selection is invalid.")
+        return value["query"], value["category"], value["token"], value["offset"]
+
+    def clear_last_selected_result(self) -> None:
+        self.secure_store.delete_encrypted_setting(LAST_SELECTED_RESULT_SETTING)
+
     def get_search_page(
         self,
         query: str,
@@ -201,6 +255,7 @@ class UsenetFinderState:
     def clear_cache(self) -> None:
         self.secure_store.delete_encrypted_setting(SEARCH_CACHE_SETTING)
         self.secure_store.delete_encrypted_setting(RESOLVED_CACHE_SETTING)
+        self.clear_last_selected_result()
         self._search_pages.clear()
         self._resolved_packages.clear()
         self._search_cache_loaded = True

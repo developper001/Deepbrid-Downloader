@@ -1562,6 +1562,50 @@ class UsenetFinderStateTests(unittest.TestCase):
                 [("first", "TV"), ("second", "Movies")],
             )
 
+    def test_search_history_can_be_cleared_without_clearing_the_last_search(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_search("example", "TV")
+
+            state.clear_search_history()
+
+            self.assertEqual(state.load_search_history(), [])
+            self.assertEqual(state.load_search(), ("example", "TV"))
+
+    def test_last_selected_result_persists_and_resolved_links_use_configured_ttl(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            package = FinderPackage("Example", (), {})
+            state = UsenetFinderState(
+                store,
+                clock=lambda: 1000,
+                cache_duration_hours=2,
+            )
+            state.save_last_selected_result("example", "TV", "opaque-token", 15)
+            state.save_resolved("opaque-token", package)
+
+            reopened_state = UsenetFinderState(
+                store,
+                clock=lambda: 1001,
+                cache_duration_hours=2,
+            )
+            self.assertEqual(
+                reopened_state.load_last_selected_result(),
+                ("example", "TV", "opaque-token", 15),
+            )
+            self.assertEqual(
+                reopened_state.get_resolved_with_expiry("opaque-token"),
+                (package, 1000 + 2 * 60 * 60),
+            )
+            self.assertIsNone(
+                UsenetFinderState(
+                    store,
+                    clock=lambda: 1000 + 2 * 60 * 60,
+                    cache_duration_hours=2,
+                ).get_resolved("opaque-token")
+            )
+
     def test_search_results_persist_and_are_reused_across_state_instances(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
@@ -1645,11 +1689,13 @@ class UsenetFinderStateTests(unittest.TestCase):
             state = UsenetFinderState(store, clock=lambda: 1000)
             state.save_search_page("example", "", 0, 15, FinderSearchPage((), False))
             state.save_resolved("opaque-token", FinderPackage("Example", (), {}))
+            state.save_last_selected_result("example", "", "opaque-token", 0)
 
             state.clear_cache()
 
             self.assertIsNone(state.get_search_page("example", "", 0, 15))
             self.assertIsNone(state.get_resolved("opaque-token"))
+            self.assertIsNone(state.load_last_selected_result())
             self.assertIsNone(store.get_encrypted_setting("usenet_finder_search_cache", b"usenet-finder-search-cache-v1"))
             self.assertIsNone(store.get_encrypted_setting("usenet_finder_resolved_cache", b"usenet-finder-resolved-cache-v1"))
 
@@ -1947,6 +1993,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._request_running = False
         dialog._offset = 12
         dialog._results = {"old": object()}
+        dialog._result_page_offsets = {}
         dialog._files = {"old": object()}
         dialog._has_more = True
         dialog.app = SimpleNamespace(usenet_browser=Mock())
@@ -2007,6 +2054,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._request_running = False
         dialog.results = Mock()
         dialog.results.selection.return_value = ("selected-result",)
+        dialog._results = {}
         dialog.resolve_button = Mock()
         with patch.object(dialog, "resolve_selected") as resolve_selected:
             dialog._selection_changed(Mock())
@@ -2023,8 +2071,11 @@ class UsenetFinderDialogTests(unittest.TestCase):
         result = SimpleNamespace(token="opaque-token")
         dialog._results = {"selected-result": result}
         package = FinderPackage("Example", (), {})
+        dialog.query = SimpleNamespace(get=Mock(return_value="example"))
+        dialog.category = SimpleNamespace(get=Mock(return_value="TV"))
         dialog.state = Mock()
         dialog.state.get_resolved_with_expiry.return_value = (package, 2000)
+        dialog._result_page_offsets = {}
         dialog.files = Mock()
         dialog.status = Mock()
         dialog.client = Mock()
@@ -2032,11 +2083,50 @@ class UsenetFinderDialogTests(unittest.TestCase):
             dialog.resolve_selected()
 
         dialog.state.get_resolved_with_expiry.assert_called_once_with("opaque-token")
+        dialog.state.save_last_selected_result.assert_called_once_with(
+            "example",
+            "TV",
+            "opaque-token",
+            0,
+        )
         show_package.assert_called_once_with(package)
         dialog.client.resolve.assert_not_called()
         dialog.status.set.assert_called_once_with(
             "Loaded saved resolution (0 file(s)); cache expires "
             f"{datetime.fromtimestamp(2000).strftime('%Y-%m-%d %H:%M')}."
+        )
+
+    def test_reopening_finder_restores_the_selected_result_and_cached_file_list(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        result = FinderResult("Example release", "opaque-token", "TV", "1 GB", 1, "date", {})
+        package = FinderPackage("Example", (), {})
+        dialog.state = Mock()
+        dialog.state.load_last_selected_result.return_value = (
+            "example",
+            "TV",
+            "opaque-token",
+            0,
+        )
+        dialog.state.get_resolved_with_expiry.return_value = (package, 2000)
+        dialog._results = {"result-row": result}
+        dialog._offset = 15
+        dialog.PAGE_SIZE = 15
+        dialog.query = SimpleNamespace(get=lambda: "example")
+        dialog.category = SimpleNamespace(get=lambda: "TV")
+        dialog.results = Mock()
+        dialog.status = Mock()
+        dialog.app = SimpleNamespace(_log=Mock())
+        dialog._restoring_result_token = None
+
+        with patch.object(dialog, "_show_package") as show_package:
+            dialog._restore_last_resolved("example", "TV")
+
+        dialog.results.selection_set.assert_called_once_with("result-row")
+        dialog.results.focus.assert_called_once_with("result-row")
+        show_package.assert_called_once_with(package)
+        dialog.status.set.assert_called_once_with(
+            "Restored last resolved links (0 file(s)); "
+            f"cache expires {datetime.fromtimestamp(2000).strftime('%Y-%m-%d %H:%M')}."
         )
 
 

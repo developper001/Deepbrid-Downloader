@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 from typing import Protocol
 
+from .secure_store import SecureStorageError
 from .usenet_finder_state import (
     DEFAULT_CACHE_DURATION_HOURS,
     MAX_CACHE_DURATION_HOURS,
@@ -35,6 +36,7 @@ class SettingsController(Protocol):
     def _persist_auto_check_updates(self) -> None: ...
     def _set_usenet_finder_cache_duration(self, hours: int) -> None: ...
     def _clear_usenet_finder_cache(self) -> None: ...
+    def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_columns_dialog(self) -> None: ...
     def _set_append_output_log(self, enabled: bool, path: str) -> None: ...
     def _test_usenet_browser_connection(
@@ -243,7 +245,7 @@ class SettingsDialog:
         def clear_finder_cache() -> None:
             try:
                 app._clear_usenet_finder_cache()
-            except (OSError, sqlite3.Error) as error:
+            except (OSError, SecureStorageError, sqlite3.Error) as error:
                 app._log(f"Could not clear Usenet Finder cache: {error}")
                 cache_status.set(f"Could not clear cache: {error}")
                 return
@@ -296,6 +298,34 @@ class SettingsDialog:
             "Usenet Finder cache",
             "usenet usenet finder search resolved links cache duration expiry clear",
             build_finder_cache,
+        )
+
+        history_status = tk.StringVar(master=self.dialog)
+
+        def clear_finder_history() -> None:
+            try:
+                app._clear_usenet_finder_search_history()
+            except (OSError, SecureStorageError, sqlite3.Error) as error:
+                app._log(f"Could not clear Usenet Finder search history: {error}")
+                history_status.set(f"Could not clear search history: {error}")
+                return
+            history_status.set("Search history cleared.")
+
+        def build_finder_history(controls: ttk.Frame) -> None:
+            ttk.Button(
+                controls,
+                text="Clear search history",
+                command=clear_finder_history,
+            ).pack(side="left")
+            ttk.Label(controls, textvariable=history_status).pack(
+                side="left",
+                padx=(8, 0),
+            )
+
+        add_setting(
+            "Usenet Finder search history",
+            "usenet finder recent searches query history clear cleanup",
+            build_finder_history,
         )
 
         browser_test_status = tk.StringVar(master=self.dialog)

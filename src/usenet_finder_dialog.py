@@ -31,11 +31,13 @@ class FinderController(Protocol):
     secure_store: SecureStore
     def _log(self, message: str) -> None: ...
     def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]: ...
+    def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_settings(self, initial_filter: str = "") -> None: ...
 
 
 class UsenetFinderDialog:
     PAGE_SIZE = 15
+    CLEAR_HISTORY_OPTION = "[Clear search history]"
 
     def __init__(self, app: FinderController):
         self.app = app
@@ -50,10 +52,12 @@ class UsenetFinderDialog:
         self._has_more = False
         self._offset = 0
         self._results: dict[str, FinderResult] = {}
+        self._result_page_offsets: dict[str, int] = {}
         self._result_records: list[FinderResult] = []
         self._sort_column = "title"
         self._sort_reverse = False
         self._browser_check_running = False
+        self._restoring_result_token: str | None = None
         self._files: dict[str, FinderFile] = {}
         self.client = UsenetFinderClient(app.usenet_browser)
         self.state = UsenetFinderState(
@@ -63,11 +67,11 @@ class UsenetFinderDialog:
         self._poll_id: str | None = None
         self._build_ui()
         try:
-            self.query_history = self.state.load_search_history()
+            self._update_search_history_options()
         except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
             app._log(f"Could not restore Usenet Finder search history: {error}")
             self.query_history = []
-        self.query_entry.configure(values=tuple(query for query, _category in self.query_history))
+            self.query_entry.configure(values=(self.CLEAR_HISTORY_OPTION,))
         restored_search: tuple[str, str] | None = None
         try:
             restored_search = self.state.load_search()
@@ -311,10 +315,44 @@ class UsenetFinderDialog:
 
     def _search_history_selected(self, _event: tk.Event | None = None) -> None:
         selected_query = self.query.get()
+        if selected_query == self.CLEAR_HISTORY_OPTION:
+            if messagebox.askyesno(
+                "Clear Usenet search history",
+                "Clear all saved Usenet Finder searches?",
+                parent=self.dialog,
+            ):
+                try:
+                    self.app._clear_usenet_finder_search_history()
+                    saved_query, saved_category = self.state.load_search()
+                    self.query.set(saved_query)
+                    self.category.set(saved_category)
+                    self.status.set("Usenet Finder search history cleared.")
+                except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+                    self.app._log(f"Could not clear Usenet Finder search history: {error}")
+                    self.status.set(f"Could not clear search history: {error}")
+                    self.query.set("")
+            else:
+                try:
+                    selected_query, category = self.state.load_search()
+                    self.query.set(selected_query)
+                    self.category.set(category)
+                except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+                    self.app._log(f"Could not restore Usenet Finder search: {error}")
+                    self.query.set("")
+            return
         for query, category in self.query_history:
             if query == selected_query:
                 self.category.set(category)
                 break
+
+    def _update_search_history_options(self) -> None:
+        self.query_history = self.state.load_search_history()
+        self.query_entry.configure(
+            values=(
+                *(query for query, _category in self.query_history),
+                self.CLEAR_HISTORY_OPTION,
+            )
+        )
 
     def _check_browser_health(self) -> None:
         if not self.dialog.winfo_exists():
@@ -340,16 +378,13 @@ class UsenetFinderDialog:
             try:
                 self.state.save_search(query, category)
                 if hasattr(self, "query_entry"):
-                    self.query_history = self.state.load_search_history()
-                    self.query_entry.configure(
-                        values=tuple(
-                            item_query for item_query, _item_category in self.query_history
-                        )
-                    )
+                    self._update_search_history_options()
+                self.state.clear_last_selected_result()
             except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
                 self.app._log(f"Could not save Usenet Finder search settings: {error}")
         self._offset = 0
         self._results.clear()
+        self._result_page_offsets.clear()
         self.results.delete(*self.results.get_children())
         self.files.delete(*self.files.get_children())
         self._files.clear()
@@ -381,6 +416,58 @@ class UsenetFinderDialog:
             f"Restored {len(self._result_records)} cached result(s); "
             f"cache expires {datetime.fromtimestamp(expires_at).strftime('%Y-%m-%d %H:%M')}."
         )
+        self._restore_last_resolved(query, category)
+
+    def _restore_last_resolved(self, query: str, category: str) -> None:
+        try:
+            selected = self.state.load_last_selected_result()
+            if not isinstance(selected, tuple) or len(selected) != 4:
+                return
+            if selected[:2] != (query, category):
+                self.state.clear_last_selected_result()
+                return
+            _saved_query, _saved_category, token, selected_offset = selected
+            while selected_offset >= self._offset:
+                cached_page = self.state.get_search_page_with_expiry(
+                    query,
+                    category,
+                    self._offset,
+                    self.PAGE_SIZE,
+                )
+                if cached_page is None:
+                    break
+                page, page_expiry = cached_page
+                if not page.results:
+                    break
+                self._show_search_page(
+                    page,
+                    append=True,
+                    cached_expiry=page_expiry,
+                )
+            item_id = next(
+                (
+                    item_id
+                    for item_id, result in self._results.items()
+                    if result.token == token
+                ),
+                None,
+            )
+            cached = self.state.get_resolved_with_expiry(token)
+            if cached is None:
+                self.state.clear_last_selected_result()
+                return
+            package, expires_at = cached
+            if item_id is not None:
+                self._restoring_result_token = token
+                self.results.selection_set(item_id)
+                self.results.focus(item_id)
+            self._show_package(package)
+            self.status.set(
+                f"Restored last resolved links ({len(package.files)} file(s)); "
+                f"cache expires {datetime.fromtimestamp(expires_at).strftime('%Y-%m-%d %H:%M')}."
+            )
+        except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not restore last Usenet Finder resolution: {error}")
 
     def _search_page(self, *, append: bool) -> None:
         query = self.query.get().strip()
@@ -442,6 +529,16 @@ class UsenetFinderDialog:
         if result is None:
             return
         try:
+            result_offset = self._result_page_offsets.get(result.token, 0)
+            self.state.save_last_selected_result(
+                self.query.get(),
+                self.category.get(),
+                result.token,
+                result_offset,
+            )
+        except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not save selected Usenet Finder result: {error}")
+        try:
             cached_resolution = self.state.get_resolved_with_expiry(result.token)
         except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
             self.app._log(f"Could not read Usenet Finder resolved-link cache: {error}")
@@ -492,6 +589,14 @@ class UsenetFinderDialog:
         selected = bool(self.results.selection())
         self.resolve_button.configure(state="normal" if selected else "disabled")
         if selected:
+            selected_result = self._results.get(self.results.selection()[0])
+            if (
+                selected_result is not None
+                and selected_result.token == self._restoring_result_token
+            ):
+                self._restoring_result_token = None
+                return
+            self._restoring_result_token = None
             self.resolve_selected()
 
     def _process_events(self) -> None:
@@ -537,7 +642,11 @@ class UsenetFinderDialog:
     ) -> None:
         if not append:
             self._result_records.clear()
+            self._result_page_offsets.clear()
             self._offset = 0
+        page_offset = self._offset
+        for result in page.results:
+            self._result_page_offsets[result.token] = page_offset
         self._result_records.extend(page.results)
         categories = sorted(
             {result.category for result in self._result_records if result.category}

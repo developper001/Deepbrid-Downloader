@@ -1365,6 +1365,23 @@ class DownloaderApp:
             cache_duration_hours=lambda: self.usenet_finder_cache_duration_hours,
         ).clear_cache()
 
+    def _clear_usenet_finder_search_history(self) -> None:
+        dialog = self.usenet_finder_dialog
+        if dialog is not None:
+            try:
+                if dialog.dialog.winfo_exists():
+                    dialog.state.clear_search_history()
+                    dialog._update_search_history_options()
+                    self._log("Cleared Usenet Finder search history.")
+                    return
+            except tk.TclError:
+                pass
+        UsenetFinderState(
+            self.secure_store,
+            cache_duration_hours=lambda: self.usenet_finder_cache_duration_hours,
+        ).clear_search_history()
+        self._log("Cleared Usenet Finder search history.")
+
     def _show_settings(
         self,
         initial_filter: str = "",
