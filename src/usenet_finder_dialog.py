@@ -33,7 +33,7 @@ class UsenetFinderDialog:
         self.dialog.title("Usenet Finder (experimental)")
         self.dialog.geometry("900x650")
         self.dialog.minsize(680, 480)
-        self.dialog.transient(app.root)
+        self.dialog.resizable(True, True)
         self.dialog.configure(background=app.theme_colors["background"])
         self._events: queue.Queue[tuple[str, object]] = queue.Queue()
         self._request_running = False
@@ -175,19 +175,22 @@ class UsenetFinderDialog:
         )
         self.add_accessible_button.pack(side="left", padx=(8, 0))
 
-    def open_browser(self) -> None:
+    def open_browser(self) -> bool:
         try:
             self.app.usenet_browser.open()
         except UsenetFinderError as error:
             self.status.set(str(error))
-            return
+            return False
         self.status.set(
             "In the dedicated Chrome window, complete any Cloudflare check and sign in; "
             "then return and search."
         )
+        return True
 
     def search(self) -> None:
         if self._request_running:
+            return
+        if not self.open_browser():
             return
         self._offset = 0
         self._results.clear()
@@ -253,10 +256,12 @@ class UsenetFinderDialog:
         self.status.set(message)
 
     def _selection_changed(self, _event: tk.Event) -> None:
-        if not self._request_running:
-            self.resolve_button.configure(
-                state="normal" if self.results.selection() else "disabled"
-            )
+        if self._request_running:
+            return
+        selected = bool(self.results.selection())
+        self.resolve_button.configure(state="normal" if selected else "disabled")
+        if selected:
+            self.resolve_selected()
 
     def _process_events(self) -> None:
         if not self.dialog.winfo_exists():

@@ -74,6 +74,7 @@ from src.single_instance import acquire_single_instance
 from src.update_manager import download_update_asset
 from src.usenet_finder import UsenetFinderClient, UsenetFinderError
 from src.usenet_browser import UsenetBrowserSession
+from src.usenet_finder_dialog import UsenetFinderDialog
 
 
 class FakeResponse:
@@ -1633,6 +1634,48 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
         with self.assertRaisesRegex(UsenetFinderError, "instead of JSON"):
             parse_browser_response(200, "text/html", "<html>login</html>")
 
+
+class UsenetFinderDialogTests(unittest.TestCase):
+    def test_search_opens_the_browser_before_starting_the_request(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog._request_running = False
+        dialog._offset = 12
+        dialog._results = {"old": object()}
+        dialog._files = {"old": object()}
+        dialog._has_more = True
+        dialog.app = SimpleNamespace(usenet_browser=Mock())
+        dialog.status = Mock()
+        dialog.query = SimpleNamespace(get=Mock(return_value="example"))
+        dialog.results = Mock()
+        dialog.results.get_children.return_value = ()
+        dialog.files = Mock()
+        dialog.files.get_children.return_value = ()
+        dialog.more_button = Mock()
+        with (
+            patch.object(dialog, "_update_file_actions") as update_file_actions,
+            patch.object(dialog, "_search_page") as search_page,
+        ):
+            dialog.search()
+
+        dialog.app.usenet_browser.open.assert_called_once_with()
+        search_page.assert_called_once_with(append=False)
+        update_file_actions.assert_called_once_with()
+        self.assertEqual(dialog._offset, 0)
+        self.assertFalse(dialog._has_more)
+        self.assertEqual(dialog._results, {})
+        self.assertEqual(dialog._files, {})
+
+    def test_selecting_a_result_starts_resolution_automatically(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog._request_running = False
+        dialog.results = Mock()
+        dialog.results.selection.return_value = ("selected-result",)
+        dialog.resolve_button = Mock()
+        with patch.object(dialog, "resolve_selected") as resolve_selected:
+            dialog._selection_changed(Mock())
+
+        dialog.resolve_button.configure.assert_called_once_with(state="normal")
+        resolve_selected.assert_called_once_with()
 
 class UsenetBrowserSessionTests(unittest.TestCase):
     def test_launch_uses_a_separate_profile_and_loopback_debugger_on_fixed_port(self) -> None:
