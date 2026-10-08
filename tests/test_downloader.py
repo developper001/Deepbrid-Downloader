@@ -7,14 +7,17 @@ import threading
 import tempfile
 import sqlite3
 import shutil
+import struct
 import unittest
 import uuid
 import urllib.error
+import urllib.parse
+from datetime import datetime
 from contextlib import closing
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
 from src.app_events import (
@@ -48,6 +51,7 @@ from src.app import (
     LEGACY_QUEUE_DATABASE_PATH,
     OUTPUT_DIR,
     _ConsoleStream,
+    append_output_log_line,
     default_download_directory,
     _filter_and_sort_host_rows,
     _parse_linked_image_badge,
@@ -71,6 +75,23 @@ from src.queue_runner import QueueRunner
 from src.secure_store import SecureStore
 from src.single_instance import acquire_single_instance
 from src.update_manager import download_update_asset
+from src.usenet_finder import (
+    FinderFile,
+    FinderPackage,
+    FinderResult,
+    FinderSearchPage,
+    UsenetFinderClient,
+    UsenetFinderError,
+)
+from src.usenet_browser import UsenetBrowserSession
+from src.usenet_finder_dialog import UsenetFinderDialog
+from src.usenet_finder_state import (
+    CACHE_DURATION_SETTING,
+    CACHE_TTL_SECONDS,
+    DEFAULT_CACHE_DURATION_HOURS,
+    UsenetFinderState,
+    valid_cache_duration_hours,
+)
 
 
 class FakeResponse:
@@ -222,6 +243,22 @@ class QueueStoreTests(unittest.TestCase):
             self.assertEqual(loaded.deepbrid_link, generated_url)
             self.assertTrue(loaded.size_verified)
 
+    def test_queue_item_keeps_optional_finder_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            self.assertTrue(
+                store.add(
+                    "https://usenet.example/download/123",
+                    host_status="up",
+                    host_message="Usenet Finder",
+                    filename="episode.mkv",
+                )
+            )
+            item = store.next_item()
+            assert item is not None
+            self.assertEqual(item.filename, "episode.mkv")
+            self.assertEqual(item.host_message, "Usenet Finder")
+
 
 class QueueRunnerTests(unittest.TestCase):
     def test_runner_stops_when_api_key_validation_fails(self) -> None:
@@ -251,14 +288,22 @@ class QueueRunnerTests(unittest.TestCase):
             self.assertIsInstance(events.get_nowait(), ApiKeyErrorEvent)
             self.assertIsInstance(events.get_nowait(), WorkerDoneEvent)
 
-    def test_runner_completes_queue_item_without_tk_interaction(self) -> None:
+    def test_runner_completes_queue_item_with_preserved_finder_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
             store = QueueStore(output_dir / "queue.sqlite3")
-            store.add("https://supported.example/file.zip")
+            source_url = "https://usenet.example/download/123"
+            store.add(
+                source_url,
+                host_status="up",
+                host_message="Usenet Finder",
+                filename="finder-file.mkv",
+            )
             events: queue.Queue = queue.Queue()
             stop_event = threading.Event()
             active_cancel_events: dict[int, threading.Event] = {}
+            requested_urls: list[str] = []
+            downloaded_names: list[str] = []
 
             class FakeClient:
                 def __init__(self, *_args, **_kwargs):
@@ -268,17 +313,19 @@ class QueueRunnerTests(unittest.TestCase):
                     pass
 
                 def generate_link(self, _url: str) -> tuple[str, str]:
-                    return "https://premium.example/download", "file.zip"
+                    raise AssertionError("Usenet Finder URLs must not go through link generation.")
 
                 def download(
                     self,
-                    _url,
+                    url,
                     filename,
                     directory,
                     _should_stop,
                     _on_progress,
                     **kwargs,
                 ) -> bool:
+                    requested_urls.append(url)
+                    downloaded_names.append(filename)
                     (directory / filename).write_bytes(b"file")
                     kwargs["on_size_verified"](True)
                     return True
@@ -296,10 +343,46 @@ class QueueRunnerTests(unittest.TestCase):
 
             item = store.list_items()[0]
             self.assertEqual(item.status, "completed")
+            self.assertEqual(requested_urls, [source_url])
+            self.assertEqual(downloaded_names, ["finder-file.mkv"])
+            self.assertEqual(item.deepbrid_link, source_url)
             self.assertEqual(item.downloaded, 4)
             self.assertTrue(item.size_verified)
             self.assertIsInstance(events.queue[-1], WorkerDoneEvent)
             self.assertFalse(active_cancel_events)
+
+
+class UsenetFinderQueueIntegrationTests(unittest.TestCase):
+    def test_accessible_finder_links_enter_the_normal_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app = DownloaderApp.__new__(DownloaderApp)
+            app.store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            app._refresh_rows = Mock()
+            app._save_visible_queue_order = Mock()
+            app._log = Mock()
+            link = "https://usenet.example/download/123?ticket=private"
+
+            counts = app.add_usenet_links(
+                [
+                    (link, "..\\..\\episode.mkv"),
+                    (link, "episode.mkv"),
+                    ("file:///private/file", "private-file"),
+                ]
+            )
+
+            self.assertEqual(counts, (1, 1, 1))
+            item = app.store.next_item()
+            assert item is not None
+            self.assertEqual(item.url, link)
+            self.assertEqual(item.filename, "_.._episode.mkv")
+            self.assertEqual(item.host_message, "Usenet Finder")
+            app._apply_host_statuses({})
+            item = app.store.next_item()
+            assert item is not None
+            self.assertEqual(item.host_message, "Usenet Finder")
+            self.assertEqual(item.host_status, "up")
+            app._refresh_rows.assert_called_once()
+            app._save_visible_queue_order.assert_called_once()
 
 
 class AppConfigurationTests(unittest.TestCase):
@@ -307,6 +390,15 @@ class AppConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             database = Path(temporary_directory) / "settings.sqlite3"
             store = SecureStore(database)
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    "INSERT INTO app_settings (name, value) VALUES (?, ?)",
+                    ("usenet_password", b"obsolete-encrypted-password"),
+                )
+                connection.execute(
+                    "INSERT INTO app_settings (name, value) VALUES (?, ?)",
+                    ("usenet_username", b"obsolete-encrypted-username"),
+                )
             downloads = Path(temporary_directory) / "downloads"
             config = AppConfiguration.load(
                 store,
@@ -319,6 +411,18 @@ class AppConfigurationTests(unittest.TestCase):
 
             self.assertTrue(config.auto_check_updates)
             self.assertTrue(config.auto_start_downloads)
+            self.assertEqual(
+                config.usenet_finder_cache_duration_hours,
+                DEFAULT_CACHE_DURATION_HOURS,
+            )
+            self.assertFalse(config.append_output_log_enabled)
+            self.assertIsNone(config.append_output_log_path)
+            with closing(sqlite3.connect(database)) as connection:
+                remaining_credentials = connection.execute(
+                    "SELECT name FROM app_settings "
+                    "WHERE name IN ('usenet_username', 'usenet_password')"
+                ).fetchall()
+            self.assertEqual(remaining_credentials, [])
             self.assertEqual(config.output_dir, downloads)
             self.assertIn("progress", config.visible_columns)
             self.assertNotIn("progress_percentage", config.visible_columns)
@@ -332,6 +436,10 @@ class AppConfigurationTests(unittest.TestCase):
             store.set_setting("hosts", json.dumps({"example.com": "up"}))
             store.set_setting("output_directory", str(downloads / "custom"))
             store.set_setting("visible_columns", json.dumps(["filename", "progress"]))
+            store.set_setting(CACHE_DURATION_SETTING, "48")
+            log_path = downloads / "diagnostics.log"
+            store.set_setting("append_output_log_enabled", "true")
+            store.set_setting("append_output_log_path", str(log_path))
             config = AppConfiguration.load(
                 store,
                 COLUMN_ORDER,
@@ -345,6 +453,9 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertEqual(config.hosts, {"example.com": "up"})
             self.assertEqual(config.output_dir, downloads / "custom")
             self.assertEqual(config.visible_columns, ["filename", "progress"])
+            self.assertEqual(config.usenet_finder_cache_duration_hours, 48)
+            self.assertTrue(config.append_output_log_enabled)
+            self.assertEqual(config.append_output_log_path, log_path)
 
 
 class ApplicationShutdownTests(unittest.TestCase):
@@ -480,6 +591,18 @@ class ApplicationShutdownTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_usenet_finder_cache_duration_setting_is_persisted(self) -> None:
+        saved_settings: dict[str, str] = {}
+        app = object.__new__(DownloaderApp)
+        app.secure_store = SimpleNamespace(
+            set_setting=lambda name, value: saved_settings.__setitem__(name, value)
+        )
+
+        app._set_usenet_finder_cache_duration(36)
+
+        self.assertEqual(app.usenet_finder_cache_duration_hours, 36)
+        self.assertEqual(saved_settings[CACHE_DURATION_SETTING], "36")
+
     def test_single_instance_lock_rejects_second_owner_and_releases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             application_id = f"DeepbridDownloaderTest{uuid.uuid4().hex}"
@@ -1023,6 +1146,59 @@ class ValidationAndPresentationTests(unittest.TestCase):
         stream.flush()
         self.assertEqual(messages, ["first", "second"])
 
+    def test_output_log_appends_lines_and_redacts_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "logs" / "application.log"
+            append_output_log_line(
+                path,
+                "12:34:56",
+                "Request failed for https://example.test/path?token=secret",
+            )
+            append_output_log_line(path, "12:34:57", "Another diagnostic")
+
+            logged = path.read_text(encoding="utf-8")
+            self.assertIn("[12:34:56] Request failed for <URL REDACTED>", logged)
+            self.assertIn("[12:34:57] Another diagnostic", logged)
+            self.assertNotIn("token=secret", logged)
+
+    def test_output_log_setting_creates_file_and_persists_enabled_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "settings.sqlite3")
+            app = object.__new__(DownloaderApp)
+            app.secure_store = store
+            app.append_output_log_path = SimpleNamespace(set=Mock())
+            app._log = Mock()
+            app._output_log_error_reported = False
+            target = Path(temporary_directory) / "logs" / "app.log"
+
+            app._set_append_output_log(True, str(target))
+
+            self.assertTrue(target.is_file())
+            self.assertEqual(store.get_setting("append_output_log_enabled"), "true")
+            self.assertEqual(store.get_setting("append_output_log_path"), str(target))
+            self.assertTrue(app.append_output_log_enabled)
+            app.append_output_log_path.set.assert_called_once_with(str(target))
+
+    def test_main_add_links_warns_when_duplicates_are_skipped(self) -> None:
+        app = object.__new__(DownloaderApp)
+        app.hosts = {"example.com": "up"}
+        app.link_placeholder_active = False
+        app.links_input = Mock()
+        app.links_input.get.return_value = "https://example.com/file"
+        app.store = Mock()
+        app.store.add.return_value = False
+        app.root = object()
+        app.status_text = SimpleNamespace(set=Mock())
+        app._log = Mock()
+        app._refresh_rows = Mock()
+        app._save_visible_queue_order = Mock()
+
+        with patch("src.app.messagebox.showwarning") as showwarning:
+            app._add_link()
+
+        showwarning.assert_called_once()
+        self.assertIn("1 duplicate link", showwarning.call_args.args[1])
+
     def test_default_download_directory_prefers_existing_user_downloads(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             downloads = Path(temporary_directory) / "Downloads"
@@ -1322,6 +1498,207 @@ class SecureStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.set_setting("api_key", "sensitive-test-api-key")
 
+    def test_encrypted_settings_round_trip_without_storing_plaintext(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "queue.sqlite3"
+            store = SecureStore(database_path)
+            store.set_encrypted_setting("finder_cache", "https://private.example/file", b"test")
+
+            self.assertEqual(
+                store.get_encrypted_setting("finder_cache", b"test"),
+                "https://private.example/file",
+            )
+            with closing(sqlite3.connect(database_path)) as connection:
+                value = connection.execute(
+                    "SELECT value FROM app_settings WHERE name = 'finder_cache'"
+                ).fetchone()[0]
+            self.assertNotIn(b"private.example", bytes(value))
+
+
+class UsenetFinderStateTests(unittest.TestCase):
+    def test_search_and_resolved_package_persist_across_state_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            package = FinderPackage(
+                name="Example package",
+                files=(
+                    FinderFile(
+                        name="example.mkv",
+                        link="https://private.example/file",
+                        size="1 GB",
+                        is_video=True,
+                        inaccessible=None,
+                        metadata={"link": "https://private.example/file"},
+                    ),
+                ),
+                metadata={"pkg": "Example package"},
+            )
+            first_state = UsenetFinderState(store, clock=lambda: 1000)
+            first_state.save_search("example release", "tv-hd")
+            first_state.save_resolved("opaque-token", package)
+
+            reopened_state = UsenetFinderState(store, clock=lambda: 1001)
+            self.assertEqual(reopened_state.load_search(), ("example release", "tv-hd"))
+            self.assertEqual(reopened_state.get_resolved("opaque-token"), package)
+            self.assertEqual(
+                reopened_state.get_resolved_with_expiry("opaque-token"),
+                (package, 1000 + CACHE_TTL_SECONDS),
+            )
+            self.assertEqual(
+                reopened_state.load_search_history(),
+                [("example release", "tv-hd")],
+            )
+
+    def test_search_history_keeps_recent_unique_query_and_category_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_search("first", "TV")
+            state.save_search("second", "Movies")
+            state.save_search("first", "TV")
+
+            self.assertEqual(
+                state.load_search_history()[:2],
+                [("first", "TV"), ("second", "Movies")],
+            )
+
+    def test_search_history_can_be_cleared_without_clearing_the_last_search(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_search("example", "TV")
+
+            state.clear_search_history()
+
+            self.assertEqual(state.load_search_history(), [])
+            self.assertEqual(state.load_search(), ("example", "TV"))
+
+    def test_last_selected_result_persists_and_resolved_links_use_configured_ttl(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            package = FinderPackage("Example", (), {})
+            state = UsenetFinderState(
+                store,
+                clock=lambda: 1000,
+                cache_duration_hours=2,
+            )
+            state.save_last_selected_result("example", "TV", "opaque-token", 15)
+            state.save_resolved("opaque-token", package)
+
+            reopened_state = UsenetFinderState(
+                store,
+                clock=lambda: 1001,
+                cache_duration_hours=2,
+            )
+            self.assertEqual(
+                reopened_state.load_last_selected_result(),
+                ("example", "TV", "opaque-token", 15),
+            )
+            self.assertEqual(
+                reopened_state.get_resolved_with_expiry("opaque-token"),
+                (package, 1000 + 2 * 60 * 60),
+            )
+            self.assertIsNone(
+                UsenetFinderState(
+                    store,
+                    clock=lambda: 1000 + 2 * 60 * 60,
+                    cache_duration_hours=2,
+                ).get_resolved("opaque-token")
+            )
+
+    def test_search_results_persist_and_are_reused_across_state_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            page = FinderSearchPage(
+                results=(
+                    FinderResult(
+                        title="Example release",
+                        token="opaque-token",
+                        category="TV",
+                        size="1 GB",
+                        size_bytes=1_000_000_000,
+                        date="2026-10-01",
+                        metadata={"sources": 2},
+                    ),
+                ),
+                has_more=True,
+            )
+            first_state = UsenetFinderState(store, clock=lambda: 1000)
+            first_state.save_search_page("example", "TV", 0, 15, page)
+
+            reopened_state = UsenetFinderState(store, clock=lambda: 1001)
+            self.assertEqual(reopened_state.get_search_page("example", "TV", 0, 15), page)
+            self.assertEqual(
+                reopened_state.get_search_page_with_expiry("example", "TV", 0, 15),
+                (page, 1000 + CACHE_TTL_SECONDS),
+            )
+            self.assertIsNone(reopened_state.get_search_page("example", "", 0, 15))
+
+    def test_search_results_expire_using_configured_cache_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            page = FinderSearchPage((), False)
+            state = UsenetFinderState(
+                store,
+                clock=lambda: 1000,
+                cache_duration_hours=2,
+            )
+            state.save_search_page("example", "", 0, 15, page)
+
+            reopened_state = UsenetFinderState(
+                store,
+                clock=lambda: 1000 + 2 * 60 * 60,
+                cache_duration_hours=2,
+            )
+            self.assertIsNone(reopened_state.get_search_page("example", "", 0, 15))
+
+    def test_search_cache_uses_the_configured_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(
+                store,
+                clock=lambda: 1000,
+                cache_duration_hours=2,
+            )
+            self.assertEqual(state.cache_duration_hours_value(), 2)
+            self.assertEqual(state.cache_ttl_seconds(), 2 * 60 * 60)
+
+    def test_resolved_package_cache_expires_after_one_day(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            package = FinderPackage("Example", (), {})
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_resolved("opaque-token", package)
+
+            reopened_state = UsenetFinderState(
+                store,
+                clock=lambda: 1000 + CACHE_TTL_SECONDS,
+            )
+            self.assertIsNone(reopened_state.get_resolved("opaque-token"))
+
+    def test_cache_duration_accepts_only_whole_hours_in_supported_range(self) -> None:
+        self.assertEqual(valid_cache_duration_hours(1), 1)
+        self.assertEqual(valid_cache_duration_hours("720"), 720)
+        for invalid in ("0", "721", "1.5", "abc"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                valid_cache_duration_hours(invalid)
+
+    def test_clear_cache_removes_search_and_resolved_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_search_page("example", "", 0, 15, FinderSearchPage((), False))
+            state.save_resolved("opaque-token", FinderPackage("Example", (), {}))
+            state.save_last_selected_result("example", "", "opaque-token", 0)
+
+            state.clear_cache()
+
+            self.assertIsNone(state.get_search_page("example", "", 0, 15))
+            self.assertIsNone(state.get_resolved("opaque-token"))
+            self.assertIsNone(state.load_last_selected_result())
+            self.assertIsNone(store.get_encrypted_setting("usenet_finder_search_cache", b"usenet-finder-search-cache-v1"))
+            self.assertIsNone(store.get_encrypted_setting("usenet_finder_resolved_cache", b"usenet-finder-resolved-cache-v1"))
+
 
 class ResumeTests(unittest.TestCase):
     def test_successful_download_reports_whether_size_was_verified(self) -> None:
@@ -1447,6 +1824,465 @@ class ResumeTests(unittest.TestCase):
             self.assertEqual((output_dir / "file.bin").read_bytes(), expected)
             request = open_url.call_args.args[0]
             self.assertEqual(request.get_header("Range"), expected_range)
+
+
+class UsenetFinderPrototypeTests(unittest.TestCase):
+    def test_search_parses_results_and_uses_the_undocumented_query_contract(self) -> None:
+        result_payload = {
+            "title": "Example release",
+            "token": "opaque-token",
+            "cat": "TV",
+            "size": "1.2 GB",
+            "sizeBytes": 1_200_000_000,
+            "date": "2026-10-01",
+            "sources": 2,
+            "dupes": [],
+        }
+        browser = Mock()
+        browser.request_json.return_value = {"results": [result_payload], "hasMore": True}
+        page = UsenetFinderClient(browser).search(
+            "example release",
+            category="tv-hd",
+            offset=15,
+            limit=15,
+        )
+
+        self.assertTrue(page.has_more)
+        self.assertEqual(len(page.results), 1)
+        result = page.results[0]
+        self.assertEqual(result.title, "Example release")
+        self.assertEqual(result.token, "opaque-token")
+        self.assertEqual(result.size_bytes, 1_200_000_000)
+        self.assertIn("sources", result.metadata)
+        browser.request_json.assert_called_once_with(
+            {
+                "do": "search",
+                "q": "example release",
+                "cat": "tv-hd",
+                "offset": "15",
+                "limit": "15",
+            }
+        )
+
+    def test_resolve_marks_unavailable_files_and_preserves_metadata(self) -> None:
+        browser = Mock()
+        browser.request_json.return_value = {
+            "pkg": "Example release",
+            "files": [
+                {
+                    "name": "episode.mkv",
+                    "link": "https://download.example/file",
+                    "size": "1 GB",
+                    "isVideo": True,
+                },
+                {
+                    "name": "archive.rar",
+                    "link": "",
+                    "size": "2 GB",
+                    "inaccessible": "missing_volumes",
+                },
+                {
+                    "name": "relative-link.bin",
+                    "link": "/private/download",
+                },
+                {
+                    "name": "finder-url-field.mkv",
+                    "url": "https://usenet-2.myfast.link:8183/get/private-id/6/finder-url-field.mkv",
+                    "size": "492.41 MB",
+                    "isVideo": True,
+                },
+            ],
+        }
+        package = UsenetFinderClient(browser).resolve("opaque-token")
+
+        self.assertEqual(package.name, "Example release")
+        self.assertEqual(len(package.files), 4)
+        self.assertTrue(package.files[0].is_accessible)
+        self.assertTrue(package.files[0].is_video)
+        self.assertFalse(package.files[1].is_accessible)
+        self.assertEqual(package.files[1].inaccessible, "missing_volumes")
+        self.assertFalse(package.files[2].is_accessible)
+        self.assertTrue(package.files[3].is_accessible)
+        self.assertEqual(package.files[3].link, package.files[3].metadata["url"])
+        browser.request_json.assert_called_once_with(
+            {"do": "process", "token": "opaque-token"}
+        )
+
+    def test_invalid_search_inputs_and_response_shapes_are_explicit(self) -> None:
+        browser = Mock()
+        client = UsenetFinderClient(browser)
+        with self.assertRaises(ValueError):
+            client.search(" ")
+        with self.assertRaises(ValueError):
+            client.search("query", offset=-1)
+        with self.assertRaises(ValueError):
+            client.search("query", limit=101)
+
+        browser.request_json.return_value = {"results": [], "hasMore": "yes"}
+        with self.assertRaisesRegex(UsenetFinderError, "hasMore"):
+            client.search("query")
+
+    def test_browser_challenge_and_sign_in_html_produce_actionable_error(self) -> None:
+        from src.usenet_finder import parse_browser_response
+
+        with self.assertRaisesRegex(UsenetFinderError, "Complete the Cloudflare check"):
+            parse_browser_response(403, "text/html", "<html>challenge</html>")
+        with self.assertRaisesRegex(UsenetFinderError, "instead of JSON"):
+            parse_browser_response(200, "text/html", "<html>login</html>")
+
+
+class UsenetFinderDialogTests(unittest.TestCase):
+    def test_antialiased_globe_assets_are_square_pngs_for_both_themes(self) -> None:
+        asset_directory = Path(__file__).resolve().parent.parent / "src"
+        for filename in ("usenet-globe-light.png", "usenet-globe-dark.png"):
+            with self.subTest(filename=filename):
+                asset = (asset_directory / filename).read_bytes()
+                self.assertEqual(asset[:8], b"\x89PNG\r\n\x1a\n")
+                self.assertEqual(struct.unpack(">II", asset[16:24]), (46, 46))
+
+    def test_saved_search_results_are_restored_without_a_network_request(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        page = FinderSearchPage((), False)
+        dialog.state = Mock()
+        dialog.state.get_search_page_with_expiry.return_value = (page, 2000)
+        dialog.app = SimpleNamespace(_log=Mock())
+        dialog._results = {}
+        dialog._result_records = []
+        dialog.status = Mock()
+        with patch.object(dialog, "_show_search_page") as show_search_page:
+            dialog._restore_cached_results("example", "TV")
+
+        dialog.state.get_search_page_with_expiry.assert_called_once_with(
+            "example", "TV", 0, 15
+        )
+        show_search_page.assert_called_once_with(page, append=False, cached_expiry=2000)
+        dialog.status.set.assert_called_once_with(
+            "Restored 0 cached result(s); cache expires "
+            f"{datetime.fromtimestamp(2000).strftime('%Y-%m-%d %H:%M')}."
+        )
+
+    def test_search_page_cache_hit_skips_the_network_request(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        page = FinderSearchPage((), False)
+        dialog.query = SimpleNamespace(get=lambda: "example")
+        dialog.category = SimpleNamespace(get=lambda: "TV")
+        dialog._offset = 0
+        dialog.PAGE_SIZE = 15
+        dialog._results = {}
+        dialog._result_records = []
+        dialog.state = Mock()
+        dialog.state.get_search_page_with_expiry.return_value = (page, 2000)
+        dialog.client = Mock()
+        dialog.status = Mock()
+        with (
+            patch.object(dialog, "_show_search_page") as show_search_page,
+            patch.object(dialog, "_begin_request") as begin_request,
+        ):
+            dialog._search_page(append=False)
+
+        dialog.state.get_search_page_with_expiry.assert_called_once_with(
+            "example", "TV", 0, 15
+        )
+        show_search_page.assert_called_once_with(page, False, cached_expiry=2000)
+        begin_request.assert_not_called()
+        dialog.client.search.assert_not_called()
+        self.assertIn("Loaded 0 cached result(s); cache expires ", dialog.status.set.call_args.args[0])
+
+    def test_search_opens_the_browser_before_starting_the_request(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog._request_running = False
+        dialog._offset = 12
+        dialog._results = {"old": object()}
+        dialog._result_page_offsets = {}
+        dialog._files = {"old": object()}
+        dialog._has_more = True
+        dialog.app = SimpleNamespace(usenet_browser=Mock())
+        dialog.state = Mock()
+        dialog.status = Mock()
+        dialog.query = SimpleNamespace(get=Mock(return_value="example"))
+        dialog.category = SimpleNamespace(get=Mock(return_value=""))
+        dialog.results = Mock()
+        dialog.results.get_children.return_value = ()
+        dialog.files = Mock()
+        dialog.files.get_children.return_value = ()
+        dialog.more_button = Mock()
+        with (
+            patch.object(dialog, "_update_file_actions") as update_file_actions,
+            patch.object(dialog, "_search_page") as search_page,
+        ):
+            dialog.search()
+
+        dialog.app.usenet_browser.open.assert_called_once_with()
+        dialog.state.save_search.assert_called_once_with("example", "")
+        search_page.assert_called_once_with(append=False)
+        update_file_actions.assert_called_once_with()
+        self.assertEqual(dialog._offset, 0)
+        self.assertFalse(dialog._has_more)
+        self.assertEqual(dialog._results, {})
+        self.assertEqual(dialog._files, {})
+
+    def test_results_can_be_sorted_and_filtered_locally(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        first = FinderResult("Alpha", "a", "TV", "2 GB", 2_000, "2026-01-01", {})
+        second = FinderResult("Beta release", "b", "Movies", "1 GB", 1_000, "2026-02-01", {})
+        dialog._result_records = [first, second]
+        dialog._results = {}
+        dialog._sort_column = "title"
+        dialog._sort_reverse = False
+        dialog.result_filter = SimpleNamespace(get=lambda: "beta")
+        dialog.results = Mock()
+        dialog.results.get_children.return_value = ()
+        dialog.results.insert.side_effect = lambda _parent, _index, **_kwargs: "beta-row"
+
+        dialog._refresh_result_rows()
+
+        self.assertEqual(
+            dialog.results.insert.call_args.kwargs["values"],
+            ("Beta release", "Movies", "1 GB", "2026-02-01"),
+        )
+        self.assertEqual(dialog._results, {"beta-row": second})
+
+        dialog.result_filter = SimpleNamespace(get=lambda: "")
+        dialog._sort_results("size")
+        self.assertEqual(
+            [call.kwargs["values"][0] for call in dialog.results.insert.call_args_list[-2:]],
+            ["Beta release", "Alpha"],
+        )
+
+    def test_selecting_a_result_starts_resolution_automatically(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog._request_running = False
+        dialog.results = Mock()
+        dialog.results.selection.return_value = ("selected-result",)
+        dialog._results = {}
+        dialog.resolve_button = Mock()
+        with patch.object(dialog, "resolve_selected") as resolve_selected:
+            dialog._selection_changed(Mock())
+
+        dialog.resolve_button.configure.assert_called_once_with(state="normal")
+        resolve_selected.assert_called_once_with()
+
+
+    def test_resolving_a_cached_result_skips_the_finder_request(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog._request_running = False
+        dialog.results = Mock()
+        dialog.results.selection.return_value = ("selected-result",)
+        result = SimpleNamespace(token="opaque-token")
+        dialog._results = {"selected-result": result}
+        package = FinderPackage("Example", (), {})
+        dialog.query = SimpleNamespace(get=Mock(return_value="example"))
+        dialog.category = SimpleNamespace(get=Mock(return_value="TV"))
+        dialog.state = Mock()
+        dialog.state.get_resolved_with_expiry.return_value = (package, 2000)
+        dialog._result_page_offsets = {}
+        dialog.files = Mock()
+        dialog.status = Mock()
+        dialog.client = Mock()
+        with patch.object(dialog, "_show_package") as show_package:
+            dialog.resolve_selected()
+
+        dialog.state.get_resolved_with_expiry.assert_called_once_with("opaque-token")
+        dialog.state.save_last_selected_result.assert_called_once_with(
+            "example",
+            "TV",
+            "opaque-token",
+            0,
+        )
+        show_package.assert_called_once_with(package)
+        dialog.client.resolve.assert_not_called()
+        dialog.status.set.assert_called_once_with(
+            "Loaded saved resolution (0 file(s)); cache expires "
+            f"{datetime.fromtimestamp(2000).strftime('%Y-%m-%d %H:%M')}."
+        )
+
+    def test_reopening_finder_restores_the_selected_result_and_cached_file_list(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        result = FinderResult("Example release", "opaque-token", "TV", "1 GB", 1, "date", {})
+        package = FinderPackage("Example", (), {})
+        dialog.state = Mock()
+        dialog.state.load_last_selected_result.return_value = (
+            "example",
+            "TV",
+            "opaque-token",
+            0,
+        )
+        dialog.state.get_resolved_with_expiry.return_value = (package, 2000)
+        dialog._results = {"result-row": result}
+        dialog._offset = 15
+        dialog.PAGE_SIZE = 15
+        dialog.query = SimpleNamespace(get=lambda: "example")
+        dialog.category = SimpleNamespace(get=lambda: "TV")
+        dialog.results = Mock()
+        dialog.status = Mock()
+        dialog.app = SimpleNamespace(_log=Mock())
+        dialog._restoring_result_token = None
+
+        with patch.object(dialog, "_show_package") as show_package:
+            dialog._restore_last_resolved("example", "TV")
+
+        dialog.results.selection_set.assert_called_once_with("result-row")
+        dialog.results.focus.assert_called_once_with("result-row")
+        show_package.assert_called_once_with(package)
+        dialog.status.set.assert_called_once_with(
+            "Restored last resolved links (0 file(s)); "
+            f"cache expires {datetime.fromtimestamp(2000).strftime('%Y-%m-%d %H:%M')}."
+        )
+
+
+class UsenetBrowserSessionTests(unittest.TestCase):
+    def test_browser_connection_check_requires_a_deepbrid_tab(self) -> None:
+        session = UsenetBrowserSession(Path("unused"))
+        with (
+            patch.object(session, "_debug_port", return_value=9222),
+            patch.object(
+                session,
+                "_find_finder_target",
+                return_value={"url": "https://www.deepbrid.com/login"},
+            ),
+        ):
+            self.assertIn("connection is working", session.test_connection())
+
+        with (
+            patch.object(session, "_debug_port", return_value=None),
+            patch.object(session, "_find_browser", return_value=None),
+            self.assertRaisesRegex(UsenetFinderError, "Chrome or Microsoft Edge was not found"),
+        ):
+            session.test_connection()
+        with (
+            patch.object(session, "_debug_port", return_value=None),
+            patch.object(session, "_find_browser", return_value="chrome"),
+            self.assertRaisesRegex(UsenetFinderError, "not connected"),
+        ):
+            session.test_connection()
+
+    def test_missing_browser_error_explains_requirement_and_install_options(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            session = UsenetBrowserSession(Path(temporary_directory))
+            with (
+                patch.object(session, "_debug_port", return_value=None),
+                patch.object(session, "_close_legacy_automated_browser", return_value=False),
+                patch.object(session, "_find_browser", return_value=None),
+                patch("src.usenet_browser.sys.platform", "linux"),
+                self.assertRaisesRegex(UsenetFinderError, "requires Google Chrome or Microsoft Edge") as error,
+            ):
+                session.open()
+        self.assertIn("https://www.google.com/chrome/", str(error.exception))
+        self.assertIn("https://www.microsoft.com/edge/download", str(error.exception))
+        self.assertIn("Ubuntu or Debian", str(error.exception))
+
+    def test_launch_uses_a_separate_profile_and_loopback_debugger_on_fixed_port(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            profile = Path(temporary_directory) / "browser-profile"
+            session = UsenetBrowserSession(profile, browser_path="C:/Chrome/chrome.exe")
+            with (
+                patch.object(session, "_debug_port", return_value=None),
+                patch.object(session, "_find_free_port", return_value=9225),
+                patch("src.usenet_browser.subprocess.Popen") as popen,
+            ):
+                session.open()
+            args = popen.call_args.args[0]
+            self.assertIn(f"--user-data-dir={profile}", args)
+            self.assertIn("--remote-debugging-port=9225", args)
+            self.assertIn("--remote-debugging-address=127.0.0.1", args)
+            self.assertEqual(args[-1], "https://www.deepbrid.com/login")
+            self.assertEqual((profile / "DeepbridDevToolsPort").read_text(), "9225")
+
+    def test_debug_port_comes_from_the_application_port_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            profile = Path(temporary_directory)
+            (profile / "DeepbridDevToolsPort").write_text("9225", encoding="ascii")
+            session = UsenetBrowserSession(profile)
+            with patch(
+                "src.usenet_browser.urllib.request.urlopen",
+                return_value=FakeResponse(
+                    200,
+                    {},
+                    b'{"Browser":"Chrome/154.0.0.0"}',
+                ),
+            ) as open_url:
+                self.assertEqual(session._debug_port(), 9225)
+            self.assertEqual(
+                open_url.call_args.args[0],
+                "http://127.0.0.1:9225/json/version",
+            )
+
+    def test_fetch_runs_inside_browser_and_never_exports_cookie_header(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            messages: list[str] = []
+            session = UsenetBrowserSession(Path(temporary_directory), log=messages.append)
+            target = {
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/one"
+            }
+            response = {
+                "status": 200,
+                "contentType": "application/json",
+                "body": '{"results":[],"hasMore":false}',
+            }
+            with (
+                patch.object(session, "_wait_for_debug_port", return_value=9222),
+                patch.object(session, "_find_finder_target", return_value=target),
+                patch.object(UsenetBrowserSession, "_evaluate", return_value=response) as evaluate,
+            ):
+                payload = session.request_json({"do": "search", "q": "test", "limit": "15"})
+
+            self.assertEqual(payload, {"results": [], "hasMore": False})
+            expression = evaluate.call_args.args[1]
+            self.assertIn("credentials:'same-origin'", expression)
+            self.assertNotIn("Cookie", expression)
+            self.assertNotIn("token", "\n".join(messages))
+
+    def test_cdp_evaluation_uses_page_runtime_and_closes_local_websocket(self) -> None:
+        class FakeWebSocket:
+            def __init__(self):
+                self.sent: list[str] = []
+                self.closed = False
+
+            def send(self, payload: str) -> None:
+                self.sent.append(payload)
+
+            def recv(self) -> str:
+                return json.dumps(
+                    {
+                        "id": 1,
+                        "result": {
+                            "result": {
+                                "value": {
+                                    "status": 200,
+                                    "contentType": "application/json",
+                                    "body": '{"results":[],"hasMore":false}',
+                                }
+                            }
+                        },
+                    }
+                )
+
+            def close(self) -> None:
+                self.closed = True
+
+        connection = FakeWebSocket()
+        with patch(
+            "src.usenet_browser.websocket.create_connection",
+            return_value=connection,
+        ) as connect:
+            response = UsenetBrowserSession._evaluate(
+                "ws://127.0.0.1:9222/devtools/page/test",
+                "fetch('/usenet-finder')",
+            )
+
+        self.assertEqual(response["status"], 200)
+        self.assertTrue(connection.closed)
+        self.assertEqual(connect.call_args.kwargs["suppress_origin"], True)
+        command = json.loads(connection.sent[0])
+        self.assertEqual(command["method"], "Runtime.evaluate")
+        self.assertTrue(command["params"]["awaitPromise"])
+
+    def test_cdp_refuses_remote_debugging_hosts(self) -> None:
+        with self.assertRaisesRegex(UsenetFinderError, "non-local"):
+            UsenetBrowserSession._evaluate(
+                "ws://attacker.example/devtools/page/test",
+                "document.cookie",
+            )
 
 
 class DeepbridDiagnosticsTests(unittest.TestCase):
@@ -1612,6 +2448,32 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
 
         self.assertNotIn(download_url, "\n".join(messages))
         self.assertIn("<DOWNLOAD_LINK_REDACTED>", "\n".join(messages))
+
+    def test_premium_link_generation_does_not_log_source_url(self) -> None:
+        source_url = "https://usenet.example/download/123?ticket=private-value"
+        error = urllib.error.HTTPError(
+            "https://www.deepbrid.com/api/v1/generate/link",
+            403,
+            "Forbidden",
+            {},
+            BytesIO(
+                json.dumps(
+                    {
+                        "message": f"Cannot process {source_url}",
+                        "source": urllib.parse.quote_plus(source_url),
+                    }
+                ).encode()
+            ),
+        )
+        messages: list[str] = []
+        with patch("src.deepbrid_client.urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(DeepbridError) as raised:
+                DeepbridClient("secret-test-key", log=messages.append).generate_link(source_url)
+
+        combined = "\n".join(messages) + str(raised.exception)
+        self.assertNotIn(source_url, combined)
+        self.assertNotIn(urllib.parse.quote_plus(source_url), combined)
+        self.assertIn("<SOURCE_URL_REDACTED>", combined)
 
     def test_invalid_json_logs_http_status_and_body(self) -> None:
         response = FakeResponse(200, {}, b"upstream temporarily broken")

@@ -6,6 +6,14 @@ from pathlib import Path
 from typing import Callable
 
 from .secure_store import SecureStorageError, SecureStore
+from .usenet_finder_state import (
+    CACHE_DURATION_SETTING,
+    DEFAULT_CACHE_DURATION_HOURS,
+    valid_cache_duration_hours,
+)
+
+OUTPUT_LOG_ENABLED_SETTING = "append_output_log_enabled"
+OUTPUT_LOG_PATH_SETTING = "append_output_log_path"
 
 
 def setting_is_enabled(value: str | None, default: bool) -> bool:
@@ -25,6 +33,9 @@ class AppConfiguration:
     output_dir: Path
     hosts: dict[str, str]
     dark_theme: bool
+    usenet_finder_cache_duration_hours: int
+    append_output_log_enabled: bool
+    append_output_log_path: Path | None
 
     @classmethod
     def load(
@@ -39,6 +50,7 @@ class AppConfiguration:
         api_key = ""
         secure_storage_error = None
         try:
+            secure_store.delete_legacy_usenet_credentials()
             api_key = secure_store.get_api_key() or ""
             legacy_key = read_legacy_api_key()
             if api_key:
@@ -161,6 +173,21 @@ class AppConfiguration:
             if isinstance(cached_hosts, dict)
             else {}
         )
+        saved_cache_duration = secure_store.get_setting(CACHE_DURATION_SETTING)
+        try:
+            cache_duration_hours = (
+                valid_cache_duration_hours(saved_cache_duration)
+                if saved_cache_duration is not None
+                else DEFAULT_CACHE_DURATION_HOURS
+            )
+        except ValueError:
+            cache_duration_hours = DEFAULT_CACHE_DURATION_HOURS
+        saved_output_log_path = secure_store.get_setting(OUTPUT_LOG_PATH_SETTING)
+        output_log_path = (
+            Path(saved_output_log_path).expanduser()
+            if saved_output_log_path and saved_output_log_path.strip()
+            else None
+        )
 
         return cls(
             api_key=api_key,
@@ -178,4 +205,10 @@ class AppConfiguration:
             output_dir=output_dir,
             hosts=hosts,
             dark_theme=secure_store.get_setting("dark_theme") == "true",
+            usenet_finder_cache_duration_hours=cache_duration_hours,
+            append_output_log_enabled=setting_is_enabled(
+                secure_store.get_setting(OUTPUT_LOG_ENABLED_SETTING),
+                default=False,
+            ),
+            append_output_log_path=output_log_path,
         )

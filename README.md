@@ -7,6 +7,10 @@
 
 A small cross-platform desktop downloader built with Python and Tkinter for Deepbrid-hosted files. It queues links, keeps progress in SQLite, resumes interrupted transfers when the server supports HTTP Range requests, and exposes a compact, easy-to-monitor interface for daily downloads.
 
+### Main dashboard
+
+![Deepbrid Downloader dashboard](src/img/DeepbridDownloader.png)
+
 ## Supported platforms
 
 - Windows 10/11
@@ -39,6 +43,64 @@ Or use the launcher:
 python launcher.py
 ```
 
+## Run
+
+Use Python 3.10 or newer with Tkinter available. Install the dependencies and launch the app from the project root:
+
+```sh
+python -m pip install -r requirements.txt
+python -m src.app
+```
+
+On Linux, Tkinter may need to be installed through the operating system package manager. The queue, API key, generated Deepbrid URLs, and encryption key are stored in the per-user application-data directory provided by `platformdirs`; they persist independently of the executable's bundle location. Existing source-tree databases, legacy queue databases, and `.env` keys are migrated when possible.
+
+## How to use
+
+- Paste one or more supported links or HTML containing links into the input box.
+- The app filters for hosts supported by Deepbrid and ignores unsupported ones. It accepts supported links even when a host is currently unavailable, including comma-separated host aliases.
+- Queue priority follows the displayed row order and updates when links are added, removed, or sorted.
+- Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
+- The bottom progress bar tracks settled enabled links plus the active file's partial progress; its caption shows queue count and total ETA.
+- The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
+- Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults.
+- Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
+- The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
+- The app keeps active partial files and automatically resumes queued work after startup. Closing the window requests a safe stop and waits for the active network read to return before exit, preserving the partial file for resume.
+- If the API key is missing or rejected, the app opens the filtered API-key Settings automatically. Use the Get API key button there to retrieve a key, then use Check API key to verify it.
+- Use the About window to open the GitHub repository and check whether a newer release is available.
+
+## Retry and resume behavior
+
+If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block is treated as non-retryable and pauses the queue. When the host reports an expected file size, the app checks the received byte count before marking the download complete; mismatches fail and keep the partial file for retry. If the host provides no expected size, the completed file is marked not verified. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
+
+## Usenet Finder
+
+The **Usenet Finder** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; check the queue and click **Start** to download them.
+
+![Usenet Finder search results and resolved files](src/img/UsenetFinder.png)
+
+The last query and category are saved and restored when the Finder window is reopened. If the first page of that search is still cached, it is shown immediately without requiring another Search click. Finder also restores the last selected row and its resolved file links while they remain within the configured cache duration. Search result pages and successfully resolved packages are cached locally in encrypted form. Their shared cache duration is configurable in Settings from 1 to 720 hours (24 hours by default); use **Usenet settings** in the Finder window to change it or clear both caches.
+
+![Usenet Finder search history and category selection](src/img/UsenetFinderSearchHistoryAndCategory.png)
+
+The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; choose **[Clear search history]** in the search history or use **Clear search history** in Settings to remove them. Result categories populate the category picker, and loaded results can be filtered or sorted by clicking a column heading. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
+
+Usenet Finder requires Google Chrome or Microsoft Edge to be installed. The app opens a dedicated browser window automatically and uses an isolated profile stored under the application's data directory with loopback-only DevTools. If neither browser is found, the app explains how to install one:
+
+- Windows: download Chrome or Edge from its official site, run the installer, then reopen Finder.
+- macOS: download Chrome or Edge from its official site, open the downloaded installer, and follow its instructions.
+- Ubuntu/Debian: download the Chrome or Edge `.deb` package from its official site, open the downloaded package in the Software Installer, and choose **Install**. On other Linux distributions, use the package offered for that distribution.
+
+If a browser is already installed but is not detected, set `DEEPBRID_CHROME_PATH` to its executable. Complete any Cloudflare verification and sign in in the dedicated browser, then return to the app and search. Keep that browser window open while using Finder: search and resolve requests run within its signed-in session. Session cookies remain in the browser and are never copied into Python. The profile persists between launches. No downloader API key or account credential fields are used for Finder; obsolete Finder username/password settings are removed when the app starts. The **Open Chrome / sign in** button remains available to reopen the browser if needed.
+
+To probe it from the UI, open **Usenet Finder**, sign in through the automatically opened browser if needed, then search. The optional CLI probe also opens or reuses the dedicated Chrome profile; sign in there first and then run:
+
+```sh
+python -m scripts.probe_usenet_finder "example search" --limit 1 --resolve-first
+```
+
+The probe prints response structure and request diagnostics. Endpoint behavior may change without notice. Install `websocket-client` from the project requirements to enable local Chrome DevTools communication.
+
 ## Features
 
 - Queue and manage many Deepbrid-supported links from a single interface
@@ -62,13 +124,12 @@ python launcher.py
 - Open API-key Settings automatically at startup when the key is missing or rejected; access the Deepbrid key page from Settings
 - Check for newer releases in About and opt into verified in-app updates with download progress
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
+- Optionally append application output to a chosen log file from Settings; logging is disabled by default and URLs are redacted
 - Route standard output, errors, and uncaught exceptions to the in-app console
 - Build the Windows executable with the Deepbrid icon and no separate console window
 - Open the full project README directly from the About window
 
-### Main dashboard
-
-![Deepbrid Downloader dashboard](src/img/DeepbridDownloader.png)
+## Screenshots
 
 ### Settings
 
@@ -99,36 +160,6 @@ python launcher.py
 ![Dark mode](src/img/DarkMode.png)
 
 ![Console logs](src/img/ConsoleFullLogs.png)
-
-## Run
-
-Use Python 3.10 or newer with Tkinter available. Install the dependencies and launch the app from the project root:
-
-```sh
-python -m pip install -r requirements.txt
-python -m src.app
-```
-
-On Linux, Tkinter may need to be installed through the operating system package manager. The queue, API key, generated Deepbrid URLs, and encryption key are stored in the per-user application-data directory provided by `platformdirs`; they persist independently of the executable's bundle location. Existing source-tree databases, legacy queue databases, and `.env` keys are migrated when possible.
-
-## How it works
-
-- Paste one or more supported links or HTML containing links into the input box.
-- The app filters for hosts supported by Deepbrid and ignores unsupported ones. It accepts supported links even when a host is currently unavailable, including comma-separated host aliases.
-- Queue priority follows the displayed row order and updates when links are added, removed, or sorted.
-- Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
-- The bottom progress bar tracks settled enabled links plus the active file's partial progress; its caption shows queue count and total ETA.
-- The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
-- Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults.
-- Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
-- The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
-- The app keeps active partial files and automatically resumes queued work after startup. Closing the window requests a safe stop and waits for the active network read to return before exit, preserving the partial file for resume.
-- If the API key is missing or rejected, the app opens the filtered API-key Settings automatically. Use the Get API key button there to retrieve a key, then use Check API key to verify it.
-- Use the About window to open the GitHub repository and check whether a newer release is available.
-
-## Retry and resume behavior
-
-If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block is treated as non-retryable and pauses the queue. When the host reports an expected file size, the app checks the received byte count before marking the download complete; mismatches fail and keep the partial file for retry. If the host provides no expected size, the completed file is marked not verified. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
 
 ## Tests
 

@@ -22,6 +22,11 @@ class SecureStorageError(RuntimeError):
 
 
 class SecureStore:
+    LEGACY_SECRET_SETTINGS = {
+        "usenet_username",
+        "usenet_password",
+    }
+
     def __init__(self, database_path: Path):
         self.database_path = database_path
         database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +98,13 @@ class SecureStore:
                 (nonce + ciphertext,),
             )
 
+    def delete_legacy_usenet_credentials(self) -> None:
+        with self._connect() as connection:
+            connection.executemany(
+                "DELETE FROM app_settings WHERE name = ?",
+                ((name,) for name in self.LEGACY_SECRET_SETTINGS),
+            )
+
     def encrypt_text(self, value: str, purpose: bytes) -> bytes:
         nonce = os.urandom(12)
         ciphertext = AESGCM(self._get_encryption_key()).encrypt(
@@ -116,7 +128,7 @@ class SecureStore:
         ).hexdigest()
 
     def get_setting(self, name: str) -> str | None:
-        if name in {"api_key", "encryption_key"}:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
             raise ValueError("Secret database values cannot be read as plain settings.")
         with self._connect() as connection:
             row = connection.execute(
@@ -125,7 +137,7 @@ class SecureStore:
         return bytes(row[0]).decode("utf-8") if row else None
 
     def set_setting(self, name: str, value: str) -> None:
-        if name in {"api_key", "encryption_key"}:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
             raise ValueError("Secret database values must use their secure storage methods.")
         with self._connect() as connection:
             connection.execute(
@@ -133,6 +145,32 @@ class SecureStore:
                 "ON CONFLICT(name) DO UPDATE SET value = excluded.value",
                 (name, value.encode("utf-8")),
             )
+
+    def get_encrypted_setting(self, name: str, purpose: bytes) -> str | None:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
+            raise ValueError("Reserved database settings cannot be read as encrypted settings.")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM app_settings WHERE name = ?", (name,)
+            ).fetchone()
+        return self.decrypt_text(bytes(row[0]), purpose) if row else None
+
+    def set_encrypted_setting(self, name: str, value: str, purpose: bytes) -> None:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
+            raise ValueError("Reserved database settings cannot be written as encrypted settings.")
+        encrypted = self.encrypt_text(value, purpose)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO app_settings (name, value) VALUES (?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+                (name, encrypted),
+            )
+
+    def delete_encrypted_setting(self, name: str) -> None:
+        if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
+            raise ValueError("Reserved database settings cannot be deleted as encrypted settings.")
+        with self._connect() as connection:
+            connection.execute("DELETE FROM app_settings WHERE name = ?", (name,))
 
     def _get_encryption_key(self) -> bytes:
         encryption_key = self._read_encryption_key()

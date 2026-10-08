@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 import traceback
 import webbrowser
 from collections.abc import Callable
@@ -18,7 +19,12 @@ from tkinter import filedialog, messagebox, ttk
 
 from platformdirs import user_data_dir, user_downloads_dir
 
-from .app_config import AppConfiguration, setting_is_enabled as _setting_is_enabled
+from .app_config import (
+    OUTPUT_LOG_ENABLED_SETTING,
+    OUTPUT_LOG_PATH_SETTING,
+    AppConfiguration,
+    setting_is_enabled as _setting_is_enabled,
+)
 from .app_info import (
     GITHUB_REPOSITORY_URL,
     LatestRelease,
@@ -47,11 +53,19 @@ from .app_events import (
     UpdateProgressEvent,
     WorkerDoneEvent,
 )
-from .deepbrid_client import DeepbridClient, DeepbridError
+from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
 from .queue_store import QueueStore
 from .queue_runner import QueueRunner
 from .settings_dialog import SettingsDialog
+from .usenet_finder_dialog import UsenetFinderDialog
+from .usenet_browser import UsenetBrowserSession
+from .usenet_finder import is_valid_finder_link
+from .usenet_finder_state import (
+    CACHE_DURATION_SETTING,
+    UsenetFinderState,
+    valid_cache_duration_hours,
+)
 from .secure_store import SecureStorageError, SecureStore
 from .single_instance import acquire_single_instance
 from .update_manager import UpdateInstallError, download_update_asset, launch_update_helper
@@ -68,6 +82,7 @@ PROJECT_ROOT = Path(sys.executable).resolve().parent if IS_FROZEN else Path(__fi
 APP_DATA_DIR = Path(user_data_dir("Deepbrid Downloader", "Deepbrid")).expanduser()
 OUTPUT_DIR = APP_DATA_DIR / "download"
 DATABASE_PATH = APP_DATA_DIR / "queue.sqlite3"
+USENET_BROWSER_PROFILE = APP_DATA_DIR / "usenet-browser-profile"
 LEGACY_DATABASE_PATH = RESOURCE_ROOT / "src" / "deepbrid_downloader.sqlite3"
 LEGACY_QUEUE_DATABASE_PATH = PROJECT_ROOT / "download" / "queue.sqlite3"
 LEGACY_STORAGE_PATH = PROJECT_ROOT / "download"
@@ -95,6 +110,7 @@ COLUMN_ORDER = (
 DEFAULT_COLUMNS = ("filename", "host", "size", "progress", "time_remaining", "eta", "verification")
 LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
+DEEPBRID_DASHBOARD_URL = "https://www.deepbrid.com/dashboard"
 
 
 def _filter_and_sort_host_rows(
@@ -251,6 +267,12 @@ def redact_log_urls(contents: str) -> str:
     return re.sub(r"https?://[^\s\"'<>]+", "<URL REDACTED>", contents, flags=re.IGNORECASE)
 
 
+def append_output_log_line(path: Path, timestamp: str, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as output:
+        output.write(f"[{timestamp}] {redact_log_urls(message)}\n")
+
+
 def redact_legacy_log_file() -> bool:
     if not LOG_PATH.exists():
         return True
@@ -351,6 +373,10 @@ class DownloaderApp:
         self.worker: threading.Thread | None = None
         self.active_cancel_events: dict[int, threading.Event] = {}
         self.api_key = tk.StringVar(value=config.api_key)
+        self.usenet_browser = UsenetBrowserSession(
+            USENET_BROWSER_PROFILE,
+            log=self._log,
+        )
         self.status_text = tk.StringVar(value="Ready")
         self.progress_value = tk.DoubleVar(value=0)
         self.queue_progress_text = tk.StringVar(value="Queue: 0/0 files (0%)")
@@ -372,9 +398,17 @@ class DownloaderApp:
         self.hosts = config.hosts
         self.host_limits: dict[str, str] = {}
         self.hosts_popup: tk.Toplevel | None = None
+        self.usenet_finder_dialog: UsenetFinderDialog | None = None
         self._hosts_popup_update = None
         self.console_visible = False
         self.dark_theme = config.dark_theme
+        self.usenet_finder_cache_duration_hours = config.usenet_finder_cache_duration_hours
+        self.append_output_log_enabled = config.append_output_log_enabled
+        self.append_output_log_path = tk.StringVar(
+            master=root,
+            value=str(config.append_output_log_path or ""),
+        )
+        self._output_log_error_reported = False
         self.key_save_after: str | None = None
         self.closing = False
 
@@ -425,12 +459,12 @@ class DownloaderApp:
             command=self._show_settings,
         )
         self.settings_button.pack(side="right")
-        self.theme_button = ttk.Button(
+        self.usenet_finder_button = ttk.Button(
             header_actions,
-            text="Dark mode" if not self.dark_theme else "Light mode",
-            command=self._toggle_theme,
+            text="Usenet Finder",
+            command=self._show_usenet_finder,
         )
-        self.theme_button.pack(side="right", padx=(0, 8))
+        self.usenet_finder_button.pack(side="right", padx=(0, 8))
 
         add_row = ttk.Frame(main)
         add_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
@@ -466,6 +500,12 @@ class DownloaderApp:
             command=self._show_columns_dialog,
         )
         self.columns_button.pack(side="left", padx=(8, 0))
+        self.theme_button = ttk.Button(
+            controls,
+            text="Dark mode" if not self.dark_theme else "Light mode",
+            command=self._toggle_theme,
+        )
+        self.theme_button.pack(side="left", padx=(8, 0))
         self.readme_button = ttk.Button(controls, text="About", command=self._show_readme)
         self.readme_button.pack(side="left", padx=(8, 0))
         ttk.Label(controls, textvariable=self.status_text).pack(side="right")
@@ -642,8 +682,41 @@ class DownloaderApp:
         self.link_placeholder_active = False
         self.status_text.set(f"Added {added_count}; skipped {duplicate_count} duplicate(s)")
         self._log(f"Extracted {len(links)} supported link(s); added {added_count}, skipped {duplicate_count} duplicate(s).")
+        if duplicate_count:
+            messagebox.showwarning(
+                "Duplicate links skipped",
+                f"{duplicate_count} duplicate link(s) were already in the download queue and were skipped.",
+                parent=self.root,
+            )
         self._refresh_rows()
         self._save_visible_queue_order()
+
+    def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]:
+        added_count = 0
+        duplicate_count = 0
+        invalid_count = 0
+        for link, filename in links:
+            if not is_valid_finder_link(link):
+                invalid_count += 1
+                continue
+            safe_name = safe_filename(filename, link, 0)
+            if self.store.add(
+                link,
+                host_status="up",
+                host_message="Usenet Finder",
+                filename=safe_name,
+            ):
+                added_count += 1
+            else:
+                duplicate_count += 1
+        if added_count:
+            self._refresh_rows()
+            self._save_visible_queue_order()
+        self._log(
+            f"Added {added_count} Usenet Finder link(s) to the queue; "
+            f"skipped {duplicate_count} duplicate(s) and {invalid_count} invalid link(s)."
+        )
+        return added_count, duplicate_count, invalid_count
 
     def _clear_link_placeholder(self, _event: tk.Event | None = None) -> None:
         if self.link_placeholder_active:
@@ -859,6 +932,8 @@ class DownloaderApp:
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
         for item in self.store.list_items():
+            if item.host_message == "Usenet Finder":
+                continue
             result = supported_link_status(item.url, hosts)
             if result is None:
                 self.store.update(
@@ -941,7 +1016,7 @@ class DownloaderApp:
         popup.title("Deepbrid Downloader README")
         popup.geometry("980x760")
         popup.minsize(700, 500)
-        popup.transient(self.root)
+        popup.resizable(True, True)
         popup.configure(background=colors["background"])
         popup.grab_set()
 
@@ -950,51 +1025,107 @@ class DownloaderApp:
         container.columnconfigure(0, weight=1)
         container.rowconfigure(0, weight=1)
 
-        canvas = tk.Canvas(
+        output = tk.Text(
             container,
             background=colors["background"],
+            foreground=colors["foreground"],
             highlightthickness=0,
             borderwidth=0,
+            relief="flat",
+            wrap="word",
+            padx=4,
+            pady=4,
+            insertwidth=0,
+            takefocus=False,
         )
-        canvas.grid(row=0, column=0, sticky="nsew")
-        yscrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        output.grid(row=0, column=0, sticky="nsew")
+        body_font = tkfont.nametofont("TkDefaultFont", root=popup).copy()
+        body_font.configure(size=body_font.cget("size") + 2)
+        output.configure(font=body_font)
+        bold_font = body_font.copy()
+        bold_font.configure(weight="bold")
+        code_font = tkfont.nametofont("TkFixedFont", root=popup).copy()
+        code_font.configure(size=code_font.cget("size") + 2)
+        output.body_font = body_font
+        output.bold_font = bold_font
+        output.code_font = code_font
+        output.tag_configure("strong", font=bold_font)
+        output.tag_configure(
+            "inline-code",
+            font=code_font,
+            background=colors["field"],
+        )
+        output.tag_configure(
+            "code-block",
+            font=code_font,
+            foreground=colors["foreground"],
+            background=colors["field"],
+            lmargin1=12,
+            lmargin2=12,
+            rmargin=8,
+            spacing1=3,
+            spacing3=3,
+        )
+        def scroll_readme(*args: str) -> None:
+            output.yview(*args)
+            output.update_idletasks()
+
+        yscrollbar = ttk.Scrollbar(container, orient="vertical", command=scroll_readme)
         yscrollbar.grid(row=0, column=1, sticky="ns")
-        xscrollbar = ttk.Scrollbar(container, orient="horizontal", command=canvas.xview)
+        xscrollbar = ttk.Scrollbar(container, orient="horizontal", command=output.xview)
         xscrollbar.grid(row=1, column=0, sticky="ew")
-        canvas.configure(yscrollcommand=yscrollbar.set, xscrollcommand=xscrollbar.set)
+        output.configure(yscrollcommand=yscrollbar.set, xscrollcommand=xscrollbar.set)
 
         def _on_mouse_wheel(event: tk.Event) -> None:
-            if not canvas.winfo_exists():
-                return
             if getattr(event, "delta", 0):
                 delta = int(-event.delta / 48)
                 if not delta:
                     delta = -1 if event.delta > 0 else 1
             else:
                 delta = {4: -1, 5: 1}.get(getattr(event, "num", None), 0)
-            try:
-                canvas.yview_scroll(delta, "units")
-            except tk.TclError:
-                return
+            scroll_readme("scroll", delta, "units")
 
         popup.bind("<MouseWheel>", _on_mouse_wheel, add="+")
         popup.bind("<Shift-MouseWheel>", _on_mouse_wheel, add="+")
-        frame = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=frame, anchor="nw")
         badge_row: ttk.Frame | None = None
+        readme_images: list[tk.PhotoImage] = []
+        in_code_block = False
+
+        def insert_markdown_text(text: str) -> None:
+            position = 0
+            for match in re.finditer(r"\*\*(.+?)\*\*|`([^`]+)`", text):
+                output.insert("end", text[position:match.start()])
+                if match.group(1) is not None:
+                    output.insert("end", match.group(1), "strong")
+                else:
+                    output.insert("end", match.group(2), "inline-code")
+                position = match.end()
+            output.insert("end", text[position:])
 
         def render_line(raw_line: str) -> None:
-            nonlocal badge_row
+            nonlocal badge_row, in_code_block
             stripped = raw_line.strip()
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                badge_row = None
+                output.insert("end", "\n")
+                return
+            if in_code_block:
+                start = output.index("end-1c")
+                output.insert("end", f"{raw_line}\n")
+                output.tag_add("code-block", start, "end-1c")
+                return
+
             if not stripped:
                 badge_row = None
+                output.insert("end", "\n")
                 return
 
             badge = _parse_linked_image_badge(stripped)
             if badge:
                 if badge_row is None:
-                    badge_row = ttk.Frame(frame)
-                    badge_row.pack(anchor="w", pady=(2, 8))
+                    badge_row = ttk.Frame(output)
+                    output.window_create("end", window=badge_row, padx=0, pady=2)
                 label = ttk.Label(
                     badge_row,
                     text=badge[0],
@@ -1008,6 +1139,8 @@ class DownloaderApp:
                     lambda _event, target=badge[1]: self._open_readme_link(target),
                 )
                 return
+            if badge_row is not None:
+                output.insert("end", "\n")
             badge_row = None
 
             image_match = re.match(r"!\[[^\]]*\]\(([^)]+)\)", stripped)
@@ -1015,74 +1148,67 @@ class DownloaderApp:
                 image_path = (README_PATH.parent / image_match.group(1)).resolve()
                 if image_path.exists():
                     preview = tk.PhotoImage(file=str(image_path))
-                    label = ttk.Label(frame, image=preview)
-                    label.image = preview
-                    label.pack(anchor="w", pady=(8, 4))
+                    readme_images.append(preview)
+                    output.image_create("end", image=preview, align="top", padx=0, pady=4)
+                    output.insert("end", "\n")
                 else:
-                    ttk.Label(frame, text=f"Missing image: {image_path.name}").pack(anchor="w", pady=(8, 4))
+                    output.insert("end", f"Missing image: {image_path.name}\n")
                 return
 
             heading_match = re.match(r"^(#+)\s+(.*)$", stripped)
             if heading_match:
                 level = len(heading_match.group(1))
-                text = heading_match.group(2)
-                font_size = 14 - min(level - 1, 4)
-                label = tk.Label(
-                    frame,
-                    text=text,
+                heading_text = heading_match.group(2)
+                font_size = 17 - min(level - 1, 4)
+                tag = f"heading-{level}"
+                output.tag_configure(
+                    tag,
                     font=("Segoe UI", font_size, "bold"),
-                    anchor="w",
-                    justify="left",
-                    background=colors["surface"],
                     foreground=colors["foreground"],
-                    padx=6,
-                    pady=3,
-                )
-                label.pack(anchor="w", pady=(10 if level == 1 else 6, 4))
-                return
-
-            if stripped.startswith("- ") or stripped.startswith("* "):
-                label = tk.Label(
-                    frame,
-                    text=stripped[2:],
-                    justify="left",
-                    anchor="w",
                     background=colors["background"],
-                    foreground=colors["foreground"],
+                    lmargin1=6,
+                    lmargin2=6,
+                    rmargin=6,
+                    spacing3=4,
                 )
-                label.pack(anchor="w", pady=(2, 2))
+                start = output.index("end-1c")
+                insert_markdown_text(heading_text)
+                output.insert("end", "\n")
+                output.tag_add(tag, start, "end-1c")
                 return
 
-            if stripped.startswith("```"):
+            bullet_match = re.match(r"^(\s*)[-*]\s+(.*)$", raw_line)
+            if bullet_match:
+                indent = len(bullet_match.group(1))
+                level = min(indent // 2, 4)
+                tag = f"list-{level}"
+                output.tag_configure(
+                    tag,
+                    lmargin1=14 + level * 18,
+                    lmargin2=30 + level * 18,
+                    rmargin=8,
+                    spacing3=2,
+                )
+                start = output.index("end-1c")
+                output.insert("end", "\u2022   ")
+                insert_markdown_text(bullet_match.group(2))
+                output.insert("end", "\n")
+                output.tag_add(tag, start, "end-1c")
                 return
 
-            label = tk.Label(
-                frame,
-                text=stripped,
-                justify="left",
-                anchor="w",
-                wraplength=850,
-                background=colors["background"],
-                foreground=colors["foreground"],
-            )
-            label.pack(anchor="w", pady=(2, 2))
+            insert_markdown_text(stripped)
+            output.insert("end", "\n")
 
         for line in self.readme_text().splitlines():
             render_line(line)
 
-        frame.update_idletasks()
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        canvas.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        output.image_references = readme_images
+        output.configure(state="disabled")
 
         actions = ttk.Frame(container)
         actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(
-            actions,
-            text="GitHub repository",
-            command=lambda: webbrowser.open(GITHUB_REPOSITORY_URL),
-        ).pack(side="left")
         update_status = tk.StringVar(master=popup, value=f"Current version: {APP_VERSION}")
-        ttk.Label(actions, textvariable=update_status).pack(side="left", padx=(8, 0))
+        ttk.Label(actions, textvariable=update_status).pack(side="left")
         update_progress = ttk.Progressbar(actions, length=150, mode="determinate", maximum=100)
         release_button = ttk.Button(actions, text="Open release")
         check_button = ttk.Button(
@@ -1097,6 +1223,16 @@ class DownloaderApp:
             ),
         )
         check_button.pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="GitHub repository",
+            command=lambda: webbrowser.open(GITHUB_REPOSITORY_URL),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="Deepbrid dashboard",
+            command=lambda: webbrowser.open(DEEPBRID_DASHBOARD_URL),
+        ).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Close", command=popup.destroy).pack(side="right")
 
     def _check_for_updates(
@@ -1161,12 +1297,108 @@ class DownloaderApp:
         enabled = self.auto_start_downloads.get()
         self.secure_store.set_setting("auto_start_downloads_on_startup", "true" if enabled else "false")
 
+    def _set_usenet_finder_cache_duration(self, hours: int) -> None:
+        validated_hours = valid_cache_duration_hours(hours)
+        self.secure_store.set_setting(CACHE_DURATION_SETTING, str(validated_hours))
+        self.usenet_finder_cache_duration_hours = validated_hours
+
+    def _set_append_output_log(self, enabled: bool, path_text: str) -> None:
+        path_text = path_text.strip()
+        if enabled and not path_text:
+            raise ValueError("Choose an output log file before enabling file logging.")
+        path = Path(path_text).expanduser() if path_text else None
+        if enabled and path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8"):
+                pass
+        self.secure_store.set_setting(OUTPUT_LOG_ENABLED_SETTING, "true" if enabled else "false")
+        self.secure_store.set_setting(OUTPUT_LOG_PATH_SETTING, str(path) if path else "")
+        self.append_output_log_enabled = enabled
+        self.append_output_log_path.set(str(path) if path else "")
+        self._output_log_error_reported = False
+        self._log(
+            f"Append-only output logging enabled at {path}."
+            if enabled
+            else "Append-only output logging disabled."
+        )
+
+    def _test_usenet_browser_connection(
+        self,
+        status: tk.StringVar,
+        button: ttk.Button,
+    ) -> None:
+        status.set("Testing browser connection...")
+        button.configure(state="disabled")
+
+        def test() -> None:
+            try:
+                result = self.usenet_browser.test_connection()
+            except UsenetFinderError as error:
+                result = f"Connection test failed: {error}"
+
+            def finish() -> None:
+                try:
+                    if button.winfo_exists():
+                        button.configure(state="normal")
+                        status.set(result)
+                except tk.TclError:
+                    return
+
+            try:
+                self.root.after(0, finish)
+            except tk.TclError:
+                return
+
+        threading.Thread(target=test, daemon=True).start()
+
+    def _clear_usenet_finder_cache(self) -> None:
+        dialog = self.usenet_finder_dialog
+        if dialog is not None:
+            try:
+                if dialog.dialog.winfo_exists():
+                    dialog.state.clear_cache()
+                    return
+            except tk.TclError:
+                pass
+        UsenetFinderState(
+            self.secure_store,
+            cache_duration_hours=lambda: self.usenet_finder_cache_duration_hours,
+        ).clear_cache()
+
+    def _clear_usenet_finder_search_history(self) -> None:
+        dialog = self.usenet_finder_dialog
+        if dialog is not None:
+            try:
+                if dialog.dialog.winfo_exists():
+                    dialog.state.clear_search_history()
+                    dialog._update_search_history_options()
+                    self._log("Cleared Usenet Finder search history.")
+                    return
+            except tk.TclError:
+                pass
+        UsenetFinderState(
+            self.secure_store,
+            cache_duration_hours=lambda: self.usenet_finder_cache_duration_hours,
+        ).clear_search_history()
+        self._log("Cleared Usenet Finder search history.")
+
     def _show_settings(
         self,
         initial_filter: str = "",
         api_key_notice: str | None = None,
     ) -> None:
         SettingsDialog(self, initial_filter, api_key_notice)
+
+    def _show_usenet_finder(self) -> None:
+        if self.usenet_finder_dialog is not None:
+            try:
+                if self.usenet_finder_dialog.dialog.winfo_exists():
+                    self.usenet_finder_dialog.dialog.lift()
+                    self.usenet_finder_dialog.open_browser()
+                    return
+            except tk.TclError:
+                pass
+        self.usenet_finder_dialog = UsenetFinderDialog(self)
 
     def _check_for_updates_on_startup(self) -> None:
         if not self.auto_check_updates.get():
@@ -2431,6 +2663,35 @@ class DownloaderApp:
                         status_code=event.status_code,
                     )
             elif isinstance(event, LogEvent):
+                if self.append_output_log_enabled:
+                    try:
+                        append_output_log_line(
+                            Path(self.append_output_log_path.get()),
+                            event.timestamp,
+                            event.message,
+                        )
+                    except OSError as error:
+                        self.append_output_log_enabled = False
+                        try:
+                            self.secure_store.set_setting(
+                                OUTPUT_LOG_ENABLED_SETTING,
+                                "false",
+                            )
+                        except (OSError, sqlite3.Error):
+                            pass
+                        if not self._output_log_error_reported:
+                            self._output_log_error_reported = True
+                            failure_message = (
+                                f"Output file logging disabled after an append failure: {error}"
+                            )
+                            self.status_text.set(failure_message)
+                            self.console.configure(state="normal")
+                            self.console.insert(
+                                "end",
+                                f"[{event.timestamp}] {failure_message}\n",
+                            )
+                            self.console.see("end")
+                            self.console.configure(state="disabled")
                 if event.is_exception and not self.console_visible:
                     self._toggle_console()
                 self.console.configure(state="normal")
