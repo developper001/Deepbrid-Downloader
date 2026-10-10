@@ -345,7 +345,7 @@ class UsenetFinderDialog:
         self.add_accessible_button.pack(side="left", padx=(8, 0))
         self.auxiliary_files_filter_button = ttk.Button(
             file_actions,
-            text="Hide PAR2/NFO",
+            text="Show PAR2/NFO" if self._hide_auxiliary_files else "Hide PAR2/NFO",
             command=self._toggle_auxiliary_files_filter,
         )
         self.auxiliary_files_filter_button.pack(side="left", padx=(8, 0))

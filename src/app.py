@@ -375,6 +375,7 @@ class DownloaderApp:
         self.events: queue.Queue[BackgroundEvent] = queue.Queue()
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
+        self._queue_active = False
         self.active_cancel_events: dict[int, threading.Event] = {}
         self.api_key = tk.StringVar(value=config.api_key)
         self.usenet_browser = UsenetBrowserSession(
@@ -494,7 +495,12 @@ class DownloaderApp:
         controls.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         self.start_button = ttk.Button(controls, text="Start", command=self._start)
         self.start_button.pack(side="left")
-        self.stop_button = ttk.Button(controls, text="Stop", command=self._stop, state="disabled")
+        self.stop_button = ttk.Button(
+            controls,
+            text="Pause",
+            command=self._pause,
+            state="disabled",
+        )
         self.stop_button.pack(side="left", padx=(8, 0))
         self.refresh_hosts_button = ttk.Button(
             controls,
@@ -2232,6 +2238,7 @@ class DownloaderApp:
                 "background": "#202522",
                 "surface": "#2b332f",
                 "foreground": "#e8eee9",
+                "disabled_foreground": "#7f8983",
                 "error": "#ff7070",
                 "field": "#171c19",
                 "accent": "#6d91ff",
@@ -2247,6 +2254,7 @@ class DownloaderApp:
                 "background": "#edf2ee",
                 "surface": "#ffffff",
                 "foreground": "#202b25",
+                "disabled_foreground": "#89928c",
                 "error": "#b00020",
                 "field": "#ffffff",
                 "accent": "#3569f6",
@@ -2270,8 +2278,11 @@ class DownloaderApp:
         style.configure("TButton", background=colors["surface"], foreground=colors["foreground"], padding=(9, 5))
         style.map(
             "TButton",
-            background=[("active", colors["accent"])],
-            foreground=[("active", colors["foreground"])],
+            background=[("disabled", colors["surface"]), ("active", colors["accent"])],
+            foreground=[
+                ("disabled", colors["disabled_foreground"]),
+                ("active", colors["foreground"]),
+            ],
         )
         style.configure(
             "TCheckbutton",
@@ -2417,18 +2428,24 @@ class DownloaderApp:
         )
         self.worker = threading.Thread(target=runner.run, daemon=True)
         self.worker.start()
+        self._queue_active = True
         self.start_button.configure(state="disabled")
-        self.stop_button.configure(state="normal")
+        self._sync_pause_button_state()
         self.status_text.set("Running")
         self._log("Download queue started.")
 
-    def _stop(self) -> None:
+    def _pause(self) -> None:
         self.stop_event.set()
         for cancel_event in self.active_cancel_events.values():
             cancel_event.set()
-        self.status_text.set("Stopping after the current network read...")
-        self.stop_button.configure(state="disabled")
-        self._log("Stop requested; current partial download will be kept.")
+        self.status_text.set("Pausing after the current network read...")
+        self._sync_pause_button_state()
+        self._log("Pause requested; current partial download will be kept.")
+
+    def _sync_pause_button_state(self) -> None:
+        worker_running = self.worker is not None and self.worker.is_alive()
+        can_pause = self._queue_active and worker_running and not self.stop_event.is_set()
+        self.stop_button.configure(state="normal" if can_pause else "disabled")
 
     def _refresh_rows(self) -> None:
         items = self.store.list_items()
@@ -2795,9 +2812,10 @@ class DownloaderApp:
                     )
                 self._refresh_rows()
             elif isinstance(event, WorkerDoneEvent):
+                self._queue_active = False
                 self.start_button.configure(state="normal")
-                self.stop_button.configure(state="disabled")
-                self.status_text.set("Stopped" if self.stop_event.is_set() else "Queue complete")
+                self._sync_pause_button_state()
+                self.status_text.set("Paused" if self.stop_event.is_set() else "Queue complete")
                 self._refresh_rows()
             else:
                 raise TypeError(f"Unsupported background event: {event!r}")
@@ -2806,6 +2824,7 @@ class DownloaderApp:
             if self.worker and self.worker.is_alive():
                 self._refresh_rows()
             self.last_eta_refresh = now
+        self._sync_pause_button_state()
         self.root.after(1000, self._process_events)
 
     @staticmethod

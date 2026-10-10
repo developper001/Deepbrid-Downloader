@@ -1439,6 +1439,26 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(app.table.selection(), ())
         self.assertIsNone(app._selection_anchor)
 
+    def test_pause_button_is_enabled_only_while_queue_can_be_paused(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.worker = SimpleNamespace(is_alive=lambda: True)
+        app.stop_event = threading.Event()
+        app.stop_button = Mock()
+
+        app._queue_active = False
+        app._sync_pause_button_state()
+        app.stop_button.configure.assert_called_with(state="disabled")
+
+        app.stop_button.reset_mock()
+        app._queue_active = True
+        app._sync_pause_button_state()
+        app.stop_button.configure.assert_called_with(state="normal")
+
+        app.stop_button.reset_mock()
+        app.stop_event.set()
+        app._sync_pause_button_state()
+        app.stop_button.configure.assert_called_with(state="disabled")
+
     def test_horizontal_table_scrollbar_tracks_column_overflow(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
         app._schedule_progress_indicator_layout = Mock()
