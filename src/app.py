@@ -469,6 +469,12 @@ class DownloaderApp:
             command=self._show_settings,
         )
         self.settings_button.pack(side="right")
+        self.add_torrent_button = ttk.Button(
+            header_actions,
+            text="Add torrent",
+            command=self._show_add_torrent_dialog,
+        )
+        self.add_torrent_button.pack(side="right", padx=(0, 8))
         self.usenet_finder_button = ttk.Button(
             header_actions,
             text="Usenet Finder",
@@ -491,16 +497,6 @@ class DownloaderApp:
         self.add_links_button = ttk.Button(add_row, text="Add links", command=self._add_link)
         self.add_links_button.grid(row=0, column=2, padx=(8, 0), sticky="ns")
         self.add_links_button.configure(state="normal" if self.hosts else "disabled")
-        ttk.Button(
-            add_row,
-            text="Add .torrent files",
-            command=self._add_torrent_files,
-        ).grid(row=0, column=3, padx=(8, 0), sticky="ns")
-        ttk.Button(
-            add_row,
-            text="Add torrent folder",
-            command=self._add_torrent_folder,
-        ).grid(row=0, column=4, padx=(8, 0), sticky="ns")
 
         controls = ttk.Frame(main)
         controls.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -599,6 +595,8 @@ class DownloaderApp:
         self.table.bind("<Button-1>", self._select_table_row)
         self.table.bind("<Control-a>", self._select_all_table_rows)
         self.table.bind("<Button-2>" if sys.platform == "darwin" else "<Button-3>", self._show_link_menu)
+        self.table.bind("<Delete>", self._handle_remove_shortcut)
+        self.table.bind("<KP_Delete>", self._handle_remove_shortcut)
         self.table.bind("<Control-c>", self._copy_original_link)
         self.table.bind("<Configure>", self._schedule_progress_indicator_layout, add="+")
         self.table.bind("<B1-Motion>", self._schedule_progress_indicator_layout, add="+")
@@ -719,20 +717,62 @@ class DownloaderApp:
         self._refresh_rows()
         self._save_visible_queue_order()
 
-    def _add_torrent_files(self) -> None:
+    def _show_add_torrent_dialog(self) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add torrent")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Choose one or more .torrent files, or select a folder containing them.",
+        ).pack(anchor="w", pady=(0, 12))
+        ttk.Button(
+            frame,
+            text="Select .torrent file(s)",
+            command=lambda: self._choose_torrent_files(dialog),
+        ).pack(fill="x", pady=(0, 8))
+        ttk.Button(
+            frame,
+            text="Select torrent folder",
+            command=lambda: self._choose_torrent_folder(dialog),
+        ).pack(fill="x", pady=(0, 8))
+        ttk.Button(frame, text="Cancel", command=dialog.destroy).pack(anchor="e")
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.grab_set()
+        dialog.focus_set()
+
+    def _choose_torrent_files(self, parent: tk.Misc) -> None:
         filenames = filedialog.askopenfilenames(
-            parent=self.root,
+            parent=parent,
             title="Select .torrent files",
             filetypes=(("Torrent files", "*.torrent"),),
         )
-        self._add_torrent_paths([Path(filename) for filename in filenames])
+        if filenames:
+            parent.destroy()
+            self._add_torrent_paths([Path(filename) for filename in filenames])
 
-    def _add_torrent_folder(self) -> None:
+    def _choose_torrent_folder(self, parent: tk.Misc) -> None:
         selected = filedialog.askdirectory(
-            parent=self.root,
+            parent=parent,
             title="Select a folder containing .torrent files",
             mustexist=True,
         )
+        if not selected:
+            return
+        parent.destroy()
+        self._add_torrent_folder(selected)
+
+    def _add_torrent_folder(self, selected: str | None = None) -> None:
+        if selected is None:
+            selected = filedialog.askdirectory(
+                parent=self.root,
+                title="Select a folder containing .torrent files",
+                mustexist=True,
+            )
         if not selected:
             return
         try:
@@ -755,8 +795,8 @@ class DownloaderApp:
     def _add_torrent_paths(self, paths: list[Path]) -> None:
         if not paths:
             messagebox.showinfo(
-                "No torrent files",
-                "Select one or more .torrent files, or choose a folder containing them.",
+                "No torrent files found",
+                "The selected folder does not contain any .torrent files.",
                 parent=self.root,
             )
             return
@@ -2087,6 +2127,10 @@ class DownloaderApp:
             self.table.focus(row_ids[0])
         else:
             self._selection_anchor = None
+        return "break"
+
+    def _handle_remove_shortcut(self, _event: tk.Event) -> str:
+        self._remove_link()
         return "break"
 
     def _show_link_menu(self, event: tk.Event) -> str:

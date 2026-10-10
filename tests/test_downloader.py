@@ -393,7 +393,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
                 ),
                 entry,
             )
-            self.assertIn(f"Path={project_root}", entry)
+            self.assertIn(f"Path={manager.project_root}", entry)
             self.assertTrue(manager.is_enabled())
             self.assertIn("will start after", enabled_message)
 
@@ -439,8 +439,8 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
             command = manager._windows_command()
 
-            self.assertIn(str(pythonw), command)
-            self.assertIn(str(project_root / "launcher.py"), command)
+            self.assertIn(str(pythonw.resolve()), command)
+            self.assertIn(str(manager.project_root / "launcher.py"), command)
 
     def test_windows_startup_configuration_adds_and_removes_run_value(self) -> None:
         manager = StartupManager(platform_name="win32")

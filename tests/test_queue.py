@@ -576,6 +576,58 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
 
 
 class TorrentQueueUiTests(unittest.TestCase):
+    def test_canceling_torrent_file_picker_does_not_show_no_files_popup(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        parent = Mock()
+
+        with (
+            patch("src.app.filedialog.askopenfilenames", return_value=()),
+            patch("src.app.messagebox.showinfo") as showinfo,
+            patch.object(app, "_add_torrent_paths") as add_paths,
+        ):
+            app._choose_torrent_files(parent)
+
+        parent.destroy.assert_not_called()
+        add_paths.assert_not_called()
+        showinfo.assert_not_called()
+
+    def test_empty_selected_torrent_folder_reports_no_matching_files(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.root = object()
+
+        with patch("src.app.messagebox.showinfo") as showinfo:
+            app._add_torrent_paths([])
+
+        showinfo.assert_called_once_with(
+            "No torrent files found",
+            "The selected folder does not contain any .torrent files.",
+            parent=app.root,
+        )
+
+    def test_canceling_torrent_folder_picker_does_not_show_popup(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        parent = Mock()
+
+        with (
+            patch("src.app.filedialog.askdirectory", return_value=""),
+            patch("src.app.messagebox.showinfo") as showinfo,
+            patch.object(app, "_add_torrent_folder") as add_folder,
+        ):
+            app._choose_torrent_folder(parent)
+
+        parent.destroy.assert_not_called()
+        add_folder.assert_not_called()
+        showinfo.assert_not_called()
+
+    def test_delete_shortcut_uses_existing_remove_confirmation(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app._remove_link = Mock()
+
+        result = app._handle_remove_shortcut(object())
+
+        self.assertEqual(result, "break")
+        app._remove_link.assert_called_once_with()
+
     def test_add_torrent_paths_counts_duplicates_and_rejects_oversized_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
