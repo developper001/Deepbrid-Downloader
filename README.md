@@ -9,7 +9,7 @@ A small cross-platform desktop downloader built with Python and Tkinter for Deep
 
 ### Main dashboard
 
-![Deepbrid Downloader dashboard](src/screenshots/DeepbridDownloader.png)
+![Deepbrid Downloader dashboard](src/screenshots/dashboard-main-window.png)
 
 ## Supported platforms
 
@@ -81,11 +81,11 @@ If premium-link generation fails transiently, the app makes up to five attempts 
 
 The **Find Usenet links** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Finder-reported file sizes are carried into the queue as estimates until transfer details provide an actual size. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; click **Start** to begin and **Pause** to pause the queue, then click **Start** to resume.
 
-![Usenet Finder search results and resolved files](src/screenshots/UsenetFinder.png)
+![Usenet Finder search results and resolved files](src/screenshots/usenet-search-results.png)
 
 The last query and category are saved and restored when the Finder window is reopened. If the first page of that search is still cached, it is shown immediately without requiring another Search click. Finder also restores the last selected row and its resolved file links while they remain within the configured cache duration. Search result pages and successfully resolved packages are cached locally in encrypted form. Their shared cache duration is configurable in Settings from 1 to 720 hours (24 hours by default); use **Usenet settings** in the Finder window to change it or clear both caches.
 
-![Usenet Finder search history and category selection](src/screenshots/UsenetFinderSearchHistoryAndCategory.png)
+![Usenet Finder search history and category selection](src/screenshots/usenet-search-history-and-categories.png)
 
 The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; choose **[Clear search history]** in the search history or use **Clear search history** in Settings to remove them. Result categories populate the category picker, and search results and resolved files can be sorted by clicking a column heading. Use **Search columns...** and **File columns...** to show, hide, and reorder columns in each table; the resolved-files extension column is visible by default. **Hide PAR2/NFO** is enabled by default and temporarily filters parity archives and NFO files out of the resolved-file list; the files remain part of the package and are still included by **Add all accessible to queue**. Change this under **Usenet resolved files** in Settings or toggle it in the Finder; the choice is saved between runs. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
 
@@ -137,33 +137,33 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 
 ### Settings
 
-![Searchable settings with API-key validation](src/screenshots/Settings.png)
+![Searchable settings with API-key validation](src/screenshots/settings-api-key-validation.png)
 
 ### Host status and quota overview
 
-![Refresh hosts](src/screenshots/RefreshHosts.png)
+![Refresh hosts](src/screenshots/host-status-refresh.png)
 
 ### About and release updates
 
-![About window with GitHub link and update check](src/screenshots/AboutAndUpdates.png)
+![About window with GitHub link and update check](src/screenshots/about-and-update-check.png)
 
 ### Column visibility and queue management
 
-![Columns and queue options](src/screenshots/OrderColumns.png)
+![Columns and queue options](src/screenshots/queue-column-customization.png)
 
 ### Right-click actions and retry flow
 
-![Right-click menu](src/screenshots/RightClickMenu.png)
+![Right-click menu](src/screenshots/queue-context-menu.png)
 
-![Retry workflow](src/screenshots/RetrySystem.png)
+![Retry workflow](src/screenshots/download-retry-workflow.png)
 
-![Safe retry handling](src/screenshots/SafeRetry.png)
+![Safe retry handling](src/screenshots/safe-retry-handling.png)
 
 ### Dark mode and console logging
 
-![Dark mode](src/screenshots/DarkMode.png)
+![Dark mode](src/screenshots/dark-mode-theme.png)
 
-![Console logs](src/screenshots/ConsoleFullLogs.png)
+![Console logs](src/screenshots/console-full-logs.png)
 
 ## Tests
 

@@ -1240,10 +1240,13 @@ class ValidationAndPresentationTests(unittest.TestCase):
         readme_text = DownloaderApp.readme_text()
         self.assertIn("## Features", readme_text)
         self.assertIn("MIT License", readme_text)
-        self.assertIn(
-            "src/screenshots/DeepbridDownloader.png",
-            DownloaderApp.readme_image_paths(),
-        )
+        image_paths = DownloaderApp.readme_image_paths()
+        self.assertIn("src/screenshots/dashboard-main-window.png", image_paths)
+        repository_root = Path(__file__).resolve().parent.parent
+        for image_path in image_paths:
+            if image_path.startswith("src/"):
+                with self.subTest(image_path=image_path):
+                    self.assertTrue((repository_root / image_path).is_file())
 
     def test_about_parser_recognizes_linked_readme_badges(self) -> None:
         badge_line = (
