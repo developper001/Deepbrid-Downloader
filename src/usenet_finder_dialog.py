@@ -79,8 +79,10 @@ class UsenetFinderDialog:
         self._browser_check_running = False
         self._restoring_result_token: str | None = None
         self._files: dict[str, FinderFile] = {}
+        self._file_order: list[str] = []
         self._file_sort_column = "name"
         self._file_sort_reverse = False
+        self._hide_par2_files = False
         self._suppress_result_selection_token: str | None = None
         self.search_column_order, self.search_visible_columns = self._load_column_layout(
             "usenet_search_column_order",
@@ -340,6 +342,12 @@ class UsenetFinderDialog:
             state="disabled",
         )
         self.add_accessible_button.pack(side="left", padx=(8, 0))
+        self.par2_filter_button = ttk.Button(
+            file_actions,
+            text="Hide PAR2",
+            command=self._toggle_par2_filter,
+        )
+        self.par2_filter_button.pack(side="left", padx=(8, 0))
         ttk.Button(
             file_actions,
             text="File columns...",
@@ -1025,6 +1033,7 @@ class UsenetFinderDialog:
     def _show_package(self, package: FinderPackage) -> None:
         self.files.delete(*self.files.get_children())
         self._files.clear()
+        self._file_order.clear()
         for file in package.files:
             item_id = self.files.insert(
                 "",
@@ -1038,6 +1047,7 @@ class UsenetFinderDialog:
                 tags=("inaccessible",) if not file.is_accessible else (),
             )
             self._files[item_id] = file
+            self._file_order.append(item_id)
         self._sort_files(self._file_sort_column, toggle=False)
         package_label = f" ({package.name})" if package.name else ""
         accessible_count = sum(file.is_accessible for file in package.files)
@@ -1055,8 +1065,11 @@ class UsenetFinderDialog:
                 self._file_sort_column = column
                 self._file_sort_reverse = False
 
-        item_ids = list(self.files.get_children())
-        files = [(item_id, self._files[item_id]) for item_id in item_ids if item_id in self._files]
+        files = [
+            (item_id, self._files[item_id])
+            for item_id in self._file_order
+            if item_id in self._files
+        ]
         if column == "size":
             sized_files = [
                 (item_id, file, self._file_size_bytes(file.size))
@@ -1068,7 +1081,7 @@ class UsenetFinderDialog:
                 key=lambda entry: entry[2],
                 reverse=self._file_sort_reverse,
             )
-            item_ids = [entry[0] for entry in (*known_sizes, *unknown_sizes)]
+            self._file_order = [entry[0] for entry in (*known_sizes, *unknown_sizes)]
         else:
             if column == "availability":
                 key = lambda file: self._availability(file).casefold()
@@ -1077,8 +1090,33 @@ class UsenetFinderDialog:
             else:
                 key = lambda file: file.name.casefold()
             files.sort(key=lambda entry: key(entry[1]), reverse=self._file_sort_reverse)
-            item_ids = [item_id for item_id, _file in files]
-        self.files.set_children("", *item_ids)
+            self._file_order = [item_id for item_id, _file in files]
+        self._render_file_rows()
+
+    def _render_file_rows(self) -> None:
+        visible_ids = [
+            item_id
+            for item_id in self._file_order
+            if item_id in self._files
+            and not (
+                self._hide_par2_files
+                and self._is_par2_file(self._files[item_id])
+            )
+        ]
+        self.files.set_children("", *visible_ids)
+
+    @staticmethod
+    def _is_par2_file(file: FinderFile) -> bool:
+        return file.name.rstrip().casefold().endswith(".par2")
+
+    def _toggle_par2_filter(self) -> None:
+        self._hide_par2_files = not self._hide_par2_files
+        self.files.selection_remove(*self.files.selection())
+        self._render_file_rows()
+        self.par2_filter_button.configure(
+            text="Show PAR2" if self._hide_par2_files else "Hide PAR2"
+        )
+        self._update_file_actions()
 
     @staticmethod
     def _file_size_bytes(size: str) -> int | None:

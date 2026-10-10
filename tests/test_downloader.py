@@ -2286,8 +2286,10 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog.files.get_children.return_value = ()
         dialog.files.insert.return_value = "episode"
         dialog._files = {}
+        dialog._file_order = []
         dialog._file_sort_column = "name"
         dialog._file_sort_reverse = False
+        dialog._hide_par2_files = False
         dialog.status = Mock()
         dialog._update_file_actions = Mock()
 
@@ -2307,8 +2309,10 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog.files = Mock()
         dialog.files.get_children.return_value = ("first", "second", "third")
         dialog._files = {"first": first, "second": second, "third": third}
+        dialog._file_order = ["first", "second", "third"]
         dialog._file_sort_column = "name"
         dialog._file_sort_reverse = False
+        dialog._hide_par2_files = False
 
         dialog._sort_files("name")
         dialog.files.set_children.assert_called_with("", "third", "first", "second")
@@ -2328,9 +2332,46 @@ class UsenetFinderDialogTests(unittest.TestCase):
             {},
         )
         dialog._files["locked"] = inaccessible
-        dialog.files.get_children.return_value = ("locked", "first")
+        dialog._file_order = ["locked", "first"]
         dialog._sort_files("availability")
         dialog.files.set_children.assert_called_with("", "first", "locked")
+
+    def test_par2_filter_hides_rows_without_removing_files_and_can_be_reversed(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        regular = FinderFile("episode.mkv", "https://example.test/video", "1 GB", True, None, {})
+        parity = FinderFile(
+            "episode.vol00+01.PAR2",
+            "https://example.test/parity",
+            "20 MB",
+            False,
+            None,
+            {},
+        )
+        dialog.files = Mock()
+        dialog.files.get_children.return_value = ()
+        dialog.files.insert.side_effect = ("video-row", "par2-row")
+        dialog.files.selection.return_value = ("par2-row",)
+        dialog._files = {}
+        dialog._file_order = []
+        dialog._file_sort_column = "name"
+        dialog._file_sort_reverse = False
+        dialog._hide_par2_files = False
+        dialog.par2_filter_button = Mock()
+        dialog._update_file_actions = Mock()
+        dialog.status = Mock()
+
+        dialog._show_package(FinderPackage("Example", (regular, parity), {}))
+        dialog._toggle_par2_filter()
+
+        dialog.files.set_children.assert_called_with("", "video-row")
+        self.assertEqual(set(dialog._files), {"video-row", "par2-row"})
+        dialog.files.selection_remove.assert_called_once_with("par2-row")
+        dialog.par2_filter_button.configure.assert_called_with(text="Show PAR2")
+        self.assertEqual(dialog._update_file_actions.call_count, 2)
+
+        dialog._toggle_par2_filter()
+        dialog.files.set_children.assert_called_with("", "video-row", "par2-row")
+        dialog.par2_filter_button.configure.assert_called_with(text="Hide PAR2")
 
     def test_antialiased_globe_assets_are_square_pngs_for_both_themes(self) -> None:
         asset_directory = Path(__file__).resolve().parent.parent / "src"
