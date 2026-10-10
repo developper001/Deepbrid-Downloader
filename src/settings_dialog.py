@@ -43,6 +43,7 @@ class SettingsController(Protocol):
     def _clear_usenet_finder_cache(self) -> None: ...
     def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_columns_dialog(self) -> None: ...
+    def _refresh_hosts(self, show_popup: bool = False) -> None: ...
     def _set_append_output_log(self, enabled: bool, path: str) -> None: ...
     def _test_usenet_browser_connection(
         self,
@@ -202,6 +203,19 @@ class SettingsDialog:
 
         add_setting("API key", "credentials token secret", build_api_key)
         add_setting("Download folder", "location directory output path", build_download_folder)
+
+        def build_host_status(controls: ttk.Frame) -> None:
+            ttk.Button(
+                controls,
+                text="Host status",
+                command=lambda: app._refresh_hosts(show_popup=True),
+            ).pack(anchor="w")
+
+        add_setting(
+            "Host status",
+            "supported hosts availability host status daily quota refresh",
+            build_host_status,
+        )
 
         def build_appearance(controls: ttk.Frame) -> None:
             ttk.Checkbutton(
@@ -519,8 +533,11 @@ class SettingsDialog:
         filter_var.trace_add("write", filter_settings)
         filter_var.set(initial_filter)
         filter_settings()
-        if initial_filter:
+        def focus_filter() -> None:
             filter_entry.focus_set()
+            filter_entry.selection_range(0, "end")
+
+        self.dialog.after_idle(focus_filter)
 
         ttk.Button(frame, text="Close", command=self.dialog.destroy).grid(
             row=3,

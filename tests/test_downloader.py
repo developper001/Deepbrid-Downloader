@@ -1148,9 +1148,6 @@ class ValidationAndPresentationTests(unittest.TestCase):
     def test_main_add_links_warns_when_duplicates_are_skipped(self) -> None:
         app = object.__new__(DownloaderApp)
         app.hosts = {"example.com": "up"}
-        app.link_placeholder_active = False
-        app.links_input = Mock()
-        app.links_input.get.return_value = "https://example.com/file"
         app.store = Mock()
         app.store.add.return_value = False
         app.root = object()
@@ -1160,7 +1157,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
         app._save_visible_queue_order = Mock()
 
         with patch("src.app.messagebox.showwarning") as showwarning:
-            app._add_link()
+            app._add_link("https://example.com/file")
 
         showwarning.assert_called_once()
         self.assertIn("1 duplicate link", showwarning.call_args.args[1])

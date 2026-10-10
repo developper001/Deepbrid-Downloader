@@ -112,7 +112,6 @@ COLUMN_ORDER = (
     "verification",
 )
 DEFAULT_COLUMNS = ("filename", "host", "size", "progress", "time_remaining", "eta", "verification")
-LINK_PLACEHOLDER = "Paste supported file-host links or HTML containing links here..."
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
 DEEPBRID_DASHBOARD_URL = "https://www.deepbrid.com/dashboard"
 
@@ -406,6 +405,10 @@ class DownloaderApp:
         self.host_limits: dict[str, str] = {}
         self.hosts_popup: tk.Toplevel | None = None
         self.usenet_finder_dialog: UsenetFinderDialog | None = None
+        self.file_host_links_dialog: tk.Toplevel | None = None
+        self.file_host_links_input: tk.Text | None = None
+        self.file_host_status_button: ttk.Button | None = None
+        self.file_host_confirm_button: ttk.Button | None = None
         self._hosts_popup_update = None
         self.console_visible = False
         self.dark_theme = config.dark_theme
@@ -455,7 +458,7 @@ class DownloaderApp:
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=0)
         main.columnconfigure(1, weight=1)
-        main.rowconfigure(3, weight=1)
+        main.rowconfigure(2, weight=1)
 
         self.brand_logo_light = tk.PhotoImage(file=str(WORDMARK_LIGHT_PATH))
         self.brand_logo_dark = tk.PhotoImage(file=str(WORDMARK_PATH))
@@ -477,29 +480,19 @@ class DownloaderApp:
         self.add_torrent_button.pack(side="right", padx=(0, 8))
         self.usenet_finder_button = ttk.Button(
             header_actions,
-            text="Usenet Finder",
+            text="Add from Usenet",
             command=self._show_usenet_finder,
         )
         self.usenet_finder_button.pack(side="right", padx=(0, 8))
-
-        add_row = ttk.Frame(main)
-        add_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        add_row.columnconfigure(0, weight=1)
-        self.links_input = tk.Text(add_row, height=3, wrap="word", undo=True)
-        self.links_input.grid(row=0, column=0, sticky="ew")
-        self.link_placeholder_active = True
-        self.links_input.insert("1.0", LINK_PLACEHOLDER)
-        self.links_input.bind("<FocusIn>", self._clear_link_placeholder)
-        self.links_input.bind("<FocusOut>", self._restore_link_placeholder)
-        links_scrollbar = ttk.Scrollbar(add_row, orient="vertical", command=self.links_input.yview)
-        links_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.links_input.configure(yscrollcommand=links_scrollbar.set)
-        self.add_links_button = ttk.Button(add_row, text="Add links", command=self._add_link)
-        self.add_links_button.grid(row=0, column=2, padx=(8, 0), sticky="ns")
-        self.add_links_button.configure(state="normal" if self.hosts else "disabled")
+        self.add_links_button = ttk.Button(
+            header_actions,
+            text="Add file-host links",
+            command=self._show_add_file_host_links_dialog,
+        )
+        self.add_links_button.pack(side="right", padx=(0, 8))
 
         controls = ttk.Frame(main)
-        controls.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         self.start_button = ttk.Button(controls, text="Start", command=self._start)
         self.start_button.pack(side="left")
         self.stop_button = ttk.Button(
@@ -532,7 +525,7 @@ class DownloaderApp:
         ttk.Label(controls, textvariable=self.status_text).pack(side="right")
 
         self.panes = ttk.Panedwindow(main, orient="vertical")
-        self.panes.grid(row=3, column=0, columnspan=2, sticky="nsew")
+        self.panes.grid(row=2, column=0, columnspan=2, sticky="nsew")
         table_frame = ttk.Frame(self.panes)
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
@@ -690,32 +683,172 @@ class DownloaderApp:
         self._log("API key encrypted in the SQLite database." if key else "Saved API key removed from the database.")
         return True
 
-    def _add_link(self) -> None:
+    def _show_add_file_host_links_dialog(self) -> None:
+        if self.file_host_links_dialog is not None:
+            try:
+                if self.file_host_links_dialog.winfo_exists():
+                    self.file_host_links_dialog.lift()
+                    if self.file_host_links_input is not None:
+                        self.file_host_links_input.focus_set()
+                    return
+            except tk.TclError:
+                pass
+
+        dialog = tk.Toplevel(self.root)
+        self.file_host_links_dialog = dialog
+        dialog.title("Add file-host links")
+        dialog.geometry("800x500")
+        dialog.minsize(600, 350)
+        dialog.resizable(True, True)
+        dialog.transient(self.root)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.bind("<Destroy>", lambda event: self._file_host_dialog_destroyed(event, dialog), add="+")
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            frame,
+            text="Paste supported file-host links or HTML containing links here:",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        links_input = tk.Text(frame, wrap="word", undo=True)
+        self.file_host_links_input = links_input
+        colors = self.theme_colors
+        links_input.configure(
+            background=colors["field"],
+            foreground=colors["foreground"],
+            insertbackground=colors["foreground"],
+            selectbackground=colors["selection"],
+            selectforeground=colors["foreground"],
+        )
+        links_input.grid(row=1, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=links_input.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        links_input.configure(yscrollcommand=scrollbar.set)
+
+        actions = ttk.Frame(frame)
+        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.file_host_status_button = ttk.Button(
+            actions,
+            text="Host status",
+            command=self._show_file_host_status,
+        )
+        self.file_host_status_button.pack(side="left")
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
+        self.file_host_confirm_button = ttk.Button(
+            actions,
+            text="Add to queue",
+            command=lambda: self._add_link(
+                links_input.get("1.0", "end").strip(),
+                parent=dialog,
+            ),
+            state="normal" if self.hosts else "disabled",
+        )
+        self.file_host_confirm_button.pack(side="right", padx=(0, 8))
+        self._update_file_host_dialog_controls()
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.grab_set()
+        links_input.focus_set()
+
+    def _show_file_host_status(self) -> None:
+        dialog = self.file_host_links_dialog
+        if dialog is not None:
+            try:
+                dialog.grab_release()
+            except tk.TclError:
+                pass
+        self._refresh_hosts(show_popup=True)
+        popup = self.hosts_popup
+        if popup is not None and dialog is not None:
+            try:
+                popup.transient(dialog)
+                popup.bind(
+                    "<Destroy>",
+                    lambda event: self._restore_file_host_dialog_grab(
+                        event,
+                        popup,
+                        dialog,
+                    ),
+                    add="+",
+                )
+            except tk.TclError:
+                pass
+
+    def _restore_file_host_dialog_grab(
+        self,
+        event: tk.Event,
+        popup: tk.Toplevel,
+        dialog: tk.Toplevel,
+    ) -> None:
+        if event.widget != popup or self.file_host_links_dialog is not dialog:
+            return
+        try:
+            if dialog.winfo_exists():
+                dialog.grab_set()
+        except tk.TclError:
+            return
+
+    def _file_host_dialog_destroyed(self, event: tk.Event, dialog: tk.Toplevel) -> None:
+        if event.widget != dialog or self.file_host_links_dialog is not dialog:
+            return
+        self.file_host_links_dialog = None
+        self.file_host_links_input = None
+        self.file_host_status_button = None
+        self.file_host_confirm_button = None
+
+    def _update_file_host_dialog_controls(self) -> None:
+        confirm_button = getattr(self, "file_host_confirm_button", None)
+        status_button = getattr(self, "file_host_status_button", None)
+        if confirm_button is not None:
+            confirm_button.configure(state="normal" if self.hosts else "disabled")
+        if status_button is not None:
+            status_button.configure(
+                state="disabled"
+                if self.refresh_hosts_button.instate(["disabled"])
+                else "normal"
+            )
+
+    def _add_link(self, text: str | None = None, parent: tk.Misc | None = None) -> bool:
         if not self.hosts:
-            messagebox.showerror("Host list unavailable", "Refresh the supported-host list before adding links.")
-            return
-        text = "" if self.link_placeholder_active else self.links_input.get("1.0", "end").strip()
+            messagebox.showerror(
+                "Host list unavailable",
+                "Refresh the supported-host list before adding links.",
+                parent=parent or self.root,
+            )
+            return False
+        if text is None:
+            text = ""
         if not text:
-            messagebox.showerror("Links required", "Paste links or HTML containing links.")
-            return
+            messagebox.showerror(
+                "Links required",
+                "Paste links or HTML containing links.",
+                parent=parent or self.root,
+            )
+            return False
         links = extract_supported_links(text, self.hosts)
         if not links:
-            messagebox.showinfo("No supported links", "No links from supported Deepbrid hosts were found.")
-            return
+            messagebox.showinfo(
+                "No supported links",
+                "No links from supported Deepbrid hosts were found.",
+                parent=parent or self.root,
+            )
+            return False
         added_count = sum(self.store.add(link, status, message) for link, status, message in links)
         duplicate_count = len(links) - added_count
-        self.links_input.delete("1.0", "end")
-        self.link_placeholder_active = False
         self.status_text.set(f"Added {added_count}; skipped {duplicate_count} duplicate(s)")
         self._log(f"Extracted {len(links)} supported link(s); added {added_count}, skipped {duplicate_count} duplicate(s).")
         if duplicate_count:
             messagebox.showwarning(
                 "Duplicate links skipped",
                 f"{duplicate_count} duplicate link(s) were already in the download queue and were skipped.",
-                parent=self.root,
+                parent=parent or self.root,
             )
         self._refresh_rows()
         self._save_visible_queue_order()
+        if parent is not None:
+            parent.destroy()
+        return True
 
     def _show_add_torrent_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)
@@ -875,33 +1008,13 @@ class DownloaderApp:
         )
         return added_count, duplicate_count, invalid_count
 
-    def _clear_link_placeholder(self, _event: tk.Event | None = None) -> None:
-        if self.link_placeholder_active:
-            self.links_input.delete("1.0", "end")
-            self.link_placeholder_active = False
-            self._apply_link_input_color()
-
-    def _restore_link_placeholder(self, _event: tk.Event | None = None) -> None:
-        if not self.links_input.get("1.0", "end").strip():
-            self.links_input.delete("1.0", "end")
-            self.links_input.insert("1.0", LINK_PLACEHOLDER)
-            self.link_placeholder_active = True
-            self._apply_link_input_color()
-
-    def _apply_link_input_color(self) -> None:
-        if not hasattr(self, "links_input"):
-            return
-        foreground = "#8793a5" if self.link_placeholder_active else (
-            "#e8eee9" if self.dark_theme else "#202b25"
-        )
-        self.links_input.configure(foreground=foreground)
-
     def _refresh_hosts(self, show_popup: bool = False) -> None:
         if self.refresh_hosts_button.instate(["disabled"]):
             return
         if show_popup:
             self._show_hosts_popup(self.hosts, self.host_limits, None)
         self.refresh_hosts_button.configure(state="disabled")
+        self._update_file_host_dialog_controls()
         self.status_text.set("Checking host availability...")
         api_key = self.api_key.get().strip()
         self.root.after_idle(
@@ -2467,14 +2580,17 @@ class DownloaderApp:
             "TScrollbar",
             background=[("active", colors["scrollbar_active"]), ("pressed", colors["scrollbar_active"])],
         )
-        self.links_input.configure(
-            background=colors["field"],
-            foreground=colors["foreground"],
-            insertbackground=colors["foreground"],
-            selectbackground=colors["selection"],
-            selectforeground=colors["foreground"],
-        )
-        self._apply_link_input_color()
+        if self.file_host_links_input is not None:
+            try:
+                self.file_host_links_input.configure(
+                    background=colors["field"],
+                    foreground=colors["foreground"],
+                    insertbackground=colors["foreground"],
+                    selectbackground=colors["selection"],
+                    selectforeground=colors["foreground"],
+                )
+            except tk.TclError:
+                pass
         self.console.configure(
             background=colors["field"],
             foreground=colors["foreground"],
@@ -2858,7 +2974,7 @@ class DownloaderApp:
                 self.secure_store.set_setting("hosts", json.dumps(self.hosts))
                 self._apply_host_statuses(self.hosts)
                 self.refresh_hosts_button.configure(state="normal")
-                self.add_links_button.configure(state="normal")
+                self._update_file_host_dialog_controls()
                 self.status_text.set(f"Loaded {len(self.hosts)} supported hosts")
                 self._log(f"Loaded availability for {len(self.hosts)} supported hosts.")
                 self._refresh_rows()
@@ -2878,7 +2994,7 @@ class DownloaderApp:
                 self.refresh_hosts_button.configure(state="normal")
                 self.status_text.set(f"Host refresh failed: {event.message[:90]}")
                 self._log(event.message)
-                self.add_links_button.configure(state="normal" if self.hosts else "disabled")
+                self._update_file_host_dialog_controls()
                 self._refresh_rows()
                 if event.status_code == 401:
                     self._open_api_key_settings_for_problem(

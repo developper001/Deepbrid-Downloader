@@ -56,7 +56,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 
 ## How to use
 
-- Paste one or more supported links or HTML containing links into the input box.
+- Select **Add file-host links** to open the resizable link-entry window, paste one or more supported links or HTML containing links, then choose **Add to queue**. Use **Host status** in that window to view and refresh supported hosts.
 - The app filters for hosts supported by Deepbrid and ignores unsupported ones. It accepts supported links even when a host is currently unavailable, including comma-separated host aliases.
 - Queue priority follows the displayed row order and updates when links are added, removed, or sorted.
 - Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
@@ -64,7 +64,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
 - Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults. The file extension is available but hidden by default. Resize table columns as needed; the horizontal scrollbar appears when visible columns no longer fit.
 - Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
-- The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
+- The Host Status window is available from Settings and the file-host link-entry window. It opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
 - The app keeps active partial files and automatically resumes queued work after startup. Closing the window requests a safe stop and waits for the active network read to return before exit, preserving the partial file for resume.
 - If the API key is missing or rejected, the app opens the filtered API-key Settings automatically. Use the Get API key button there to retrieve a key, then use Check API key to verify it.
 - Use the About window to open the GitHub repository and check whether a newer release is available.
@@ -76,7 +76,7 @@ If premium-link generation fails transiently, the app makes up to five attempts 
 
 ## Usenet Finder
 
-The **Usenet Finder** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Finder-reported file sizes are carried into the queue as estimates until transfer details provide an actual size. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; click **Start** to begin and **Pause** to pause the queue, then click **Start** to resume.
+The **Add from Usenet** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Finder-reported file sizes are carried into the queue as estimates until transfer details provide an actual size. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; click **Start** to begin and **Pause** to pause the queue, then click **Start** to resume.
 
 ![Usenet Finder search results and resolved files](src/img/UsenetFinder.png)
 
