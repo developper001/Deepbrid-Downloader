@@ -8,8 +8,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from email.message import Message
 from pathlib import Path
 from typing import Callable
+
+from .remote_jobs import RemoteJob, RemoteJobFile
 
 
 API_BASE = "https://www.deepbrid.com/api/v1"
@@ -186,6 +190,127 @@ class DeepbridClient:
         filename = result.get("filename")
         return generated_url, filename if isinstance(filename, str) else None
 
+    def submit_torrent_file(self, torrent_file: bytes, filename: str) -> RemoteJob:
+        boundary = f"DeepbridDownloader-{uuid.uuid4().hex}"
+        safe_upload_name = filename.replace('"', "_").replace("\r", "").replace("\n", "")
+        body = b"".join(
+            (
+                f"--{boundary}\r\n".encode("ascii"),
+                (
+                    'Content-Disposition: form-data; name="torrent_file"; '
+                    f'filename="{safe_upload_name}"\r\n'
+                ).encode("utf-8"),
+                b"Content-Type: application/x-bittorrent\r\n\r\n",
+                torrent_file,
+                b"\r\n",
+                f"--{boundary}--\r\n".encode("ascii"),
+            )
+        )
+        request = urllib.request.Request(
+            f"{API_BASE}/torrents/add",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Accept": "application/json",
+                "User-Agent": APP_USER_AGENT,
+            },
+            method="POST",
+        )
+        payload = self._torrent_json(request, "torrent upload")
+        job_id = payload.get("id")
+        if isinstance(job_id, bool) or not isinstance(job_id, (int, str)) or not str(job_id):
+            raise DeepbridError("Deepbrid did not return a torrent job ID.")
+        return RemoteJob(
+            id=str(job_id),
+            name=filename,
+            status="queued",
+        )
+
+    def get_job(self, job_id: str) -> RemoteJob:
+        query = urllib.parse.urlencode({"id": job_id})
+        request = urllib.request.Request(
+            f"{API_BASE}/torrents/info?{query}",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/json",
+                "User-Agent": APP_USER_AGENT,
+            },
+        )
+        payload = self._torrent_json(request, "torrent status")
+        status = payload.get("status")
+        if not isinstance(status, str) or not status.strip():
+            raise DeepbridError("Deepbrid returned torrent information without a status.")
+        raw_links = payload.get("links", [])
+        if not isinstance(raw_links, list) or any(
+            not isinstance(link, str) or not link for link in raw_links
+        ):
+            raise DeepbridError("Deepbrid returned an invalid torrent download-link list.")
+        name = payload.get("filename") or payload.get("name")
+        progress = payload.get("progress")
+        seeders = payload.get("seeders")
+        speed = payload.get("speed")
+        return RemoteJob(
+            id=str(payload.get("id", job_id)),
+            name=name if isinstance(name, str) and name else f"Torrent {job_id}",
+            status=status.strip().lower().replace(" ", "_"),
+            progress=(
+                float(progress)
+                if isinstance(progress, (int, float)) and not isinstance(progress, bool)
+                else None
+            ),
+            speed=speed if isinstance(speed, str) else None,
+            seeders=(
+                seeders
+                if isinstance(seeders, int) and not isinstance(seeders, bool)
+                else None
+            ),
+            files=tuple(
+                RemoteJobFile(name=f"file-{index + 1}", download_url=link)
+                for index, link in enumerate(raw_links)
+            ),
+        )
+
+    def _torrent_json(
+        self,
+        request: urllib.request.Request,
+        operation: str,
+    ) -> dict[str, object]:
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                body = response.read().decode("utf-8", errors="replace")
+                status_code = response.status
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            error.close()
+            body = body.replace(self.api_key, "<REDACTED>")
+            raise DeepbridError(
+                f"Deepbrid {operation} returned HTTP {error.code}: {body[:600]}",
+                retryable=error.code not in (400, 401, 403, 404),
+                status_code=error.code,
+            ) from error
+        except (urllib.error.URLError, TimeoutError, UnicodeDecodeError) as error:
+            raise DeepbridError(f"Could not complete Deepbrid {operation}: {error}") from error
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as error:
+            raise DeepbridError(
+                f"Deepbrid {operation} returned invalid JSON (HTTP {status_code})."
+            ) from error
+        if not isinstance(payload, dict):
+            raise DeepbridError(f"Deepbrid returned an unexpected {operation} response.")
+        error_code = payload.get("error", 0)
+        if error_code not in (0, "0", None):
+            message = str(payload.get("message", f"Torrent {operation} failed."))
+            permanent = str(error_code) in {"2", "10", "15", "401"}
+            raise DeepbridError(
+                f"Deepbrid {operation} failed: {message}",
+                retryable=not permanent,
+                status_code=401 if str(error_code) == "401" else None,
+            )
+        self.log(f"Deepbrid {operation} succeeded (HTTP {status_code}).")
+        return payload
+
     @staticmethod
     def _redact_source_url(text: str, source_url: str) -> str:
         for variant in {
@@ -206,11 +331,12 @@ class DeepbridClient:
         on_progress: Callable[[int, int | None], None],
         overwrite_existing: bool = False,
         on_size_verified: Callable[[bool], None] | None = None,
+        on_filename: Callable[[str], None] | None = None,
     ) -> bool:
         output_dir.mkdir(parents=True, exist_ok=True)
         destination = output_dir / filename
         partial = output_dir / f".{filename}.part"
-        if destination.is_file() and not overwrite_existing:
+        if destination.is_file() and not overwrite_existing and on_filename is None:
             existing_size = destination.stat().st_size
             on_progress(existing_size, existing_size)
             return True
@@ -248,6 +374,28 @@ class DeepbridClient:
             )
 
         with response:
+            if on_filename is not None:
+                content_disposition = response.headers.get("Content-Disposition")
+                if content_disposition:
+                    disposition = Message()
+                    disposition["Content-Disposition"] = content_disposition
+                    response_filename = disposition.get_filename()
+                    if response_filename:
+                        filename = safe_filename(response_filename, download_url, 0)
+                on_filename(filename)
+                previous_partial = partial
+                destination = output_dir / filename
+                partial = output_dir / f".{filename}.part"
+                if previous_partial != partial and previous_partial.is_file():
+                    if partial.exists():
+                        previous_partial.unlink()
+                    else:
+                        previous_partial.replace(partial)
+                    offset = partial.stat().st_size if partial.exists() else 0
+                if destination.is_file() and not overwrite_existing:
+                    existing_size = destination.stat().st_size
+                    on_progress(existing_size, existing_size)
+                    return True
             status = getattr(response, "status", response.getcode())
             append = offset > 0 and status == 206
             if offset and status != 206:

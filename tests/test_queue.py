@@ -16,10 +16,55 @@ from src.deepbrid_client import DeepbridError
 from src.queue_runner import QueueRunner
 from src.queue_store import QueueStore
 from src.queue_types import QueueSource, QueueStatus
+from src.remote_jobs import RemoteJob, RemoteJobFile
 from src.usenet_finder import file_size_bytes
 
 
 class QueueStoreTests(unittest.TestCase):
+    def test_torrent_upload_bytes_are_encrypted_and_duplicate_uploads_are_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            torrent_bytes = b"d4:infod4:name4:testee"
+
+            self.assertTrue(store.add_torrent_file("test.torrent", torrent_bytes))
+            self.assertFalse(store.add_torrent_file("copy.torrent", torrent_bytes))
+
+            item = store.list_items()[0]
+            self.assertEqual(item.source, QueueSource.TORRENT_CLOUD)
+            self.assertEqual(item.filename, "test.torrent")
+            self.assertEqual(store.torrent_file_data(item.id), torrent_bytes)
+            with closing(sqlite3.connect(store.database_path)) as connection:
+                stored_bytes = connection.execute(
+                    "SELECT torrent_data FROM downloads"
+                ).fetchone()[0]
+            self.assertNotIn(torrent_bytes, bytes(stored_bytes))
+
+    def test_completed_torrent_job_expands_to_file_queue_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            store.add_torrent_file("collection.torrent", b"torrent-data")
+            item = store.list_items()[0]
+
+            store.expand_torrent_job(
+                item.id,
+                "remote-42",
+                [
+                    ("https://deepbrid.example/file/1", "collection-file-1", 12),
+                    ("https://deepbrid.example/file/2", "collection-file-2", 34),
+                ],
+            )
+
+            files = store.list_items()
+            self.assertEqual(len(files), 2)
+            self.assertEqual([file.source for file in files], [QueueSource.TORRENT_CLOUD] * 2)
+            self.assertEqual([file.remote_job_id for file in files], ["remote-42"] * 2)
+            self.assertEqual([file.remote_file_index for file in files], [0, 1])
+            self.assertEqual([file.deepbrid_link for file in files], [
+                "https://deepbrid.example/file/1",
+                "https://deepbrid.example/file/2",
+            ])
+            self.assertEqual([file.total for file in files], [12, 34])
+
     def test_existing_queue_database_is_migrated_without_losing_items(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             database_path = Path(temporary_directory) / "queue.sqlite3"
@@ -305,6 +350,81 @@ class QueueRunnerTests(unittest.TestCase):
             self.assertIsInstance(events.get_nowait(), ApiKeyErrorEvent)
             self.assertIsInstance(events.get_nowait(), WorkerDoneEvent)
 
+    def test_runner_uploads_torrent_once_then_downloads_every_returned_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add_torrent_file("bundle.torrent", b"torrent-data")
+            events: queue.Queue = queue.Queue()
+            submitted: list[bytes] = []
+            requested_jobs: list[str] = []
+            downloaded: list[str] = []
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def submit_torrent_file(self, torrent_data, _filename):
+                    submitted.append(torrent_data)
+                    return RemoteJob("job-17", "bundle", "queued")
+
+                def get_job(self, job_id):
+                    requested_jobs.append(job_id)
+                    return RemoteJob(
+                        job_id,
+                        "bundle",
+                        "downloaded",
+                        files=(
+                            RemoteJobFile(
+                                "file-1",
+                                "https://deepbrid.example/file/1",
+                                3,
+                            ),
+                            RemoteJobFile(
+                                "file-2",
+                                "https://deepbrid.example/file/2",
+                                4,
+                            ),
+                        ),
+                    )
+
+                def download(
+                    self,
+                    _url,
+                    filename,
+                    directory,
+                    _should_stop,
+                    _on_progress,
+                    **kwargs,
+                ):
+                    downloaded.append(filename)
+                    (directory / filename).write_bytes(b"data")
+                    kwargs["on_size_verified"](True)
+                    return True
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    events,
+                    threading.Event(),
+                    {},
+                    lambda _message: None,
+                ).run()
+
+            items = store.list_items()
+            self.assertEqual(submitted, [b"torrent-data"])
+            self.assertEqual(requested_jobs, ["job-17", "job-17", "job-17"])
+            self.assertEqual(len(downloaded), 2)
+            self.assertTrue(all(item.status == QueueStatus.COMPLETED for item in items))
+            self.assertTrue(all(item.remote_job_id == "job-17" for item in items))
+            self.assertTrue(all(item.downloaded == 4 for item in items))
+            self.assertFalse(any(store.torrent_file_data(item.id) for item in items))
+
     def test_runner_completes_queue_item_with_preserved_finder_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
@@ -453,3 +573,63 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
             self.assertEqual(item.host_status, "up")
             app._refresh_rows.assert_called_once()
             app._save_visible_queue_order.assert_called_once()
+
+
+class TorrentQueueUiTests(unittest.TestCase):
+    def test_add_torrent_paths_counts_duplicates_and_rejects_oversized_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            first = root / "first.torrent"
+            duplicate = root / "duplicate.torrent"
+            oversized = root / "oversized.torrent"
+            first.write_bytes(b"metainfo")
+            duplicate.write_bytes(b"metainfo")
+            oversized.write_bytes(b"x" * (5 * 1024 * 1024 + 1))
+            app = DownloaderApp.__new__(DownloaderApp)
+            app.root = object()
+            app.store = QueueStore(root / "queue.sqlite3")
+            app.status_text = SimpleNamespace(set=Mock())
+            app._refresh_rows = Mock()
+            app._save_visible_queue_order = Mock()
+            app._log = Mock()
+
+            with patch("src.app.messagebox.showwarning") as showwarning:
+                app._add_torrent_paths([first, duplicate, oversized])
+
+            self.assertEqual(len(app.store.list_items()), 1)
+            self.assertEqual(
+                app.status_text.set.call_args.args[0],
+                "Added 1; skipped 1 duplicate(s) and 1 invalid file(s)",
+            )
+            showwarning.assert_called_once()
+            app._refresh_rows.assert_called_once()
+            app._save_visible_queue_order.assert_called_once()
+
+    def test_add_torrent_folder_selects_nested_torrent_files_recursively(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            folder = root / "torrents"
+            nested = folder / "nested"
+            nested.mkdir(parents=True)
+            (folder / "one.torrent").write_bytes(b"one")
+            (nested / "two.TORRENT").write_bytes(b"two")
+            (nested / "ignore.txt").write_text("not a torrent", encoding="utf-8")
+            app = DownloaderApp.__new__(DownloaderApp)
+            app.root = object()
+            app.store = QueueStore(root / "queue.sqlite3")
+            app.status_text = SimpleNamespace(set=Mock())
+            app._refresh_rows = Mock()
+            app._save_visible_queue_order = Mock()
+            app._log = Mock()
+
+            with patch("src.app.filedialog.askdirectory", return_value=str(folder)):
+                app._add_torrent_folder()
+
+            self.assertEqual(
+                [item.filename for item in app.store.list_items()],
+                ["one.torrent", "two.TORRENT"],
+            )
+            self.assertEqual(
+                [item.source for item in app.store.list_items()],
+                [QueueSource.TORRENT_CLOUD, QueueSource.TORRENT_CLOUD],
+            )

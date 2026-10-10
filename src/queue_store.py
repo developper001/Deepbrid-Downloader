@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import re
+import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,8 @@ from .queue_types import QueueSource, QueueStatus
 
 URL_AAD = b"download-original-url-v1"
 DEEPBRID_LINK_AAD = b"download-generated-url-v1"
+TORRENT_DATA_AAD = b"torrent-file-data-v1"
+MAX_TORRENT_FILE_SIZE = 5 * 1024 * 1024
 
 @dataclass(frozen=True)
 class QueueItem:
@@ -31,6 +34,8 @@ class QueueItem:
     force: bool
     priority: int
     source: QueueSource
+    remote_job_id: str | None
+    remote_file_index: int | None
 
 
 class QueueStore:
@@ -45,6 +50,9 @@ class QueueStore:
                     url TEXT NOT NULL UNIQUE,
                     url_ciphertext BLOB,
                     source TEXT NOT NULL DEFAULT '{QueueSource.PREMIUM_LINK.value}',
+                    remote_job_id TEXT,
+                    remote_file_index INTEGER,
+                    torrent_data BLOB,
                     status TEXT NOT NULL DEFAULT '{QueueStatus.QUEUED}',
                     size_verified INTEGER NOT NULL DEFAULT 0,
                     downloaded INTEGER NOT NULL DEFAULT 0,
@@ -66,6 +74,9 @@ class QueueStore:
             migrations = {
                 "url_ciphertext": "BLOB",
                 "source": f"TEXT NOT NULL DEFAULT '{QueueSource.PREMIUM_LINK.value}'",
+                "remote_job_id": "TEXT",
+                "remote_file_index": "INTEGER",
+                "torrent_data": "BLOB",
                 "size_verified": "INTEGER NOT NULL DEFAULT 0",
                 "deepbrid_link": "TEXT",
                 "host_status": "TEXT NOT NULL DEFAULT 'unknown'",
@@ -171,6 +182,94 @@ class QueueStore:
             )
             return cursor.rowcount > 0
 
+    def add_torrent_file(self, filename: str, contents: bytes) -> bool:
+        if not filename.lower().endswith(".torrent"):
+            raise ValueError("Torrent files must have a .torrent extension.")
+        if not contents or len(contents) > MAX_TORRENT_FILE_SIZE:
+            raise ValueError("Torrent files must be between 1 byte and 5 MiB.")
+        identity = f"torrent-upload:{hashlib.sha256(contents).hexdigest()}"
+        url_hash = self.secure_store.hash_text(identity, URL_AAD)
+        encrypted_url = self.secure_store.encrypt_text(identity, URL_AAD)
+        encrypted_contents = self.secure_store.encrypt_bytes(contents, TORRENT_DATA_AAD)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO downloads "
+                "(url, url_ciphertext, source, host_status, host_message, filename, torrent_data) "
+                "VALUES (?, ?, ?, 'up', 'Torrent cloud', ?, ?)",
+                (
+                    url_hash,
+                    encrypted_url,
+                    QueueSource.TORRENT_CLOUD.value,
+                    filename,
+                    encrypted_contents,
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def torrent_file_data(self, item_id: int) -> bytes | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT torrent_data FROM downloads WHERE id = ?", (item_id,)
+            ).fetchone()
+        if row is None or row["torrent_data"] is None:
+            return None
+        return self.secure_store.decrypt_bytes(bytes(row["torrent_data"]), TORRENT_DATA_AAD)
+
+    def expand_torrent_job(
+        self,
+        item_id: int,
+        job_id: str,
+        files: list[tuple[str, str, int | None]],
+    ) -> None:
+        if not files:
+            raise ValueError("A completed torrent job must contain downloadable files.")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT url, source FROM downloads WHERE id = ?", (item_id,)
+            ).fetchone()
+            if row is None or row["source"] != QueueSource.TORRENT_CLOUD.value:
+                raise ValueError("Torrent queue item was not found.")
+            for index, (link, filename, size) in enumerate(files):
+                identity = f"torrent-job:{job_id}:file:{index}"
+                url_hash = self.secure_store.hash_text(identity, URL_AAD)
+                encrypted_url = self.secure_store.encrypt_text(identity, URL_AAD)
+                encrypted_link = self.secure_store.encrypt_text(link, DEEPBRID_LINK_AAD)
+                if index == 0:
+                    connection.execute(
+                        "UPDATE downloads SET url = ?, url_ciphertext = ?, filename = ?, "
+                        "total = ?, downloaded = 0, deepbrid_link = ?, remote_job_id = ?, "
+                        "remote_file_index = 0, torrent_data = NULL, status = ?, error = NULL "
+                        "WHERE id = ?",
+                        (
+                            url_hash,
+                            encrypted_url,
+                            filename,
+                            size,
+                            encrypted_link,
+                            job_id,
+                            QueueStatus.QUEUED,
+                            item_id,
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        "INSERT INTO downloads "
+                        "(url, url_ciphertext, source, remote_job_id, remote_file_index, "
+                        "status, total, filename, deepbrid_link, host_status, host_message) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'up', 'Torrent cloud')",
+                        (
+                            url_hash,
+                            encrypted_url,
+                            QueueSource.TORRENT_CLOUD.value,
+                            job_id,
+                            index,
+                            QueueStatus.QUEUED,
+                            size,
+                            filename,
+                            encrypted_link,
+                        ),
+                    )
+
     def list_items(self) -> list[QueueItem]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -232,7 +331,7 @@ class QueueStore:
         allowed = {
             "status", "downloaded", "total", "filename", "error", "deepbrid_link",
             "host_status", "host_message", "enabled", "size_verified",
-            "force",
+            "force", "remote_job_id", "remote_file_index", "torrent_data",
         }
         if not fields or not fields.keys() <= allowed:
             raise ValueError("Unsupported queue fields")
@@ -244,6 +343,14 @@ class QueueStore:
         if isinstance(fields.get("deepbrid_link"), str):
             fields["deepbrid_link"] = self.secure_store.encrypt_text(
                 fields["deepbrid_link"], DEEPBRID_LINK_AAD
+            )
+        if fields.get("torrent_data") is not None:
+            torrent_data = fields["torrent_data"]
+            if not isinstance(torrent_data, bytes):
+                raise ValueError("Torrent data must be bytes or None.")
+            fields["torrent_data"] = self.secure_store.encrypt_bytes(
+                torrent_data,
+                TORRENT_DATA_AAD,
             )
         assignments = ", ".join(f"{field} = ?" for field in fields)
         values = [*fields.values(), item_id]
@@ -273,4 +380,6 @@ class QueueStore:
             force=bool(row["force"]),
             priority=row["priority"],
             source=QueueSource(row["source"]),
+            remote_job_id=row["remote_job_id"],
+            remote_file_index=row["remote_file_index"],
         )

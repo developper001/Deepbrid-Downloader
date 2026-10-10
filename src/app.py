@@ -491,6 +491,16 @@ class DownloaderApp:
         self.add_links_button = ttk.Button(add_row, text="Add links", command=self._add_link)
         self.add_links_button.grid(row=0, column=2, padx=(8, 0), sticky="ns")
         self.add_links_button.configure(state="normal" if self.hosts else "disabled")
+        ttk.Button(
+            add_row,
+            text="Add .torrent files",
+            command=self._add_torrent_files,
+        ).grid(row=0, column=3, padx=(8, 0), sticky="ns")
+        ttk.Button(
+            add_row,
+            text="Add torrent folder",
+            command=self._add_torrent_folder,
+        ).grid(row=0, column=4, padx=(8, 0), sticky="ns")
 
         controls = ttk.Frame(main)
         controls.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
@@ -708,6 +718,88 @@ class DownloaderApp:
             )
         self._refresh_rows()
         self._save_visible_queue_order()
+
+    def _add_torrent_files(self) -> None:
+        filenames = filedialog.askopenfilenames(
+            parent=self.root,
+            title="Select .torrent files",
+            filetypes=(("Torrent files", "*.torrent"),),
+        )
+        self._add_torrent_paths([Path(filename) for filename in filenames])
+
+    def _add_torrent_folder(self) -> None:
+        selected = filedialog.askdirectory(
+            parent=self.root,
+            title="Select a folder containing .torrent files",
+            mustexist=True,
+        )
+        if not selected:
+            return
+        try:
+            paths = sorted(
+                (
+                    path
+                    for path in Path(selected).rglob("*")
+                    if path.is_file() and path.suffix.casefold() == ".torrent"
+                ),
+                key=lambda path: (path.name.casefold(), str(path).casefold()),
+            )
+        except OSError as error:
+            message = f"Could not scan the selected torrent folder: {error}"
+            self.status_text.set("Could not scan torrent folder")
+            self._log(message)
+            messagebox.showerror("Torrent folder unavailable", message, parent=self.root)
+            return
+        self._add_torrent_paths(paths)
+
+    def _add_torrent_paths(self, paths: list[Path]) -> None:
+        if not paths:
+            messagebox.showinfo(
+                "No torrent files",
+                "Select one or more .torrent files, or choose a folder containing them.",
+                parent=self.root,
+            )
+            return
+        added_count = 0
+        duplicate_count = 0
+        invalid_count = 0
+        file_errors: list[str] = []
+        for path in paths:
+            if path.suffix.casefold() != ".torrent":
+                invalid_count += 1
+                continue
+            try:
+                with path.open("rb") as torrent_file:
+                    contents = torrent_file.read(5 * 1024 * 1024 + 1)
+                if len(contents) > 5 * 1024 * 1024:
+                    invalid_count += 1
+                    file_errors.append(f"{path.name}: exceeds the 5 MiB upload limit")
+                    continue
+                if self.store.add_torrent_file(path.name, contents):
+                    added_count += 1
+                else:
+                    duplicate_count += 1
+            except (OSError, ValueError) as error:
+                invalid_count += 1
+                file_errors.append(f"{path.name}: {error}")
+        if added_count:
+            self._refresh_rows()
+            self._save_visible_queue_order()
+        message = (
+            f"Added {added_count}; skipped {duplicate_count} duplicate(s) "
+            f"and {invalid_count} invalid file(s)"
+        )
+        self.status_text.set(message)
+        self._log(
+            f"Added {added_count} torrent file(s) to the queue; skipped "
+            f"{duplicate_count} duplicate(s) and {invalid_count} invalid file(s)."
+        )
+        if file_errors:
+            messagebox.showwarning(
+                "Some torrent files were not added",
+                "\n".join(file_errors[:10]),
+                parent=self.root,
+            )
 
     def add_usenet_links(
         self,
@@ -957,7 +1049,7 @@ class DownloaderApp:
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
         for item in self.store.list_items():
-            if item.source == QueueSource.USENET:
+            if item.source != QueueSource.PREMIUM_LINK:
                 continue
             result = supported_link_status(item.url, hosts)
             if result is None:
@@ -2494,7 +2586,13 @@ class DownloaderApp:
             values = (
                 filename,
                 extension,
-                item.url,
+                (
+                    f"Torrent job {item.remote_job_id}"
+                    if item.source == QueueSource.TORRENT_CLOUD and item.remote_job_id
+                    else "Torrent upload"
+                    if item.source == QueueSource.TORRENT_CLOUD
+                    else item.url
+                ),
                 item.host_message,
                 host_status,
                 f"{format_bytes(item.downloaded)} / {format_bytes(item.total)}",

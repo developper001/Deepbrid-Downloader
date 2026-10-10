@@ -106,20 +106,29 @@ class SecureStore:
             )
 
     def encrypt_text(self, value: str, purpose: bytes) -> bytes:
+        return self.encrypt_bytes(value.encode("utf-8"), purpose)
+
+    def decrypt_text(self, encrypted: bytes, purpose: bytes) -> str:
+        try:
+            return self.decrypt_bytes(encrypted, purpose).decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise SecureStorageError("Could not decrypt a database value.") from error
+
+    def encrypt_bytes(self, value: bytes, purpose: bytes) -> bytes:
         nonce = os.urandom(12)
         ciphertext = AESGCM(self._get_encryption_key()).encrypt(
-            nonce, value.encode("utf-8"), purpose
+            nonce, value, purpose
         )
         return nonce + ciphertext
 
-    def decrypt_text(self, encrypted: bytes, purpose: bytes) -> str:
+    def decrypt_bytes(self, encrypted: bytes, purpose: bytes) -> bytes:
         if len(encrypted) < 13:
             raise SecureStorageError("An encrypted database value is incomplete.")
         try:
             return AESGCM(self._get_encryption_key()).decrypt(
                 encrypted[:12], encrypted[12:], purpose
-            ).decode("utf-8")
-        except (InvalidTag, UnicodeDecodeError, ValueError) as error:
+            )
+        except (InvalidTag, ValueError) as error:
             raise SecureStorageError("Could not decrypt a database value.") from error
 
     def hash_text(self, value: str, purpose: bytes) -> str:

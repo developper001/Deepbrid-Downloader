@@ -170,6 +170,10 @@ The project uses the standard library unittest suite. Run it locally with:
 python -m unittest -q tests.test_downloader tests.test_queue
 ```
 
+## Torrent downloads
+
+Use **Add .torrent files** to select multiple files, or **Add torrent folder** to scan a folder and its subfolders. Torrent uploads are limited to 5 MiB each and require a Deepbrid Premium account and API key. The app submits torrents and checks their cloud-job status through the Deepbrid API; Chrome does not need to be open. When a torrent is ready, its returned files are added to the regular download queue and downloaded to the configured output folder. The app keeps the torrent job ID and requests fresh download links when needed because those links expire.
+
 GitHub Actions runs the same tests on pushes to `main` and pull requests across Ubuntu, Windows, and macOS for supported Python versions. The dependency audit runs weekly only and skips the platform test matrix.
 
 ## GitHub CI

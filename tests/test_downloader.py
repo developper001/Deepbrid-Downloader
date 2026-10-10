@@ -1670,6 +1670,33 @@ class UsenetFinderStateTests(unittest.TestCase):
 
 
 class ResumeTests(unittest.TestCase):
+    def test_download_uses_server_filename_from_content_disposition(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            response = FakeResponse(
+                200,
+                {"Content-Length": "3", "Content-Disposition": 'attachment; filename="actual.bin"'},
+                b"abc",
+            )
+            filenames: list[str] = []
+
+            with patch(
+                "src.deepbrid_client.urllib.request.urlopen",
+                return_value=response,
+            ):
+                completed = DeepbridClient("unused").download(
+                    "https://www.deepbrid.com/mytorrents?file=opaque",
+                    "bundle-file-1",
+                    output_dir,
+                    lambda: False,
+                    lambda *_: None,
+                    on_filename=filenames.append,
+                )
+
+            self.assertTrue(completed)
+            self.assertEqual(filenames, ["actual.bin"])
+            self.assertEqual((output_dir / "actual.bin").read_bytes(), b"abc")
+
     def test_successful_download_reports_whether_size_was_verified(self) -> None:
         for headers, expected_verification in (
             ({"Content-Length": "3"}, True),
@@ -2461,6 +2488,50 @@ class UsenetBrowserSessionTests(unittest.TestCase):
 
 
 class DeepbridDiagnosticsTests(unittest.TestCase):
+    def test_torrent_upload_uses_authenticated_multipart_api(self) -> None:
+        response = FakeResponse(200, {}, b'{"error":0,"id":14648}')
+        with patch(
+            "src.deepbrid_client.urllib.request.urlopen",
+            return_value=response,
+        ) as open_url:
+            job = DeepbridClient("test-key").submit_torrent_file(
+                b"torrent-metainfo",
+                "bundle.torrent",
+            )
+
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/torrents/add")
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-key")
+        self.assertIn("multipart/form-data", request.get_header("Content-type"))
+        self.assertIn(b'name="torrent_file"; filename="bundle.torrent"', request.data)
+        self.assertIn(b"torrent-metainfo", request.data)
+        self.assertEqual(job.id, "14648")
+        self.assertEqual(job.name, "bundle.torrent")
+
+    def test_torrent_status_parses_download_links_and_progress(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            (
+                b'{"error":0,"id":"14648","filename":"bundle.torrent",'
+                b'"progress":100,"seeders":2,"speed":"0.00 MB/s",'
+                b'"links":["https://deepbrid.example/mytorrents?file=secret"],'
+                b'"status":"downloaded"}'
+            ),
+        )
+        with patch(
+            "src.deepbrid_client.urllib.request.urlopen",
+            return_value=response,
+        ) as open_url:
+            job = DeepbridClient("test-key").get_job("14648")
+
+        request = open_url.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/api/v1/torrents/info?id=14648"))
+        self.assertEqual(job.status, "downloaded")
+        self.assertEqual(job.progress, 100.0)
+        self.assertEqual(job.seeders, 2)
+        self.assertEqual(job.files[0].download_url, "https://deepbrid.example/mytorrents?file=secret")
+
     def test_unsupported_filehost_response_is_not_retryable(self) -> None:
         response = FakeResponse(
             200,

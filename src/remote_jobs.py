@@ -7,7 +7,7 @@ from typing import Protocol, Sequence
 @dataclass(frozen=True)
 class RemoteJobFile:
     name: str
-    download_url: str | None = None
+    download_url: str
     size: int | None = None
 
 
@@ -16,7 +16,7 @@ class RemoteJob:
     id: str
     name: str
     status: str
-    progress: int | None = None
+    progress: float | None = None
     speed: str | None = None
     seeders: int | None = None
     files: tuple[RemoteJobFile, ...] = ()
