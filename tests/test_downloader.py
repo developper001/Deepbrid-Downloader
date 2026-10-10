@@ -591,7 +591,7 @@ class AppConfigurationTests(unittest.TestCase):
                 config.usenet_finder_cache_duration_hours,
                 DEFAULT_CACHE_DURATION_HOURS,
             )
-            self.assertFalse(config.usenet_finder_hide_auxiliary_files)
+            self.assertTrue(config.usenet_finder_hide_auxiliary_files)
             self.assertFalse(config.append_output_log_enabled)
             self.assertEqual(config.append_output_log_path, default_log_path)
             with closing(sqlite3.connect(database)) as connection:
@@ -614,7 +614,7 @@ class AppConfigurationTests(unittest.TestCase):
             store.set_setting("output_directory", str(downloads / "custom"))
             store.set_setting("visible_columns", json.dumps(["filename", "progress"]))
             store.set_setting(CACHE_DURATION_SETTING, "48")
-            store.set_setting(HIDE_AUXILIARY_FILES_SETTING, "true")
+            store.set_setting(HIDE_AUXILIARY_FILES_SETTING, "false")
             log_path = downloads / "diagnostics.log"
             store.set_setting("append_output_log_enabled", "true")
             store.set_setting("append_output_log_path", str(log_path))
@@ -633,7 +633,7 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertEqual(config.output_dir, downloads / "custom")
             self.assertEqual(config.visible_columns, ["filename", "progress"])
             self.assertEqual(config.usenet_finder_cache_duration_hours, 48)
-            self.assertTrue(config.usenet_finder_hide_auxiliary_files)
+            self.assertFalse(config.usenet_finder_hide_auxiliary_files)
             self.assertTrue(config.append_output_log_enabled)
             self.assertEqual(config.append_output_log_path, log_path)
 

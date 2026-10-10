@@ -209,8 +209,9 @@ class AppConfiguration:
             hosts=hosts,
             dark_theme=secure_store.get_setting("dark_theme") == "true",
             usenet_finder_cache_duration_hours=cache_duration_hours,
-            usenet_finder_hide_auxiliary_files=(
-                secure_store.get_setting(HIDE_AUXILIARY_FILES_SETTING) == "true"
+            usenet_finder_hide_auxiliary_files=setting_is_enabled(
+                secure_store.get_setting(HIDE_AUXILIARY_FILES_SETTING),
+                default=True,
             ),
             append_output_log_enabled=setting_is_enabled(
                 secure_store.get_setting(OUTPUT_LOG_ENABLED_SETTING),
