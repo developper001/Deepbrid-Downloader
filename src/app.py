@@ -97,6 +97,7 @@ WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
 WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
 COLUMN_ORDER = (
     "filename",
+    "extension",
     "link",
     "host",
     "status",
@@ -527,6 +528,7 @@ class DownloaderApp:
         self._selection_anchor: str | None = None
         self.column_labels = {
             "filename": "File name",
+            "extension": "Extension",
             "link": "Original link",
             "host": "Host",
             "status": "Host status",
@@ -541,6 +543,7 @@ class DownloaderApp:
         for column, label in self.column_labels.items():
             self.table.heading(column, text=label, command=lambda key=column: self._sort_by(key))
         self.table.column("filename", width=250, minwidth=140, stretch=True)
+        self.table.column("extension", width=90, minwidth=75, stretch=False)
         self.table.column("link", width=330, minwidth=150, stretch=True)
         self.table.column("host", width=135, minwidth=100, stretch=False)
         self.table.column("status", width=120, minwidth=90, stretch=False)
@@ -1718,6 +1721,9 @@ class DownloaderApp:
     def _sort_value(self, item, column: str):
         if column == "filename":
             return (item.filename or Path(item.url.split("?", 1)[0]).name).casefold()
+        if column == "extension":
+            filename = item.filename or Path(item.url.split("?", 1)[0]).name
+            return Path(filename).suffix.casefold()
         if column == "link":
             return item.url.casefold()
         if column == "host":
@@ -2417,6 +2423,7 @@ class DownloaderApp:
             if not item.enabled:
                 queue_status = "Disabled"
             filename = item.filename or Path(item.url.split("?", 1)[0]).name or item.url
+            extension = Path(filename).suffix.casefold()
             remaining = max(0, item.total - item.downloaded) if item.total is not None else None
             self.progress_indicator_values[row_id] = progress_indicator_values(
                 item.status,
@@ -2425,6 +2432,7 @@ class DownloaderApp:
             )
             values = (
                 filename,
+                extension,
                 item.url,
                 item.host_message,
                 host_status,

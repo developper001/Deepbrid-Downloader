@@ -1505,6 +1505,8 @@ class ValidationAndPresentationTests(unittest.TestCase):
     def test_byte_duration_and_sort_values_are_consistent(self) -> None:
         self.assertNotIn("remaining", DEFAULT_COLUMNS)
         self.assertNotIn("status", DEFAULT_COLUMNS)
+        self.assertIn("extension", COLUMN_ORDER)
+        self.assertNotIn("extension", DEFAULT_COLUMNS)
         self.assertIn("progress", DEFAULT_COLUMNS)
         self.assertIn("progress_percentage", COLUMN_ORDER)
         self.assertNotIn("progress_percentage", DEFAULT_COLUMNS)
@@ -2167,6 +2169,61 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
+    def test_usenet_column_layout_defaults_and_saved_layouts(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.app = SimpleNamespace(secure_store=Mock())
+        dialog.app.secure_store.get_setting.return_value = None
+
+        search_order, search_visible = dialog._load_column_layout(
+            "search-order",
+            "search-visible",
+            ("title", "category", "size", "date"),
+            ("title", "category", "size", "date"),
+        )
+        file_order, file_visible = dialog._load_column_layout(
+            "file-order",
+            "file-visible",
+            ("name", "extension", "size", "availability"),
+            ("name", "extension", "size", "availability"),
+        )
+        self.assertEqual(search_order, ["title", "category", "size", "date"])
+        self.assertEqual(search_visible, search_order)
+        self.assertEqual(file_order, ["name", "extension", "size", "availability"])
+        self.assertEqual(file_visible, file_order)
+
+        dialog.app.secure_store.get_setting.side_effect = lambda name: {
+            "saved-order": '["date", "title"]',
+            "saved-visible": '["date", "size"]',
+        }.get(name)
+        order, visible = dialog._load_column_layout(
+            "saved-order",
+            "saved-visible",
+            ("title", "category", "size", "date"),
+            ("title", "category", "size", "date"),
+        )
+        self.assertEqual(order, ["date", "title", "category", "size"])
+        self.assertEqual(visible, ["date", "size"])
+
+    def test_resolved_files_show_extension_column_value(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        file = FinderFile("episode.MKV", "https://example.test/file", "1 GB", True, None, {})
+        dialog.files = Mock()
+        dialog.files.get_children.return_value = ()
+        dialog.files.insert.return_value = "episode"
+        dialog._files = {}
+        dialog._file_sort_column = "name"
+        dialog._file_sort_reverse = False
+        dialog.status = Mock()
+        dialog._update_file_actions = Mock()
+
+        dialog._show_package(FinderPackage("Example", (file,), {}))
+
+        self.assertEqual(
+            dialog.files.insert.call_args.kwargs["values"],
+            ("episode.MKV", ".mkv", "1 GB", "Accessible"),
+        )
+        self.assertEqual(dialog._files, {"episode": file})
+
     def test_resolved_files_can_be_sorted_by_name_and_size(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         first = FinderFile("Beta.mkv", "https://example.test/b", "2 GB", True, None, {})

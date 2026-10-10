@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import queue
 import re
 import sqlite3
@@ -23,6 +24,24 @@ from .usenet_finder import (
 from .usenet_browser import UsenetBrowserSession
 from .secure_store import SecureStorageError, SecureStore
 from .usenet_finder_state import UsenetFinderState, UsenetFinderStateError
+
+
+SEARCH_COLUMNS = ("title", "category", "size", "date")
+DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMNS
+FILE_COLUMNS = ("name", "extension", "size", "availability")
+DEFAULT_FILE_COLUMNS = FILE_COLUMNS
+SEARCH_COLUMN_LABELS = {
+    "title": "Title",
+    "category": "Category",
+    "size": "Size",
+    "date": "Date",
+}
+FILE_COLUMN_LABELS = {
+    "name": "File name",
+    "extension": "Extension",
+    "size": "Size",
+    "availability": "Availability",
+}
 
 
 class FinderController(Protocol):
@@ -62,6 +81,18 @@ class UsenetFinderDialog:
         self._files: dict[str, FinderFile] = {}
         self._file_sort_column = "name"
         self._file_sort_reverse = False
+        self.search_column_order, self.search_visible_columns = self._load_column_layout(
+            "usenet_search_column_order",
+            "usenet_search_visible_columns",
+            SEARCH_COLUMNS,
+            DEFAULT_SEARCH_COLUMNS,
+        )
+        self.file_column_order, self.file_visible_columns = self._load_column_layout(
+            "usenet_file_column_order",
+            "usenet_file_visible_columns",
+            FILE_COLUMNS,
+            DEFAULT_FILE_COLUMNS,
+        )
         self.client = UsenetFinderClient(app.usenet_browser)
         self.state = UsenetFinderState(
             app.secure_store,
@@ -206,22 +237,23 @@ class UsenetFinderDialog:
 
         self.results = ttk.Treeview(
             frame,
-            columns=("title", "category", "size", "date"),
+            columns=SEARCH_COLUMNS,
             show="headings",
             selectmode="browse",
         )
-        for column, label, width in (
-            ("title", "Title", 470),
-            ("category", "Category", 100),
-            ("size", "Size", 100),
-            ("date", "Date", 150),
+        for column, width in (
+            ("title", 470),
+            ("category", 100),
+            ("size", 100),
+            ("date", 150),
         ):
             self.results.heading(
                 column,
-                text=label,
+                text=SEARCH_COLUMN_LABELS[column],
                 command=lambda selected_column=column: self._sort_results(selected_column),
             )
             self.results.column(column, width=width, anchor="w")
+        self.results.configure(displaycolumns=self.search_visible_columns)
         self.results.grid(row=4, column=0, sticky="nsew")
         results_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.results.yview)
         results_scrollbar.grid(row=4, column=1, sticky="ns")
@@ -245,36 +277,37 @@ class UsenetFinderDialog:
             state="disabled",
         )
         self.more_button.pack(side="left", padx=(8, 0))
+        ttk.Button(
+            result_actions,
+            text="Search columns...",
+            command=lambda: self._show_column_settings("search"),
+        ).pack(side="right")
         self.status = tk.StringVar(
             master=self.dialog,
             value="Open Chrome / sign in before searching.",
         )
         ttk.Label(result_actions, textvariable=self.status).pack(side="left", padx=(12, 0))
 
-        ttk.Label(frame, text="Resolved files").grid(
-            row=6,
-            column=0,
-            sticky="sw",
-            pady=(0, 4),
-        )
         self.files = ttk.Treeview(
             frame,
-            columns=("name", "size", "availability"),
+            columns=FILE_COLUMNS,
             show="headings",
             selectmode="extended",
             height=6,
         )
-        for column, label, width in (
-            ("name", "File name", 570),
-            ("size", "Size", 120),
-            ("availability", "Availability", 150),
+        for column, width in (
+            ("name", 500),
+            ("extension", 100),
+            ("size", 120),
+            ("availability", 150),
         ):
             self.files.heading(
                 column,
-                text=label,
+                text=FILE_COLUMN_LABELS[column],
                 command=lambda selected_column=column: self._sort_files(selected_column),
             )
             self.files.column(column, width=width, anchor="w")
+        self.files.configure(displaycolumns=self.file_visible_columns)
         self.files.tag_configure(
             "inaccessible",
             foreground=self.app.theme_colors["error"],
@@ -284,6 +317,19 @@ class UsenetFinderDialog:
         files_scrollbar.grid(row=7, column=1, sticky="ns")
         self.files.configure(yscrollcommand=files_scrollbar.set)
         self.files.bind("<<TreeviewSelect>>", self._file_selection_changed)
+        resolved_header = ttk.Frame(frame)
+        resolved_header.grid(row=6, column=0, sticky="ew", pady=(0, 4))
+        resolved_header.columnconfigure(0, weight=1)
+        ttk.Label(resolved_header, text="Resolved files").grid(
+            row=0,
+            column=0,
+            sticky="sw",
+        )
+        ttk.Button(
+            resolved_header,
+            text="File columns...",
+            command=lambda: self._show_column_settings("files"),
+        ).grid(row=0, column=1, sticky="e")
         frame.rowconfigure(7, weight=2)
         file_actions = ttk.Frame(frame)
         file_actions.grid(row=8, column=0, sticky="ew", pady=(8, 0))
@@ -717,6 +763,212 @@ class UsenetFinderDialog:
             self._sort_reverse = False
         self._refresh_result_rows()
 
+    def _load_column_layout(
+        self,
+        order_setting: str,
+        visible_setting: str,
+        columns: tuple[str, ...],
+        default_visible: tuple[str, ...],
+    ) -> tuple[list[str], list[str]]:
+        try:
+            saved_order = json.loads(self.app.secure_store.get_setting(order_setting) or "[]")
+            saved_visible = json.loads(
+                self.app.secure_store.get_setting(visible_setting) or "[]"
+            )
+        except (json.JSONDecodeError, sqlite3.Error):
+            return list(columns), list(default_visible)
+        order = (
+            [column for column in saved_order if column in columns]
+            if isinstance(saved_order, list)
+            else []
+        )
+        order = list(dict.fromkeys((*order, *columns)))
+        visible = (
+            {column for column in saved_visible if column in columns}
+            if isinstance(saved_visible, list)
+            else set()
+        )
+        if not visible:
+            visible = set(default_visible)
+        return order, [column for column in order if column in visible]
+
+    def _show_column_settings(self, table_name: str) -> None:
+        if table_name == "search":
+            table = self.results
+            columns = SEARCH_COLUMNS
+            labels = SEARCH_COLUMN_LABELS
+            order_setting = "usenet_search_column_order"
+            visible_setting = "usenet_search_visible_columns"
+            working_order = list(self.search_column_order)
+            working_visible = set(self.search_visible_columns)
+        else:
+            table = self.files
+            columns = FILE_COLUMNS
+            labels = FILE_COLUMN_LABELS
+            order_setting = "usenet_file_column_order"
+            visible_setting = "usenet_file_visible_columns"
+            working_order = list(self.file_column_order)
+            working_visible = set(self.file_visible_columns)
+
+        dialog = tk.Toplevel(self.dialog)
+        dialog.title("Usenet columns")
+        dialog.transient(self.dialog)
+        dialog.resizable(False, False)
+        dialog.geometry("390x300")
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        column_tree = ttk.Treeview(
+            frame,
+            columns=("name", "visibility"),
+            show="headings",
+            selectmode="browse",
+            height=len(columns),
+        )
+        column_tree.heading("name", text="Column")
+        column_tree.heading("visibility", text="Visibility")
+        column_tree.column("name", width=220, stretch=True)
+        column_tree.column("visibility", width=85, stretch=False, anchor="center")
+        column_tree.grid(row=0, column=0, sticky="nsew")
+
+        visible_variable = tk.BooleanVar(master=dialog)
+
+        def selected_column() -> str | None:
+            selection = column_tree.selection()
+            return selection[0] if selection else None
+
+        def update_controls() -> None:
+            column = selected_column()
+            if column is None:
+                visible_variable.set(False)
+                visibility_check.configure(state="disabled")
+                move_up_button.configure(state="disabled")
+                move_down_button.configure(state="disabled")
+                return
+            visible_variable.set(column in working_visible)
+            visibility_check.configure(state="normal")
+            position = working_order.index(column)
+            move_up_button.configure(state="normal" if position else "disabled")
+            move_down_button.configure(
+                state="normal" if position < len(working_order) - 1 else "disabled"
+            )
+
+        def render_order(selected: str | None = None) -> None:
+            column_tree.delete(*column_tree.get_children())
+            for column in working_order:
+                column_tree.insert(
+                    "",
+                    "end",
+                    iid=column,
+                    values=(
+                        labels[column],
+                        "Visible" if column in working_visible else "Hidden",
+                    ),
+                )
+            if selected in working_order:
+                column_tree.selection_set(selected)
+                column_tree.focus(selected)
+            update_controls()
+
+        def toggle_visibility() -> None:
+            column = selected_column()
+            if column is None:
+                return
+            if visible_variable.get():
+                working_visible.add(column)
+            else:
+                working_visible.discard(column)
+            render_order(column)
+
+        def move_column(direction: int) -> None:
+            column = selected_column()
+            if column is None:
+                return
+            position = working_order.index(column)
+            destination = position + direction
+            if not 0 <= destination < len(working_order):
+                return
+            working_order[position], working_order[destination] = (
+                working_order[destination],
+                working_order[position],
+            )
+            render_order(column)
+
+        def reset_defaults() -> None:
+            working_order[:] = columns
+            working_visible.clear()
+            working_visible.update(
+                DEFAULT_SEARCH_COLUMNS if table_name == "search" else DEFAULT_FILE_COLUMNS
+            )
+            render_order(columns[0])
+
+        def apply_changes() -> None:
+            if not working_visible:
+                messagebox.showwarning(
+                    "Columns required",
+                    "At least one column must remain visible.",
+                    parent=dialog,
+                )
+                return
+            ordered_visible = [
+                column for column in working_order if column in working_visible
+            ]
+            try:
+                self.app.secure_store.set_setting(order_setting, json.dumps(working_order))
+                self.app.secure_store.set_setting(visible_setting, json.dumps(ordered_visible))
+            except (OSError, sqlite3.Error) as error:
+                self.app._log(f"Could not save Usenet column settings: {error}")
+                messagebox.showerror(
+                    "Could not save columns",
+                    str(error),
+                    parent=dialog,
+                )
+                return
+            table.configure(displaycolumns=ordered_visible)
+            if table_name == "search":
+                self.search_column_order = list(working_order)
+                self.search_visible_columns = ordered_visible
+            else:
+                self.file_column_order = list(working_order)
+                self.file_visible_columns = ordered_visible
+            dialog.destroy()
+
+        move_buttons = ttk.Frame(frame)
+        move_buttons.grid(row=0, column=1, sticky="ns", padx=(8, 0))
+        move_up_button = ttk.Button(
+            move_buttons,
+            text="Move up",
+            command=lambda: move_column(-1),
+        )
+        move_up_button.pack(fill="x")
+        move_down_button = ttk.Button(
+            move_buttons,
+            text="Move down",
+            command=lambda: move_column(1),
+        )
+        move_down_button.pack(fill="x", pady=(6, 0))
+        visibility_check = ttk.Checkbutton(
+            frame,
+            text="Visible",
+            variable=visible_variable,
+            command=toggle_visibility,
+            state="disabled",
+        )
+        visibility_check.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        actions = ttk.Frame(frame)
+        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        ttk.Button(actions, text="Reset to defaults", command=reset_defaults).pack(side="left")
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(actions, text="Apply", command=apply_changes).pack(
+            side="right",
+            padx=(0, 8),
+        )
+        column_tree.bind("<<TreeviewSelect>>", lambda _event: update_controls())
+        render_order(working_order[0] if working_order else None)
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.grab_set()
+
     def _show_package(self, package: FinderPackage) -> None:
         self.files.delete(*self.files.get_children())
         self._files.clear()
@@ -724,7 +976,12 @@ class UsenetFinderDialog:
             item_id = self.files.insert(
                 "",
                 "end",
-                values=(file.name, file.size, self._availability(file)),
+                values=(
+                    file.name,
+                    Path(file.name).suffix.casefold(),
+                    file.size,
+                    self._availability(file),
+                ),
                 tags=("inaccessible",) if not file.is_accessible else (),
             )
             self._files[item_id] = file
@@ -762,6 +1019,8 @@ class UsenetFinderDialog:
         else:
             if column == "availability":
                 key = lambda file: self._availability(file).casefold()
+            elif column == "extension":
+                key = lambda file: Path(file.name).suffix.casefold()
             else:
                 key = lambda file: file.name.casefold()
             files.sort(key=lambda entry: key(entry[1]), reverse=self._file_sort_reverse)

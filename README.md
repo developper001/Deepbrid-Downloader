@@ -62,7 +62,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
 - The bottom progress bar tracks settled enabled links plus the active file's partial progress; its caption shows queue count and total ETA.
 - The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
-- Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults.
+- Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults. The file extension is available but hidden by default.
 - Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
 - The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
 - The app keeps active partial files and automatically resumes queued work after startup. Closing the window requests a safe stop and waits for the active network read to return before exit, preserving the partial file for resume.
@@ -84,7 +84,7 @@ The last query and category are saved and restored when the Finder window is reo
 
 ![Usenet Finder search history and category selection](src/img/UsenetFinderSearchHistoryAndCategory.png)
 
-The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; choose **[Clear search history]** in the search history or use **Clear search history** in Settings to remove them. Result categories populate the category picker, and search results and resolved files can be sorted by clicking a column heading. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
+The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; choose **[Clear search history]** in the search history or use **Clear search history** in Settings to remove them. Result categories populate the category picker, and search results and resolved files can be sorted by clicking a column heading. Use **Search columns...** and **File columns...** to show, hide, and reorder columns in each table; the resolved-files extension column is visible by default. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
 
 Usenet Finder requires Google Chrome or Microsoft Edge to be installed. The app opens a dedicated browser window automatically and uses an isolated profile stored under the application's data directory with loopback-only DevTools. If neither browser is found, the app explains how to install one:
 
