@@ -165,7 +165,12 @@ class DeepbridClient:
                 str(result.get("message", "Link generation failed")),
                 original_url,
             )
-            raise DeepbridError(f"{message}\nHTTP 200; response body: {logged_body}\nRequest: {curl_command}")
+            error_code = result.get("error")
+            retryable = error_code not in (10, "10")
+            raise DeepbridError(
+                f"{message}\nHTTP 200; response body: {logged_body}\nRequest: {curl_command}",
+                retryable=retryable,
+            )
         generated_url = result.get("link")
         if not isinstance(generated_url, str) or not generated_url:
             raise DeepbridError(f"Deepbrid response did not include a download link\nHTTP 200; response body: {logged_body}\nRequest: {curl_command}")

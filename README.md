@@ -72,7 +72,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 
 ## Retry and resume behavior
 
-If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block is treated as non-retryable and pauses the queue. When the host reports an expected file size, the app checks the received byte count before marking the download complete; mismatches fail and keep the partial file for retry. If the host provides no expected size, the completed file is marked not verified. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
+If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block and Deepbrid's unsupported-filehost response are treated as non-retryable and pause the queue. When the host reports an expected file size, the app checks the received byte count before marking the download complete; mismatches fail and keep the partial file for retry. If the host provides no expected size, the completed file is marked not verified. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
 
 ## Usenet Finder
 
@@ -125,7 +125,7 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 - Open API-key Settings automatically at startup when the key is missing or rejected; access the Deepbrid key page from Settings
 - Check for newer releases in About and opt into verified in-app updates with download progress
 - Use the user's OS Downloads folder by default when available, retaining a saved folder choice
-- Optionally append application output to a chosen log file from Settings; logging is disabled by default and URLs are redacted
+- Optionally append application output to a chosen log file from Settings; logging is disabled by default, defaults to `deepbrid-output.log` beside the executable when enabled without a saved path, and redacts URLs
 - Route standard output, errors, and uncaught exceptions to the in-app console
 - Build the Windows executable with the Deepbrid icon and no separate console window
 - Open the full project README directly from the About window

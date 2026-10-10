@@ -35,7 +35,7 @@ class AppConfiguration:
     dark_theme: bool
     usenet_finder_cache_duration_hours: int
     append_output_log_enabled: bool
-    append_output_log_path: Path | None
+    append_output_log_path: Path
 
     @classmethod
     def load(
@@ -46,6 +46,7 @@ class AppConfiguration:
         default_download_directory: Callable[[], Path],
         read_legacy_api_key: Callable[[], str | None],
         remove_legacy_env: Callable[[], None],
+        default_output_log_path: Callable[[], Path],
     ) -> AppConfiguration:
         api_key = ""
         secure_storage_error = None
@@ -186,7 +187,7 @@ class AppConfiguration:
         output_log_path = (
             Path(saved_output_log_path).expanduser()
             if saved_output_log_path and saved_output_log_path.strip()
-            else None
+            else default_output_log_path()
         )
 
         return cls(

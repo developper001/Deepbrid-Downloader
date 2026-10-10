@@ -362,6 +362,7 @@ class DownloaderApp:
             default_download_directory,
             read_legacy_api_key,
             remove_legacy_env,
+            lambda: PROJECT_ROOT / "deepbrid-output.log",
         )
         self.auto_check_updates = tk.BooleanVar(master=root, value=config.auto_check_updates)
         self.auto_start_downloads = tk.BooleanVar(master=root, value=config.auto_start_downloads)

@@ -266,6 +266,40 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class QueueRunnerTests(unittest.TestCase):
+    def test_runner_does_not_retry_unsupported_filehost(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            store.add("https://unsupported.example/file.zip")
+            events: queue.Queue = queue.Queue()
+            generate_link_calls: list[str] = []
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def generate_link(self, url: str) -> tuple[str, str]:
+                    generate_link_calls.append(url)
+                    raise DeepbridError("Filehoster not supported", retryable=False)
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    Path(temporary_directory),
+                    events,
+                    threading.Event(),
+                    {},
+                    lambda _message: None,
+                ).run()
+
+            item = store.list_items()[0]
+            self.assertEqual(generate_link_calls, ["https://unsupported.example/file.zip"])
+            self.assertEqual(item.status, "blocked")
+            self.assertEqual(item.error, "DeepbridError")
+
     def test_runner_stops_when_api_key_validation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
@@ -405,6 +439,7 @@ class AppConfigurationTests(unittest.TestCase):
                     ("usenet_username", b"obsolete-encrypted-username"),
                 )
             downloads = Path(temporary_directory) / "downloads"
+            default_log_path = Path(temporary_directory) / "deepbrid-output.log"
             config = AppConfiguration.load(
                 store,
                 COLUMN_ORDER,
@@ -412,6 +447,7 @@ class AppConfigurationTests(unittest.TestCase):
                 lambda: downloads,
                 lambda: None,
                 lambda: None,
+                lambda: default_log_path,
             )
 
             self.assertTrue(config.auto_check_updates)
@@ -421,7 +457,7 @@ class AppConfigurationTests(unittest.TestCase):
                 DEFAULT_CACHE_DURATION_HOURS,
             )
             self.assertFalse(config.append_output_log_enabled)
-            self.assertIsNone(config.append_output_log_path)
+            self.assertEqual(config.append_output_log_path, default_log_path)
             with closing(sqlite3.connect(database)) as connection:
                 remaining_credentials = connection.execute(
                     "SELECT name FROM app_settings "
@@ -452,6 +488,7 @@ class AppConfigurationTests(unittest.TestCase):
                 lambda: downloads,
                 lambda: None,
                 lambda: None,
+                lambda: default_log_path,
             )
             self.assertFalse(config.auto_start_downloads)
             self.assertTrue(config.dark_theme)
@@ -1385,6 +1422,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
             lambda: Path(tempfile.gettempdir()),
             lambda: None,
             lambda: None,
+            lambda: Path(tempfile.gettempdir()) / "deepbrid-output.log",
         )
         self.assertTrue(config.dark_theme)
 
@@ -2418,6 +2456,18 @@ class UsenetBrowserSessionTests(unittest.TestCase):
 
 
 class DeepbridDiagnosticsTests(unittest.TestCase):
+    def test_unsupported_filehost_response_is_not_retryable(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            b'{"error":10,"message":"Filehoster not supported"}',
+        )
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+            with self.assertRaisesRegex(DeepbridError, "Filehoster not supported") as raised:
+                DeepbridClient("test-key").generate_link("https://unsupported.example/file")
+
+        self.assertFalse(raised.exception.retryable)
+
     def test_valid_api_key_account_response_is_accepted(self) -> None:
         response = FakeResponse(200, {}, b'{"type":"premium","error":0}')
         with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response) as open_url:
