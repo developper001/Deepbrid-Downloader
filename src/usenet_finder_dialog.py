@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import sqlite3
 import sys
 import threading
@@ -59,6 +60,8 @@ class UsenetFinderDialog:
         self._browser_check_running = False
         self._restoring_result_token: str | None = None
         self._files: dict[str, FinderFile] = {}
+        self._file_sort_column = "name"
+        self._file_sort_reverse = False
         self.client = UsenetFinderClient(app.usenet_browser)
         self.state = UsenetFinderState(
             app.secure_store,
@@ -266,7 +269,11 @@ class UsenetFinderDialog:
             ("size", "Size", 120),
             ("availability", "Availability", 150),
         ):
-            self.files.heading(column, text=label)
+            self.files.heading(
+                column,
+                text=label,
+                command=lambda selected_column=column: self._sort_files(selected_column),
+            )
             self.files.column(column, width=width, anchor="w")
         self.files.tag_configure(
             "inaccessible",
@@ -721,6 +728,7 @@ class UsenetFinderDialog:
                 tags=("inaccessible",) if not file.is_accessible else (),
             )
             self._files[item_id] = file
+        self._sort_files(self._file_sort_column, toggle=False)
         package_label = f" ({package.name})" if package.name else ""
         accessible_count = sum(file.is_accessible for file in package.files)
         self.status.set(
@@ -728,6 +736,56 @@ class UsenetFinderDialog:
             f"{accessible_count} accessible."
         )
         self._update_file_actions()
+
+    def _sort_files(self, column: str, *, toggle: bool = True) -> None:
+        if toggle:
+            if self._file_sort_column == column:
+                self._file_sort_reverse = not self._file_sort_reverse
+            else:
+                self._file_sort_column = column
+                self._file_sort_reverse = False
+
+        item_ids = list(self.files.get_children())
+        files = [(item_id, self._files[item_id]) for item_id in item_ids if item_id in self._files]
+        if column == "size":
+            sized_files = [
+                (item_id, file, self._file_size_bytes(file.size))
+                for item_id, file in files
+            ]
+            known_sizes = [entry for entry in sized_files if entry[2] is not None]
+            unknown_sizes = [entry for entry in sized_files if entry[2] is None]
+            known_sizes.sort(
+                key=lambda entry: entry[2],
+                reverse=self._file_sort_reverse,
+            )
+            item_ids = [entry[0] for entry in (*known_sizes, *unknown_sizes)]
+        else:
+            if column == "availability":
+                key = lambda file: self._availability(file).casefold()
+            else:
+                key = lambda file: file.name.casefold()
+            files.sort(key=lambda entry: key(entry[1]), reverse=self._file_sort_reverse)
+            item_ids = [item_id for item_id, _file in files]
+        self.files.set_children("", *item_ids)
+
+    @staticmethod
+    def _file_size_bytes(size: str) -> float | None:
+        match = re.fullmatch(
+            r"\s*(\d+(?:\.\d+)?)\s*(B|bytes?|KB|KiB|MB|MiB|GB|GiB|TB|TiB)?\s*",
+            size,
+            re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        value = float(match.group(1))
+        unit = (match.group(2) or "B").lower()
+        if unit in {"b", "byte", "bytes"}:
+            multiplier = 1
+        elif unit.endswith("ib"):
+            multiplier = 1024 ** ("kmgt".index(unit[0]) + 1)
+        else:
+            multiplier = 1000 ** ("kmgt".index(unit[0]) + 1)
+        return value * multiplier
 
     def _file_selection_changed(self, _event: tk.Event | None = None) -> None:
         self._update_file_actions()

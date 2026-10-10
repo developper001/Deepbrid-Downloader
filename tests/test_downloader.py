@@ -2167,6 +2167,39 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
+    def test_resolved_files_can_be_sorted_by_name_and_size(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        first = FinderFile("Beta.mkv", "https://example.test/b", "2 GB", True, None, {})
+        second = FinderFile("Alpha.mkv", "https://example.test/a", "500 MB", True, None, {})
+        third = FinderFile("Unknown.mkv", "https://example.test/u", "Unknown", True, None, {})
+        dialog.files = Mock()
+        dialog.files.get_children.return_value = ("first", "second", "third")
+        dialog._files = {"first": first, "second": second, "third": third}
+        dialog._file_sort_column = "name"
+        dialog._file_sort_reverse = False
+
+        dialog._sort_files("name")
+        dialog.files.set_children.assert_called_with("", "third", "first", "second")
+
+        dialog._sort_files("size")
+        dialog.files.set_children.assert_called_with("", "second", "first", "third")
+
+        dialog._sort_files("size")
+        dialog.files.set_children.assert_called_with("", "first", "second", "third")
+
+        inaccessible = FinderFile(
+            "Locked.mkv",
+            "",
+            "1 GB",
+            True,
+            "missing_volumes",
+            {},
+        )
+        dialog._files["locked"] = inaccessible
+        dialog.files.get_children.return_value = ("locked", "first")
+        dialog._sort_files("availability")
+        dialog.files.set_children.assert_called_with("", "first", "locked")
+
     def test_antialiased_globe_assets_are_square_pngs_for_both_themes(self) -> None:
         asset_directory = Path(__file__).resolve().parent.parent / "src"
         for filename in ("usenet-globe-light.png", "usenet-globe-dark.png"):

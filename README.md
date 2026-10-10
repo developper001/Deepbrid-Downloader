@@ -84,7 +84,7 @@ The last query and category are saved and restored when the Finder window is reo
 
 ![Usenet Finder search history and category selection](src/img/UsenetFinderSearchHistoryAndCategory.png)
 
-The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; choose **[Clear search history]** in the search history or use **Clear search history** in Settings to remove them. Result categories populate the category picker, and loaded results can be filtered or sorted by clicking a column heading. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
+The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; choose **[Clear search history]** in the search history or use **Clear search history** in Settings to remove them. Result categories populate the category picker, and search results and resolved files can be sorted by clicking a column heading. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
 
 Usenet Finder requires Google Chrome or Microsoft Edge to be installed. The app opens a dedicated browser window automatically and uses an isolated profile stored under the application's data directory with loopback-only DevTools. If neither browser is found, the app explains how to install one:
 
