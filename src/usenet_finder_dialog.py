@@ -874,9 +874,9 @@ class UsenetFinderDialog:
 
         dialog = tk.Toplevel(self.dialog)
         dialog.title("Usenet columns")
-        dialog.transient(self.dialog)
-        dialog.resizable(False, False)
-        dialog.geometry("390x300")
+        dialog.resizable(True, True)
+        dialog.geometry("470x300")
+        dialog.minsize(430, 260)
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
@@ -891,8 +891,15 @@ class UsenetFinderDialog:
         column_tree.heading("name", text="Column")
         column_tree.heading("visibility", text="Visibility")
         column_tree.column("name", width=220, stretch=True)
-        column_tree.column("visibility", width=85, stretch=False, anchor="center")
+        column_tree.column("visibility", width=110, minwidth=100, stretch=False, anchor="center")
         column_tree.grid(row=0, column=0, sticky="nsew")
+        column_scrollbar = ttk.Scrollbar(
+            frame,
+            orient="vertical",
+            command=column_tree.yview,
+        )
+        column_scrollbar.grid(row=0, column=1, sticky="ns")
+        column_tree.configure(yscrollcommand=column_scrollbar.set)
 
         visible_variable = tk.BooleanVar(master=dialog)
 
@@ -997,7 +1004,7 @@ class UsenetFinderDialog:
             dialog.destroy()
 
         move_buttons = ttk.Frame(frame)
-        move_buttons.grid(row=0, column=1, sticky="ns", padx=(8, 0))
+        move_buttons.grid(row=0, column=2, sticky="ns", padx=(8, 0))
         move_up_button = ttk.Button(
             move_buttons,
             text="Move up",
@@ -1019,7 +1026,7 @@ class UsenetFinderDialog:
         )
         visibility_check.grid(row=1, column=0, sticky="w", pady=(8, 0))
         actions = ttk.Frame(frame)
-        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        actions.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(12, 0))
         ttk.Button(actions, text="Reset to defaults", command=reset_defaults).pack(side="left")
         ttk.Button(actions, text="Apply", command=apply_changes).pack(
             side="right",

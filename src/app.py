@@ -428,18 +428,18 @@ class DownloaderApp:
             command=self._show_settings,
         )
         self.settings_button.pack(side="right")
-        self.add_torrent_button = ttk.Button(
-            header_actions,
-            text="Add torrents",
-            command=self._show_add_torrent_dialog,
-        )
-        self.add_torrent_button.pack(side="right", padx=(0, 8))
         self.usenet_finder_button = ttk.Button(
             header_actions,
             text="Find Usenet links",
             command=self._show_usenet_finder,
         )
         self.usenet_finder_button.pack(side="right", padx=(0, 8))
+        self.add_torrent_button = ttk.Button(
+            header_actions,
+            text="Add torrents",
+            command=self._show_add_torrent_dialog,
+        )
+        self.add_torrent_button.pack(side="right", padx=(0, 8))
         self.add_links_button = ttk.Button(
             header_actions,
             text="Add file-host links",
@@ -1857,9 +1857,9 @@ class DownloaderApp:
     def _show_columns_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title("Columns")
-        dialog.transient(self.root)
-        dialog.resizable(False, False)
-        dialog.geometry("440x390")
+        dialog.resizable(True, True)
+        dialog.geometry("500x390")
+        dialog.minsize(460, 300)
 
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
@@ -1876,8 +1876,11 @@ class DownloaderApp:
         tree.heading("name", text="Column")
         tree.heading("visibility", text="Visibility")
         tree.column("name", width=250, minwidth=190, stretch=True)
-        tree.column("visibility", width=85, minwidth=80, stretch=False, anchor="center")
+        tree.column("visibility", width=110, minwidth=100, stretch=False, anchor="center")
         tree.grid(row=0, column=0, sticky="nsew")
+        tree_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree_scrollbar.grid(row=0, column=1, sticky="ns")
+        tree.configure(yscrollcommand=tree_scrollbar.set)
 
         working_order = list(self.column_order)
         working_visible = set(self.visible_columns)
@@ -1968,7 +1971,7 @@ class DownloaderApp:
             dialog.destroy()
 
         move_buttons = ttk.Frame(frame)
-        move_buttons.grid(row=0, column=1, sticky="ns", padx=(8, 0))
+        move_buttons.grid(row=0, column=2, sticky="ns", padx=(8, 0))
         move_up_button = ttk.Button(move_buttons, text="Move up", command=lambda: move_column(-1))
         move_up_button.pack(fill="x")
         move_down_button = ttk.Button(
@@ -1987,7 +1990,7 @@ class DownloaderApp:
         )
         visibility_check.grid(row=1, column=0, sticky="w", pady=(8, 0))
         actions = ttk.Frame(frame)
-        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        actions.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(12, 0))
         ttk.Button(actions, text="Reset to defaults", command=reset_defaults).pack(side="left")
         ttk.Button(actions, text="Apply", command=apply_changes).pack(side="right", padx=(0, 8))
         ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
