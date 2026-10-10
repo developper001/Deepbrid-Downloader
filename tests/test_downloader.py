@@ -2006,6 +2006,26 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
         with self.assertRaisesRegex(UsenetFinderError, "instead of JSON"):
             parse_browser_response(200, "text/html", "<html>login</html>")
 
+    def test_premium_required_finder_response_prompts_user_to_sign_in(self) -> None:
+        from src.usenet_finder import parse_browser_response
+
+        with self.assertRaisesRegex(
+            UsenetFinderError,
+            "Sign in to your Deepbrid account in the Chrome window",
+        ):
+            parse_browser_response(
+                200,
+                "application/json",
+                json.dumps({"error": "Premium required"}),
+            )
+
+        with self.assertRaisesRegex(UsenetFinderError, "^Unsupported operation$"):
+            parse_browser_response(
+                200,
+                "application/json",
+                json.dumps({"error": "Unsupported operation"}),
+            )
+
 
 class UsenetFinderDialogTests(unittest.TestCase):
     def test_resolved_file_size_parser_supports_decimal_and_binary_units(self) -> None:

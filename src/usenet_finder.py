@@ -209,5 +209,14 @@ def parse_browser_response(status_code: int, content_type: str, body: str) -> di
         raise UsenetFinderError("Finder returned an unexpected response.")
     if payload.get("error"):
         message = payload["error"]
+        if (
+            isinstance(message, str)
+            and " ".join(message.casefold().replace("_", " ").replace("-", " ").split())
+            == "premium required"
+        ):
+            raise UsenetFinderError(
+                "Sign in to your Deepbrid account in the Chrome window, then retry "
+                "the Usenet Finder search."
+            )
         raise UsenetFinderError(message if isinstance(message, str) else "Finder reported an error.")
     return payload
