@@ -87,6 +87,7 @@ from src.usenet_finder import (
     FinderSearchPage,
     UsenetFinderClient,
     UsenetFinderError,
+    file_size_bytes,
 )
 from src.usenet_browser import UsenetBrowserSession
 from src.usenet_finder_dialog import UsenetFinderDialog
@@ -263,6 +264,23 @@ class QueueStoreTests(unittest.TestCase):
             assert item is not None
             self.assertEqual(item.filename, "episode.mkv")
             self.assertEqual(item.host_message, "Usenet Finder")
+
+    def test_queue_item_keeps_resolved_finder_size(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            self.assertTrue(
+                store.add(
+                    "https://usenet.example/download/123",
+                    host_status="up",
+                    host_message="Usenet Finder",
+                    filename="episode.mkv",
+                    total=1_100_000_000,
+                )
+            )
+            item = store.next_item()
+            assert item is not None
+            self.assertEqual(item.total, 1_100_000_000)
+            self.assertEqual(item.downloaded, 0)
 
 
 class QueueRunnerTests(unittest.TestCase):
@@ -455,6 +473,56 @@ class QueueRunnerTests(unittest.TestCase):
             self.assertIsInstance(events.queue[-1], WorkerDoneEvent)
             self.assertFalse(active_cancel_events)
 
+    def test_runner_preserves_resolved_size_when_download_has_no_content_length(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add(
+                "https://usenet.example/download/123",
+                host_status="up",
+                host_message="Usenet Finder",
+                filename="finder-file.mkv",
+                total=1000,
+            )
+            stop_event = threading.Event()
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def download(
+                    self,
+                    _url,
+                    filename,
+                    directory,
+                    _should_stop,
+                    on_progress,
+                    **_kwargs,
+                ) -> bool:
+                    (directory / f".{filename}.part").write_bytes(b"x" * 100)
+                    on_progress(100, None)
+                    stop_event.set()
+                    return False
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    queue.Queue(),
+                    stop_event,
+                    {},
+                    lambda _message: None,
+                ).run()
+
+            item = store.list_items()[0]
+            self.assertEqual(item.status, "queued")
+            self.assertEqual(item.downloaded, 100)
+            self.assertEqual(item.total, 1000)
+
 
 class UsenetFinderQueueIntegrationTests(unittest.TestCase):
     def test_accessible_finder_links_enter_the_normal_queue(self) -> None:
@@ -468,7 +536,7 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
 
             counts = app.add_usenet_links(
                 [
-                    (link, "..\\..\\episode.mkv"),
+                    (link, "..\\..\\episode.mkv", file_size_bytes("1.1 GB")),
                     (link, "episode.mkv"),
                     ("file:///private/file", "private-file"),
                 ]
@@ -480,6 +548,7 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
             self.assertEqual(item.url, link)
             self.assertEqual(item.filename, "_.._episode.mkv")
             self.assertEqual(item.host_message, "Usenet Finder")
+            self.assertEqual(item.total, 1_100_000_000)
             app._apply_host_statuses({})
             item = app.store.next_item()
             assert item is not None
@@ -2169,6 +2238,12 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
+    def test_resolved_file_size_parser_supports_decimal_and_binary_units(self) -> None:
+        self.assertEqual(file_size_bytes("1.1 GB"), 1_100_000_000)
+        self.assertEqual(file_size_bytes("1.1 GiB"), round(1.1 * 1024**3))
+        self.assertEqual(file_size_bytes("17.88 KB"), 17_880)
+        self.assertIsNone(file_size_bytes("Unknown"))
+
     def test_usenet_column_layout_defaults_and_saved_layouts(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         dialog.app = SimpleNamespace(secure_store=Mock())

@@ -196,7 +196,11 @@ class QueueRunner:
                 nonlocal last_database_update, last_ui_update, last_speed_update, last_speed_bytes
                 now = time.monotonic()
                 if now - last_database_update >= 1:
-                    self.store.update(item.id, downloaded=downloaded, total=total)
+                    self.store.update(
+                        item.id,
+                        downloaded=downloaded,
+                        total=total if total is not None else item.total,
+                    )
                     last_database_update = now
                 if now - last_ui_update >= 1 or (total and downloaded >= total):
                     elapsed = now - last_speed_update

@@ -697,11 +697,16 @@ class DownloaderApp:
         self._refresh_rows()
         self._save_visible_queue_order()
 
-    def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]:
+    def add_usenet_links(
+        self,
+        links: list[tuple[str, str] | tuple[str, str, int | None]],
+    ) -> tuple[int, int, int]:
         added_count = 0
         duplicate_count = 0
         invalid_count = 0
-        for link, filename in links:
+        for entry in links:
+            link, filename = entry[:2]
+            total = entry[2] if len(entry) == 3 else None
             if not is_valid_finder_link(link):
                 invalid_count += 1
                 continue
@@ -711,6 +716,7 @@ class DownloaderApp:
                 host_status="up",
                 host_message="Usenet Finder",
                 filename=safe_name,
+                total=total,
             ):
                 added_count += 1
             else:

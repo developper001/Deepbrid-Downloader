@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import queue
-import re
 import sqlite3
 import sys
 import threading
@@ -20,6 +19,7 @@ from .usenet_finder import (
     FinderSearchPage,
     UsenetFinderClient,
     UsenetFinderError,
+    file_size_bytes,
 )
 from .usenet_browser import UsenetBrowserSession
 from .secure_store import SecureStorageError, SecureStore
@@ -1081,23 +1081,8 @@ class UsenetFinderDialog:
         self.files.set_children("", *item_ids)
 
     @staticmethod
-    def _file_size_bytes(size: str) -> float | None:
-        match = re.fullmatch(
-            r"\s*(\d+(?:\.\d+)?)\s*(B|bytes?|KB|KiB|MB|MiB|GB|GiB|TB|TiB)?\s*",
-            size,
-            re.IGNORECASE,
-        )
-        if match is None:
-            return None
-        value = float(match.group(1))
-        unit = (match.group(2) or "B").lower()
-        if unit in {"b", "byte", "bytes"}:
-            multiplier = 1
-        elif unit.endswith("ib"):
-            multiplier = 1024 ** ("kmgt".index(unit[0]) + 1)
-        else:
-            multiplier = 1000 ** ("kmgt".index(unit[0]) + 1)
-        return value * multiplier
+    def _file_size_bytes(size: str) -> int | None:
+        return file_size_bytes(size)
 
     def _file_selection_changed(self, _event: tk.Event | None = None) -> None:
         self._update_file_actions()
@@ -1134,7 +1119,7 @@ class UsenetFinderDialog:
             self.status.set("No accessible files selected to add.")
             return
         added, duplicates, invalid = self.app.add_usenet_links(
-            [(file.link, file.name) for file in files]
+            [(file.link, file.name, file_size_bytes(file.size)) for file in files]
         )
         self.status.set(
             f"Added {added} file(s) to the download queue; skipped {duplicates} "

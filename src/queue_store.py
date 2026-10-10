@@ -129,15 +129,20 @@ class QueueStore:
         host_status: str = "up",
         host_message: str = "",
         filename: str | None = None,
+        total: int | None = None,
     ) -> bool:
+        if total is not None and (
+            isinstance(total, bool) or not isinstance(total, int) or total < 0
+        ):
+            raise ValueError("Queue item total must be a non-negative integer.")
         url_hash = self.secure_store.hash_text(url, URL_AAD)
         encrypted_url = self.secure_store.encrypt_text(url, URL_AAD)
         with self._connect() as connection:
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO downloads "
-                "(url, url_ciphertext, host_status, host_message, filename) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (url_hash, encrypted_url, host_status, host_message, filename),
+                "(url, url_ciphertext, host_status, host_message, filename, total) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (url_hash, encrypted_url, host_status, host_message, filename, total),
             )
             return cursor.rowcount > 0
 

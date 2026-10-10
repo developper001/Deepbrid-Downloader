@@ -76,7 +76,7 @@ If premium-link generation fails transiently, the app makes up to five attempts 
 
 ## Usenet Finder
 
-The **Usenet Finder** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; check the queue and click **Start** to download them.
+The **Usenet Finder** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Finder-reported file sizes are carried into the queue as estimates until transfer details provide an actual size. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; check the queue and click **Start** to download them.
 
 ![Usenet Finder search results and resolved files](src/img/UsenetFinder.png)
 

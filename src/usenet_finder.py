@@ -1,11 +1,32 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Mapping
 from urllib.parse import urlsplit
 
 from .usenet_browser import UsenetBrowserSession, UsenetFinderError
+
+
+FILE_SIZE_PATTERN = re.compile(
+    r"\s*(\d+(?:\.\d+)?)\s*(B|bytes?|KB|KiB|MB|MiB|GB|GiB|TB|TiB)?\s*",
+    re.IGNORECASE,
+)
+
+
+def file_size_bytes(size: str) -> int | None:
+    match = FILE_SIZE_PATTERN.fullmatch(size)
+    if match is None:
+        return None
+    value = float(match.group(1))
+    unit = (match.group(2) or "B").lower()
+    if unit in {"b", "byte", "bytes"}:
+        multiplier = 1
+    else:
+        power = "kmgt".index(unit[0]) + 1
+        multiplier = (1024 if unit.endswith("ib") else 1000) ** power
+    return round(value * multiplier)
 
 
 @dataclass(frozen=True)
