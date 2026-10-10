@@ -82,7 +82,7 @@ class UsenetFinderDialog:
         self._file_order: list[str] = []
         self._file_sort_column = "name"
         self._file_sort_reverse = False
-        self._hide_par2_files = False
+        self._hide_auxiliary_files = False
         self._suppress_result_selection_token: str | None = None
         self.search_column_order, self.search_visible_columns = self._load_column_layout(
             "usenet_search_column_order",
@@ -342,12 +342,12 @@ class UsenetFinderDialog:
             state="disabled",
         )
         self.add_accessible_button.pack(side="left", padx=(8, 0))
-        self.par2_filter_button = ttk.Button(
+        self.auxiliary_files_filter_button = ttk.Button(
             file_actions,
-            text="Hide PAR2",
-            command=self._toggle_par2_filter,
+            text="Hide PAR2/NFO",
+            command=self._toggle_auxiliary_files_filter,
         )
-        self.par2_filter_button.pack(side="left", padx=(8, 0))
+        self.auxiliary_files_filter_button.pack(side="left", padx=(8, 0))
         ttk.Button(
             file_actions,
             text="File columns...",
@@ -1099,22 +1099,23 @@ class UsenetFinderDialog:
             for item_id in self._file_order
             if item_id in self._files
             and not (
-                self._hide_par2_files
-                and self._is_par2_file(self._files[item_id])
+                self._hide_auxiliary_files
+                and self._is_auxiliary_file(self._files[item_id])
             )
         ]
         self.files.set_children("", *visible_ids)
 
     @staticmethod
-    def _is_par2_file(file: FinderFile) -> bool:
-        return file.name.rstrip().casefold().endswith(".par2")
+    def _is_auxiliary_file(file: FinderFile) -> bool:
+        extension = Path(file.name.rstrip()).suffix.casefold()
+        return extension in {".par2", ".nfo"}
 
-    def _toggle_par2_filter(self) -> None:
-        self._hide_par2_files = not self._hide_par2_files
+    def _toggle_auxiliary_files_filter(self) -> None:
+        self._hide_auxiliary_files = not self._hide_auxiliary_files
         self.files.selection_remove(*self.files.selection())
         self._render_file_rows()
-        self.par2_filter_button.configure(
-            text="Show PAR2" if self._hide_par2_files else "Hide PAR2"
+        self.auxiliary_files_filter_button.configure(
+            text="Show PAR2/NFO" if self._hide_auxiliary_files else "Hide PAR2/NFO"
         )
         self._update_file_actions()
 
