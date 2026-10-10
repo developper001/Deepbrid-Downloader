@@ -167,7 +167,7 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 The project uses the standard library unittest suite. Run it locally with:
 
 ```sh
-python -m unittest -q tests.test_downloader
+python -m unittest -q tests.test_downloader tests.test_queue
 ```
 
 GitHub Actions runs the same tests on pushes to `main` and pull requests across Ubuntu, Windows, and macOS for supported Python versions. The dependency audit runs weekly only and skips the platform test matrix.
@@ -181,7 +181,7 @@ It runs:
 - Python 3.11
 - Python 3.12
 - on Windows, macOS, and Ubuntu
-- `python -m unittest -q tests.test_downloader`
+- `python -m unittest -q tests.test_downloader tests.test_queue`
 - a package build step with `python -m build`
 
 ## Minimal installer for Windows, macOS, and Linux

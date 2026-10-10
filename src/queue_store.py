@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .secure_store import SecureStore
+from .queue_types import QueueSource, QueueStatus
 
 
 URL_AAD = b"download-original-url-v1"
@@ -29,6 +30,7 @@ class QueueItem:
     enabled: bool
     force: bool
     priority: int
+    source: QueueSource
 
 
 class QueueStore:
@@ -38,11 +40,12 @@ class QueueStore:
         self.secure_store = secure_store or SecureStore(database_path)
         with self._connect() as connection:
             connection.execute(
-                """CREATE TABLE IF NOT EXISTS downloads (
+                f"""CREATE TABLE IF NOT EXISTS downloads (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     url TEXT NOT NULL UNIQUE,
                     url_ciphertext BLOB,
-                    status TEXT NOT NULL DEFAULT 'queued',
+                    source TEXT NOT NULL DEFAULT '{QueueSource.PREMIUM_LINK.value}',
+                    status TEXT NOT NULL DEFAULT '{QueueStatus.QUEUED}',
                     size_verified INTEGER NOT NULL DEFAULT 0,
                     downloaded INTEGER NOT NULL DEFAULT 0,
                     total INTEGER,
@@ -62,6 +65,7 @@ class QueueStore:
             }
             migrations = {
                 "url_ciphertext": "BLOB",
+                "source": f"TEXT NOT NULL DEFAULT '{QueueSource.PREMIUM_LINK.value}'",
                 "size_verified": "INTEGER NOT NULL DEFAULT 0",
                 "deepbrid_link": "TEXT",
                 "host_status": "TEXT NOT NULL DEFAULT 'unknown'",
@@ -73,6 +77,14 @@ class QueueStore:
             for column, definition in migrations.items():
                 if column not in columns:
                     connection.execute(f"ALTER TABLE downloads ADD COLUMN {column} {definition}")
+            connection.execute(
+                "UPDATE downloads SET source = ? WHERE host_message = ? AND source = ?",
+                (
+                    QueueSource.USENET.value,
+                    "Usenet Finder",
+                    QueueSource.PREMIUM_LINK.value,
+                ),
+            )
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT id, url, url_ciphertext, deepbrid_link, error FROM downloads"
@@ -106,11 +118,13 @@ class QueueStore:
                     )
         with self._connect() as connection:
             interrupted = connection.execute(
-                "SELECT 1 FROM downloads WHERE status IN ('generating', 'downloading', 'retrying') LIMIT 1"
+                "SELECT 1 FROM downloads WHERE status IN (?, ?, ?) LIMIT 1",
+                tuple(QueueStatus.INTERRUPTED),
             ).fetchone()
             self.recovered_work = interrupted is not None
             connection.execute(
-                "UPDATE downloads SET status = 'queued' WHERE status IN ('generating', 'downloading', 'retrying')"
+                "UPDATE downloads SET status = ? WHERE status IN (?, ?, ?)",
+                (QueueStatus.QUEUED, *QueueStatus.INTERRUPTED),
             )
 
     @contextmanager
@@ -130,19 +144,30 @@ class QueueStore:
         host_message: str = "",
         filename: str | None = None,
         total: int | None = None,
+        source: QueueSource = QueueSource.PREMIUM_LINK,
     ) -> bool:
         if total is not None and (
             isinstance(total, bool) or not isinstance(total, int) or total < 0
         ):
             raise ValueError("Queue item total must be a non-negative integer.")
+        if not isinstance(source, QueueSource):
+            raise ValueError(f"Unsupported queue source: {source!r}")
         url_hash = self.secure_store.hash_text(url, URL_AAD)
         encrypted_url = self.secure_store.encrypt_text(url, URL_AAD)
         with self._connect() as connection:
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO downloads "
-                "(url, url_ciphertext, host_status, host_message, filename, total) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (url_hash, encrypted_url, host_status, host_message, filename, total),
+                "(url, url_ciphertext, source, host_status, host_message, filename, total) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    url_hash,
+                    encrypted_url,
+                    source.value,
+                    host_status,
+                    host_message,
+                    filename,
+                    total,
+                ),
             )
             return cursor.rowcount > 0
 
@@ -156,8 +181,9 @@ class QueueStore:
     def next_item(self) -> QueueItem | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM downloads WHERE status = 'queued' AND enabled = 1 "
-                "AND host_status != 'down' ORDER BY priority, id LIMIT 1"
+                "SELECT * FROM downloads WHERE status = ? AND enabled = 1 "
+                "AND host_status != 'down' ORDER BY priority, id LIMIT 1",
+                (QueueStatus.QUEUED,),
             ).fetchone()
         return self._to_item(row) if row else None
 
@@ -171,35 +197,35 @@ class QueueStore:
     def retry_item(self, item_id: int) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE downloads SET status = 'queued', error = NULL "
-                "WHERE id = ? AND status IN ('failed', 'blocked')",
-                (item_id,),
+                "UPDATE downloads SET status = ?, error = NULL "
+                "WHERE id = ? AND status IN (?, ?)",
+                (QueueStatus.QUEUED, item_id, QueueStatus.FAILED, QueueStatus.BLOCKED),
             )
 
     def remove_item(self, item_id: int) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
-                "DELETE FROM downloads WHERE id = ? AND status != 'downloading'",
-                (item_id,),
+                "DELETE FROM downloads WHERE id = ? AND status != ?",
+                (item_id, QueueStatus.DOWNLOADING),
             )
             return cursor.rowcount > 0
 
     def set_force_redownload(self, item_id: int) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE downloads SET status = 'queued', downloaded = 0, total = NULL, "
+                "UPDATE downloads SET status = ?, downloaded = 0, total = NULL, "
                 "deepbrid_link = NULL, error = NULL, force = 1, size_verified = 0 "
-                "WHERE id = ? AND status != 'downloading'",
-                (item_id,),
+                "WHERE id = ? AND status != ?",
+                (QueueStatus.QUEUED, item_id, QueueStatus.DOWNLOADING),
             )
 
     def force_redownload(self, item_id: int) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE downloads SET status = 'queued', downloaded = 0, total = NULL, "
+                "UPDATE downloads SET status = ?, downloaded = 0, total = NULL, "
                 "deepbrid_link = NULL, error = NULL, size_verified = 0 "
-                "WHERE id = ? AND status != 'downloading'",
-                (item_id,),
+                "WHERE id = ? AND status != ?",
+                (QueueStatus.QUEUED, item_id, QueueStatus.DOWNLOADING),
             )
 
     def update(self, item_id: int, **fields: object) -> None:
@@ -211,6 +237,10 @@ class QueueStore:
         if not fields or not fields.keys() <= allowed:
             raise ValueError("Unsupported queue fields")
         fields = dict(fields)
+        if "status" in fields:
+            status = fields["status"]
+            if not isinstance(status, str) or status not in QueueStatus.ALL:
+                raise ValueError(f"Unsupported queue status: {status!r}")
         if isinstance(fields.get("deepbrid_link"), str):
             fields["deepbrid_link"] = self.secure_store.encrypt_text(
                 fields["deepbrid_link"], DEEPBRID_LINK_AAD
@@ -242,4 +272,5 @@ class QueueStore:
             enabled=bool(row["enabled"]),
             force=bool(row["force"]),
             priority=row["priority"],
+            source=QueueSource(row["source"]),
         )

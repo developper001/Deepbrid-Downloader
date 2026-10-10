@@ -57,6 +57,7 @@ from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
 from .queue_store import QueueStore
 from .queue_runner import QueueRunner
+from .queue_types import QueueSource, QueueStatus
 from .settings_dialog import SettingsDialog
 from .usenet_finder_dialog import UsenetFinderDialog
 from .usenet_browser import UsenetBrowserSession
@@ -206,7 +207,7 @@ def progress_indicator_values(
     total: int | None,
     downloaded: int,
 ) -> tuple[float | None, str]:
-    if status == "completed":
+    if status == QueueStatus.COMPLETED:
         return 1.0, "100%"
     elif total is None or total <= 0:
         return None, "—"
@@ -234,9 +235,9 @@ def format_duration(seconds: float | None) -> str:
 
 
 def format_item_eta(status: str, total: int | None, downloaded: int, speed: float) -> str:
-    if status in {"completed", "skipped"}:
+    if status in {QueueStatus.COMPLETED, QueueStatus.SKIPPED}:
         return "0s"
-    if status != "downloading":
+    if status != QueueStatus.DOWNLOADING:
         return "—"
     if total is None:
         return "Calculating"
@@ -247,7 +248,7 @@ def format_item_eta(status: str, total: int | None, downloaded: int, speed: floa
 
 
 def size_verification_label(status: str, size_verified: bool) -> str:
-    if status != "completed":
+    if status != QueueStatus.COMPLETED:
         return "—"
     return "Verified" if size_verified else "Not verified"
 
@@ -728,6 +729,7 @@ class DownloaderApp:
                 host_message="Usenet Finder",
                 filename=safe_name,
                 total=total,
+                source=QueueSource.USENET,
             ):
                 added_count += 1
             else:
@@ -955,7 +957,7 @@ class DownloaderApp:
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
         for item in self.store.list_items():
-            if item.host_message == "Usenet Finder":
+            if item.source == QueueSource.USENET:
                 continue
             result = supported_link_status(item.url, hosts)
             if result is None:
@@ -1922,7 +1924,7 @@ class DownloaderApp:
 
     def _force_redownload(self) -> None:
         items = self._selected_items()
-        eligible = [item for item in items if item.status != "downloading"]
+        eligible = [item for item in items if item.status != QueueStatus.DOWNLOADING]
         if not eligible:
             if items:
                 messagebox.showinfo("Download active", "Stop the selected downloads before forcing a re-download.")
@@ -2024,17 +2026,23 @@ class DownloaderApp:
         self.link_menu.entryconfigure(2, label=toggle_label)
         self.link_menu.entryconfigure(
             4,
-            state="normal" if any(item.status in {"failed", "blocked"} for item in items) else "disabled",
+            state="normal"
+            if any(item.status in {QueueStatus.FAILED, QueueStatus.BLOCKED} for item in items)
+            else "disabled",
             label="Retry links" if multiple else "Retry link",
         )
         self.link_menu.entryconfigure(
             5,
-            state="normal" if any(item.status != "downloading" for item in items) else "disabled",
+            state="normal"
+            if any(item.status != QueueStatus.DOWNLOADING for item in items)
+            else "disabled",
             label="Force re-download links" if multiple else "Force re-download",
         )
         self.link_menu.entryconfigure(
             7,
-            state="normal" if any(item.status != "downloading" for item in items) else "disabled",
+            state="normal"
+            if any(item.status != QueueStatus.DOWNLOADING for item in items)
+            else "disabled",
             label="Remove links" if multiple else "Remove link",
         )
         self.link_menu.tk_popup(event.x_root, event.y_root)
@@ -2042,7 +2050,7 @@ class DownloaderApp:
 
     def _remove_link(self) -> None:
         items = self._selected_items()
-        eligible = [item for item in items if item.status != "downloading"]
+        eligible = [item for item in items if item.status != QueueStatus.DOWNLOADING]
         if not eligible:
             if items:
                 messagebox.showinfo("Download active", "Stop the selected transfers before removing their links.")
@@ -2075,7 +2083,11 @@ class DownloaderApp:
         self._save_visible_queue_order()
 
     def _retry_item(self) -> None:
-        eligible = [item for item in self._selected_items() if item.status in {"failed", "blocked"}]
+        eligible = [
+            item
+            for item in self._selected_items()
+            if item.status in {QueueStatus.FAILED, QueueStatus.BLOCKED}
+        ]
         for item in eligible:
             self.store.retry_item(item.id)
             self.item_speeds.pop(item.id, None)
@@ -2411,7 +2423,7 @@ class DownloaderApp:
             return
         if not self.store.next_item():
             remaining = self.store.list_items()
-            if any(item.status == "queued" and item.enabled for item in remaining):
+            if any(item.status == QueueStatus.QUEUED and item.enabled for item in remaining):
                 self.status_text.set("No queued links have an available supported host")
             else:
                 self.status_text.set("Queue is empty")
@@ -2458,13 +2470,13 @@ class DownloaderApp:
         active_speeds = [
             self.item_speeds.get(item.id, 0)
             for item in items
-            if item.status == "downloading"
+            if item.status == QueueStatus.DOWNLOADING
         ]
         for position, item in enumerate(items):
             row_id = str(item.id)
             seen.add(row_id)
             host_status = item.host_status.replace("_", " ").title()
-            if item.status == "retrying":
+            if item.status == QueueStatus.RETRYING:
                 queue_status = self.item_status_messages.get(item.id, "Retrying")
             else:
                 queue_status = item.status.replace("_", " ").title()
@@ -2520,7 +2532,7 @@ class DownloaderApp:
         completed_sizes = [
             item.total
             for item in items
-            if item.status == "completed" and item.total is not None and item.total > 0
+            if item.status == QueueStatus.COMPLETED and item.total is not None and item.total > 0
         ]
         return sum(completed_sizes) / len(completed_sizes) if completed_sizes else None
 
@@ -2532,10 +2544,10 @@ class DownloaderApp:
             self.queue_progress_text.set("Queue: 0/0 files (0%)")
             return
 
-        settled_statuses = {"completed", "skipped", "failed", "blocked"}
+        settled_statuses = QueueStatus.SETTLED
         settled_count = sum(item.status in settled_statuses for item in enabled_items)
         active_item = next(
-            (item for item in enabled_items if item.status == "downloading"),
+            (item for item in enabled_items if item.status == QueueStatus.DOWNLOADING),
             None,
         )
         active_fraction = 0.0
@@ -2559,7 +2571,7 @@ class DownloaderApp:
     def _update_total_eta(self, items, speed: float) -> None:
         pending = [
             item for item in items
-            if item.enabled and item.status in {"queued", "downloading", "generating", "retrying"}
+            if item.enabled and item.status in QueueStatus.ACTIVE
         ]
         if not pending:
             self.total_eta_text.set("Total remaining: 0s")

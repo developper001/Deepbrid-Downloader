@@ -16,6 +16,7 @@ from .app_events import (
 )
 from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .queue_store import QueueStore
+from .queue_types import QueueSource, QueueStatus
 
 
 class QueueRunner:
@@ -60,7 +61,7 @@ class QueueRunner:
                 existing_size = existing_path.stat().st_size
                 self.store.update(
                     item.id,
-                    status="skipped",
+                    status=QueueStatus.SKIPPED,
                     filename=guessed_name,
                     downloaded=existing_size,
                     total=existing_size,
@@ -71,9 +72,9 @@ class QueueRunner:
                 self.events.put(RefreshEvent())
                 self.active_cancel_events.pop(item.id, None)
                 continue
-            self.store.update(item.id, status="generating", error=None)
+            self.store.update(item.id, status=QueueStatus.GENERATING, error=None)
             self.log(f"Starting queue item {item.id}.")
-            direct_download = item.host_message == "Usenet Finder"
+            direct_download = item.source == QueueSource.USENET
             self.events.put(
                 StatusEvent(
                     item.id,
@@ -109,7 +110,7 @@ class QueueRunner:
                             skip_queue_item = error.skip_queue_item
                             self.store.update(
                                 item.id,
-                                status="blocked",
+                                status=QueueStatus.BLOCKED,
                                 error=self._stored_error(error),
                             )
                             self.events.put(StatusEvent(item.id, "Blocked by Deepbrid"))
@@ -132,7 +133,7 @@ class QueueRunner:
                             delay = 3600
                         self.store.update(
                             item.id,
-                            status="retrying",
+                            status=QueueStatus.RETRYING,
                             error=self._stored_error(error),
                         )
                         self.events.put(StatusEvent(item.id, status))
@@ -140,12 +141,12 @@ class QueueRunner:
                             break
 
             if self.stop_event.is_set():
-                self.store.update(item.id, status="queued")
+                self.store.update(item.id, status=QueueStatus.QUEUED)
                 self.active_cancel_events.pop(item.id, None)
                 self.log(f"Queue item {item.id} paused.")
                 break
             if item_cancel_event.is_set():
-                self.store.update(item.id, status="queued")
+                self.store.update(item.id, status=QueueStatus.QUEUED)
                 self.active_cancel_events.pop(item.id, None)
                 self.log(
                     f"Queue item {item.id} was disabled before transfer; "
@@ -168,14 +169,14 @@ class QueueRunner:
                 item.id,
                 filename=filename,
                 deepbrid_link=generated_url,
-                status="downloading",
+                status=QueueStatus.DOWNLOADING,
                 error=None,
             )
             if destination.is_file() and not item.force:
                 existing_size = destination.stat().st_size
                 self.store.update(
                     item.id,
-                    status="skipped",
+                    status=QueueStatus.SKIPPED,
                     downloaded=existing_size,
                     total=existing_size,
                     force=0,
@@ -231,7 +232,7 @@ class QueueRunner:
                     final_size = (self.output_dir / filename).stat().st_size
                     self.store.update(
                         item.id,
-                        status="completed",
+                        status=QueueStatus.COMPLETED,
                         size_verified=size_verified,
                         downloaded=final_size,
                         total=final_size,
@@ -243,12 +244,16 @@ class QueueRunner:
                 else:
                     partial_path = self.output_dir / f".{filename}.part"
                     partial_size = partial_path.stat().st_size if partial_path.exists() else 0
-                    self.store.update(item.id, status="queued", downloaded=partial_size)
+                    self.store.update(
+                        item.id,
+                        status=QueueStatus.QUEUED,
+                        downloaded=partial_size,
+                    )
                     self.log(f"Paused {filename} at {partial_size} bytes.")
             except (DeepbridError, OSError) as error:
                 self.store.update(
                     item.id,
-                    status="failed",
+                    status=QueueStatus.FAILED,
                     error=self._stored_error(error),
                 )
                 self.events.put(StatusEvent(item.id, "Failed"))
