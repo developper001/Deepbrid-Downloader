@@ -271,7 +271,7 @@ class UsenetFinderDialog:
         result_actions.grid(row=5, column=0, sticky="ew", pady=(8, 8))
         ttk.Button(
             result_actions,
-            text="Search columns...",
+            text="Configure columns",
             command=lambda: self._show_column_settings("search"),
         ).pack(side="left")
         self.more_button = ttk.Button(
@@ -351,7 +351,7 @@ class UsenetFinderDialog:
         self.auxiliary_files_filter_button.pack(side="left", padx=(8, 0))
         ttk.Button(
             file_actions,
-            text="File columns...",
+            text="Configure columns",
             command=lambda: self._show_column_settings("files"),
         ).pack(side="left", padx=(8, 0))
 
@@ -1021,11 +1021,11 @@ class UsenetFinderDialog:
         actions = ttk.Frame(frame)
         actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         ttk.Button(actions, text="Reset to defaults", command=reset_defaults).pack(side="left")
-        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
         ttk.Button(actions, text="Apply", command=apply_changes).pack(
             side="right",
             padx=(0, 8),
         )
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
         column_tree.bind("<<TreeviewSelect>>", lambda _event: update_controls())
         render_order(working_order[0] if working_order else None)
         dialog.bind("<Escape>", lambda _event: dialog.destroy())

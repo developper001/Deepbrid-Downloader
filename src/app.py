@@ -1989,8 +1989,8 @@ class DownloaderApp:
         actions = ttk.Frame(frame)
         actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         ttk.Button(actions, text="Reset to defaults", command=reset_defaults).pack(side="left")
-        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
         ttk.Button(actions, text="Apply", command=apply_changes).pack(side="right", padx=(0, 8))
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
 
         tree.bind("<<TreeviewSelect>>", lambda _event: update_controls())
         render_order(working_order[0] if working_order else None)
