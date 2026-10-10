@@ -425,6 +425,61 @@ class QueueRunnerTests(unittest.TestCase):
             self.assertTrue(all(item.downloaded == 4 for item in items))
             self.assertFalse(any(store.torrent_file_data(item.id) for item in items))
 
+    def test_runner_continues_after_torrent_upload_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add_torrent_file("invalid.torrent", b"torrent-data")
+            usenet_url = "https://usenet.example/download/next"
+            store.add(
+                usenet_url,
+                host_status="up",
+                host_message="Usenet Finder",
+                filename="next-file.mkv",
+                source=QueueSource.USENET,
+            )
+            downloaded: list[str] = []
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def submit_torrent_file(self, _torrent_data, _filename):
+                    raise DeepbridError("Torrent upload rejected", retryable=False)
+
+                def download(
+                    self,
+                    url,
+                    filename,
+                    directory,
+                    _should_stop,
+                    _on_progress,
+                    **kwargs,
+                ) -> bool:
+                    downloaded.append(url)
+                    (directory / filename).write_bytes(b"file")
+                    kwargs["on_size_verified"](True)
+                    return True
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    queue.Queue(),
+                    threading.Event(),
+                    {},
+                    lambda _message: None,
+                ).run()
+
+            items = store.list_items()
+            self.assertEqual(items[0].status, QueueStatus.BLOCKED)
+            self.assertEqual(items[1].status, QueueStatus.COMPLETED)
+            self.assertEqual(downloaded, [usenet_url])
+
     def test_runner_completes_queue_item_with_preserved_finder_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
