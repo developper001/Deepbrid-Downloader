@@ -2019,6 +2019,7 @@ class DownloaderApp:
             self.item_speeds,
             self.item_status_messages,
             getattr(self, "average_transfer_speed", 0.0),
+            getattr(self, "output_dir", None),
         )
 
     def _update_table_scrollbar(

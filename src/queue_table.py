@@ -5,11 +5,13 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from .deepbrid_client import safe_filename
 from .queue_store import QueueItem
 from .queue_types import QueueSource, QueueStatus
 
 COLUMN_ORDER = (
     "filename",
+    "file_path",
     "extension",
     "link",
     "host",
@@ -25,6 +27,7 @@ COLUMN_ORDER = (
 
 COLUMN_LABELS = {
     "filename": "File name",
+    "file_path": "Full path",
     "extension": "Extension",
     "link": "Original link",
     "host": "Host",
@@ -101,15 +104,23 @@ def size_verification_label(status: str, size_verified: bool) -> str:
     return "Verified" if size_verified else "Not verified"
 
 
+def full_file_path(output_dir: Path, filename: str) -> str:
+    return str((output_dir / filename).resolve())
+
+
 def sort_queue_item(
     item: QueueItem,
     column: str,
     item_speeds: dict[int, float],
     item_status_messages: dict[int, str],
     average_transfer_speed: float,
+    output_dir: Path | None = None,
 ) -> object:
     if column == "filename":
         return (item.filename or Path(item.url.split("?", 1)[0]).name).casefold()
+    if column == "file_path":
+        filename = item.filename or safe_filename(None, item.url, item.id)
+        return full_file_path(output_dir or Path(), filename).casefold()
     if column == "extension":
         filename = item.filename or Path(item.url.split("?", 1)[0]).name
         return Path(filename).suffix.casefold()
@@ -173,6 +184,7 @@ class QueueTableView:
                 command=lambda key=column: app._sort_by(key),
             )
         self.table.column("filename", width=250, minwidth=140, stretch=False)
+        self.table.column("file_path", width=420, minwidth=180, stretch=False)
         self.table.column("extension", width=90, minwidth=75, stretch=False)
         self.table.column("link", width=330, minwidth=150, stretch=False)
         self.table.column("host", width=135, minwidth=100, stretch=False)
@@ -255,6 +267,10 @@ class QueueTableView:
             if not item.enabled:
                 queue_status = "Disabled"
             filename = item.filename or Path(item.url.split("?", 1)[0]).name or item.url
+            path_filename = item.filename or Path(item.url.split("?", 1)[0]).name
+            if not path_filename:
+                path_filename = safe_filename(None, item.url, item.id)
+            file_path = full_file_path(app.output_dir, path_filename)
             extension = Path(filename).suffix.casefold()
             remaining = max(0, item.total - item.downloaded) if item.total is not None else None
             self.progress_indicator_values[row_id] = progress_indicator_values(
@@ -264,6 +280,7 @@ class QueueTableView:
             )
             values = (
                 filename,
+                file_path,
                 extension,
                 (
                     f"Torrent job {item.remote_job_id}"

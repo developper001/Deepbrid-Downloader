@@ -72,6 +72,7 @@ from src.app import (
     validate_api_key,
     validate_output_folder,
 )
+from src.queue_table import full_file_path
 from src.link_utils import extract_supported_links, supported_link_status
 from src.queue_store import QueueStore
 from src.secure_store import SecureStore
@@ -1306,6 +1307,8 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertNotIn("remaining", DEFAULT_COLUMNS)
         self.assertNotIn("status", DEFAULT_COLUMNS)
         self.assertIn("extension", COLUMN_ORDER)
+        self.assertIn("file_path", COLUMN_ORDER)
+        self.assertNotIn("file_path", DEFAULT_COLUMNS)
         self.assertEqual(DEFAULT_COLUMNS[:3], ("filename", "extension", "host"))
         self.assertIn("progress", DEFAULT_COLUMNS)
         self.assertIn("progress_percentage", COLUMN_ORDER)
@@ -1327,9 +1330,14 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(format_item_eta("downloading", 1000, 400, 0), "Calculating")
         self.assertEqual(format_item_eta("queued", None, 0, 100), "—")
         self.assertEqual(format_item_eta("completed", 1000, 1000, 100), "0s")
+        self.assertEqual(
+            full_file_path(Path.cwd(), "Bravo.zip"),
+            str((Path.cwd() / "Bravo.zip").resolve()),
+        )
         app = object.__new__(DownloaderApp)
         app.item_speeds = {1: 100}
         app.item_status_messages = {1: "Link retry 2/5 in 3s"}
+        app.output_dir = Path.cwd()
         item = SimpleNamespace(
             id=1,
             filename="Bravo.zip",
@@ -1340,6 +1348,10 @@ class ValidationAndPresentationTests(unittest.TestCase):
             downloaded=100,
         )
         self.assertEqual(app._sort_value(item, "filename"), "bravo.zip")
+        self.assertEqual(
+            app._sort_value(item, "file_path"),
+            full_file_path(Path.cwd(), "Bravo.zip").casefold(),
+        )
         self.assertEqual(app._sort_value(item, "remaining"), 400)
         self.assertEqual(app._sort_value(item, "eta"), "link retry 2/5 in 3s")
 
