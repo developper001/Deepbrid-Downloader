@@ -1,7 +1,7 @@
 src/__pycache__/*
 tests/__pycache__/*
 src/deepbrid_downloader.sqlite3*
+src/database/deepbrid_downloader.sqlite3*
 build/
 dist/
 *.spec
-

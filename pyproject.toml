@@ -7,13 +7,13 @@ name = "deepbrid-downloader"
 dynamic = ["version"]
 description = "A desktop downloader for Deepbrid-hosted files"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-  "cryptography>=42",
-  "filelock>=3.12",
-  "platformdirs>=4",
-  "tkinterdnd2>=0.4.3",
-  "websocket-client>=1.8",
+  "cryptography>=50.0.2",
+  "filelock>=4.1.0",
+  "platformdirs>=4.12.4",
+  "tkinterdnd2>=0.6.3",
+  "websocket-client>=1.9.2",
 ]
 
 [tool.setuptools]
@@ -21,6 +21,9 @@ packages = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "."
+
+[tool.setuptools.package-data]
+src = ["img/*", "screenshots/*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "src.app_info.__version__"}

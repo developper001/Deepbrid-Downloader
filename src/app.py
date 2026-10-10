@@ -88,21 +88,26 @@ APP_DATA_DIR = Path(user_data_dir("Deepbrid Downloader", "Deepbrid")).expanduser
 OUTPUT_DIR = APP_DATA_DIR / "download"
 DATABASE_PATH = APP_DATA_DIR / "queue.sqlite3"
 USENET_BROWSER_PROFILE = APP_DATA_DIR / "usenet-browser-profile"
-LEGACY_DATABASE_PATH = RESOURCE_ROOT / "src" / "deepbrid_downloader.sqlite3"
+LEGACY_DATABASE_PATH = RESOURCE_ROOT / "src" / "database" / "deepbrid_downloader.sqlite3"
+LEGACY_DATABASE_PATHS = (
+    LEGACY_DATABASE_PATH,
+    RESOURCE_ROOT / "src" / "deepbrid_downloader.sqlite3",
+)
 LEGACY_QUEUE_DATABASE_PATH = PROJECT_ROOT / "download" / "queue.sqlite3"
 LEGACY_STORAGE_PATH = PROJECT_ROOT / "download"
 LEGACY_ENV_PATH = PROJECT_ROOT / ".env"
 INPUT_PATH = PROJECT_ROOT / "input_links.txt"
 README_PATH = RESOURCE_ROOT / "README.md"
 LOG_PATH = LEGACY_STORAGE_PATH / "logs.txt"
-ICON_PATH = RESOURCE_ROOT / "src" / "deepbrid-logo.png"
-ICON_ICO_PATH = RESOURCE_ROOT / "src" / "deepbrid-favicon.ico"
-WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
-WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
-FILE_HOST_LOGO_LIGHT_PATH = RESOURCE_ROOT / "src" / "file-host-links-light.png"
-FILE_HOST_LOGO_DARK_PATH = RESOURCE_ROOT / "src" / "file-host-links-dark.png"
-TORRENT_LOGO_LIGHT_PATH = RESOURCE_ROOT / "src" / "torrent-download-light.png"
-TORRENT_LOGO_DARK_PATH = RESOURCE_ROOT / "src" / "torrent-download-dark.png"
+IMAGE_ROOT = RESOURCE_ROOT / "src" / "img"
+ICON_PATH = IMAGE_ROOT / "deepbrid-logo.png"
+ICON_ICO_PATH = IMAGE_ROOT / "deepbrid-favicon.ico"
+WORDMARK_PATH = IMAGE_ROOT / "deepbrid-wordmark.png"
+WORDMARK_LIGHT_PATH = IMAGE_ROOT / "deepbrid-wordmark-light.png"
+FILE_HOST_LOGO_LIGHT_PATH = IMAGE_ROOT / "file-host-links-light.png"
+FILE_HOST_LOGO_DARK_PATH = IMAGE_ROOT / "file-host-links-dark.png"
+TORRENT_LOGO_LIGHT_PATH = IMAGE_ROOT / "torrent-download-light.png"
+TORRENT_LOGO_DARK_PATH = IMAGE_ROOT / "torrent-download-dark.png"
 COLUMN_ORDER = (
     "filename",
     "extension",
@@ -326,7 +331,7 @@ def migrate_legacy_database(source: Path, target: Path) -> None:
 
 def migrate_legacy_databases(
     target: Path = DATABASE_PATH,
-    sources: tuple[Path, ...] = (LEGACY_DATABASE_PATH, LEGACY_QUEUE_DATABASE_PATH),
+    sources: tuple[Path, ...] = (*LEGACY_DATABASE_PATHS, LEGACY_QUEUE_DATABASE_PATH),
 ) -> None:
     if target.exists():
         return

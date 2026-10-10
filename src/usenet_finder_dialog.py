@@ -155,7 +155,7 @@ class UsenetFinderDialog:
         globe_filename = "usenet-globe-dark.png" if self.app.dark_theme else "usenet-globe-light.png"
         self.globe_image = tk.PhotoImage(
             master=self.dialog,
-            file=str(resource_root / "src" / globe_filename),
+            file=str(resource_root / "src" / "img" / globe_filename),
         )
         self.logo.create_image(23, 23, image=self.globe_image)
         self.logo.create_text(

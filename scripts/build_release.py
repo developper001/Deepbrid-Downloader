@@ -12,21 +12,15 @@ DIST = ROOT / "dist"
 ARTIFACTS = ROOT / "release-artifacts"
 
 
-def action_dialog_logo_data_args() -> list[str]:
+def application_data_args() -> list[str]:
     data_separator = ";" if os.name == "nt" else ":"
-    logo_files = (
-        "file-host-links-dark.png",
-        "file-host-links-light.png",
-        "torrent-download-dark.png",
-        "torrent-download-light.png",
-    )
     return [
-        argument
-        for logo_file in logo_files
-        for argument in (
-            "--add-data",
-            f"{ROOT / 'src' / logo_file}{data_separator}src",
-        )
+        "--add-data",
+        f"{ROOT / 'README.md'}{data_separator}.",
+        "--add-data",
+        f"{ROOT / 'src' / 'img'}{data_separator}src/img",
+        "--add-data",
+        f"{ROOT / 'src' / 'screenshots'}{data_separator}src/screenshots",
     ]
 
 
@@ -60,8 +54,8 @@ def build_windows() -> Path:
         "--collect-all",
         "tkinterdnd2",
         "--icon",
-        str(ROOT / "src" / "deepbrid-favicon.ico"),
-        *action_dialog_logo_data_args(),
+        str(ROOT / "src" / "img" / "deepbrid-favicon.ico"),
+        *application_data_args(),
         "--name",
         "DeepbridDownloader",
         "--distpath",
@@ -83,7 +77,7 @@ def build_linux() -> Path:
         "--onefile",
         "--collect-all",
         "tkinterdnd2",
-        *action_dialog_logo_data_args(),
+        *application_data_args(),
         "--name",
         "DeepbridDownloader",
         "--distpath",
@@ -105,7 +99,7 @@ def build_macos() -> Path:
         "--onefile",
         "--collect-all",
         "tkinterdnd2",
-        *action_dialog_logo_data_args(),
+        *application_data_args(),
         "--name",
         "DeepbridDownloader",
         "--distpath",

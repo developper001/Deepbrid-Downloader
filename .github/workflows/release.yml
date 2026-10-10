@@ -30,10 +30,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.15
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.15'
 
       - name: Verify tag matches app version
         id: version
@@ -59,7 +59,7 @@ jobs:
           PROJECT_ROOT="$(python -c 'from pathlib import Path; print(Path.cwd())')"
           if [ "${{ runner.os }}" = "Windows" ]; then
             DATA_SEP=';'
-            ICON_ARGS=(--icon "$PROJECT_ROOT/src/deepbrid-favicon.ico")
+            ICON_ARGS=(--icon "$PROJECT_ROOT/src/img/deepbrid-favicon.ico")
           else
             DATA_SEP=':'
             ICON_ARGS=()
@@ -75,17 +75,8 @@ jobs:
             --workpath build \
             --specpath build \
             --add-data "$PROJECT_ROOT/README.md${DATA_SEP}." \
-            --add-data "$PROJECT_ROOT/src/deepbrid-logo.png${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/deepbrid-favicon.ico${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/deepbrid-wordmark.png${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/deepbrid-wordmark-light.png${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/file-host-links-dark.png${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/file-host-links-light.png${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/torrent-download-dark.png${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/torrent-download-light.png${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/usenet-globe-dark.png${DATA_SEP}src" \
-            --add-data "$PROJECT_ROOT/src/usenet-globe-light.png${DATA_SEP}src" \
             --add-data "$PROJECT_ROOT/src/img${DATA_SEP}src/img" \
+            --add-data "$PROJECT_ROOT/src/screenshots${DATA_SEP}src/screenshots" \
             launcher.py
 
       - name: Rename asset

@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/developper001/Deepbrid-Downloader/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/developper001/Deepbrid-Downloader/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/developper001/Deepbrid-Downloader?display_name=tag)](https://github.com/developper001/Deepbrid-Downloader/releases/latest)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/github/license/developper001/Deepbrid-Downloader)](https://github.com/developper001/Deepbrid-Downloader/blob/main/LICENSE)
 
 A small cross-platform desktop downloader built with Python and Tkinter for Deepbrid-hosted files. It queues links, keeps progress in SQLite, resumes interrupted transfers when the server supports HTTP Range requests, and exposes a compact, easy-to-monitor interface for daily downloads.
 
 ### Main dashboard
 
-![Deepbrid Downloader dashboard](src/img/DeepbridDownloader.png)
+![Deepbrid Downloader dashboard](src/screenshots/DeepbridDownloader.png)
 
 ## Supported platforms
 
@@ -19,10 +19,13 @@ A small cross-platform desktop downloader built with Python and Tkinter for Deep
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - Tkinter support for your OS
-- `cryptography>=42`
-- `platformdirs>=4`
+- `cryptography>=50.0.2`
+- `filelock>=4.1.0`
+- `platformdirs>=4.12.4`
+- `tkinterdnd2>=0.6.3`
+- `websocket-client>=1.9.2`
 
 ## Installation
 
@@ -45,7 +48,7 @@ python launcher.py
 
 ## Run
 
-Use Python 3.10 or newer with Tkinter available. Install the dependencies and launch the app from the project root:
+Use Python 3.11 or newer with Tkinter available. Install the dependencies and launch the app from the project root:
 
 ```sh
 python -m pip install -r requirements.txt
@@ -78,11 +81,11 @@ If premium-link generation fails transiently, the app makes up to five attempts 
 
 The **Find Usenet links** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Finder-reported file sizes are carried into the queue as estimates until transfer details provide an actual size. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; click **Start** to begin and **Pause** to pause the queue, then click **Start** to resume.
 
-![Usenet Finder search results and resolved files](src/img/UsenetFinder.png)
+![Usenet Finder search results and resolved files](src/screenshots/UsenetFinder.png)
 
 The last query and category are saved and restored when the Finder window is reopened. If the first page of that search is still cached, it is shown immediately without requiring another Search click. Finder also restores the last selected row and its resolved file links while they remain within the configured cache duration. Search result pages and successfully resolved packages are cached locally in encrypted form. Their shared cache duration is configurable in Settings from 1 to 720 hours (24 hours by default); use **Usenet settings** in the Finder window to change it or clear both caches.
 
-![Usenet Finder search history and category selection](src/img/UsenetFinderSearchHistoryAndCategory.png)
+![Usenet Finder search history and category selection](src/screenshots/UsenetFinderSearchHistoryAndCategory.png)
 
 The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; choose **[Clear search history]** in the search history or use **Clear search history** in Settings to remove them. Result categories populate the category picker, and search results and resolved files can be sorted by clicking a column heading. Use **Search columns...** and **File columns...** to show, hide, and reorder columns in each table; the resolved-files extension column is visible by default. **Hide PAR2/NFO** is enabled by default and temporarily filters parity archives and NFO files out of the resolved-file list; the files remain part of the package and are still included by **Add all accessible to queue**. Change this under **Usenet resolved files** in Settings or toggle it in the Finder; the choice is saved between runs. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
 
@@ -134,33 +137,33 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 
 ### Settings
 
-![Searchable settings with API-key validation](src/img/Settings.png)
+![Searchable settings with API-key validation](src/screenshots/Settings.png)
 
 ### Host status and quota overview
 
-![Refresh hosts](src/img/RefreshHosts.png)
+![Refresh hosts](src/screenshots/RefreshHosts.png)
 
 ### About and release updates
 
-![About window with GitHub link and update check](src/img/AboutAndUpdates.png)
+![About window with GitHub link and update check](src/screenshots/AboutAndUpdates.png)
 
 ### Column visibility and queue management
 
-![Columns and queue options](src/img/OrderColumns.png)
+![Columns and queue options](src/screenshots/OrderColumns.png)
 
 ### Right-click actions and retry flow
 
-![Right-click menu](src/img/RightClickMenu.png)
+![Right-click menu](src/screenshots/RightClickMenu.png)
 
-![Retry workflow](src/img/RetrySystem.png)
+![Retry workflow](src/screenshots/RetrySystem.png)
 
-![Safe retry handling](src/img/SafeRetry.png)
+![Safe retry handling](src/screenshots/SafeRetry.png)
 
 ### Dark mode and console logging
 
-![Dark mode](src/img/DarkMode.png)
+![Dark mode](src/screenshots/DarkMode.png)
 
-![Console logs](src/img/ConsoleFullLogs.png)
+![Console logs](src/screenshots/ConsoleFullLogs.png)
 
 ## Tests
 
@@ -181,9 +184,11 @@ GitHub Actions runs the same tests on pushes to `main` and pull requests across 
 This repository uses GitHub Actions for CI, weekly dependency audits, and tag-based releases. Workflow actions use Node 24-compatible releases.
 
 It runs:
-- Python 3.10
 - Python 3.11
 - Python 3.12
+- Python 3.13
+- Python 3.14
+- Python 3.15
 - on Windows, macOS, and Ubuntu
 - `python -m unittest -q tests.test_downloader tests.test_queue`
 - a package build step with `python -m build`

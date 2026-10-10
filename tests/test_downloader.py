@@ -47,7 +47,9 @@ from src.app import (
     FILE_HOST_LOGO_LIGHT_PATH,
     DownloaderApp,
     LEGACY_DATABASE_PATH,
+    LEGACY_DATABASE_PATHS,
     LEGACY_QUEUE_DATABASE_PATH,
+    IMAGE_ROOT,
     OUTPUT_DIR,
     TORRENT_LOGO_DARK_PATH,
     TORRENT_LOGO_LIGHT_PATH,
@@ -1238,7 +1240,10 @@ class ValidationAndPresentationTests(unittest.TestCase):
         readme_text = DownloaderApp.readme_text()
         self.assertIn("## Features", readme_text)
         self.assertIn("MIT License", readme_text)
-        self.assertIn("src/img/DeepbridDownloader.png", DownloaderApp.readme_image_paths())
+        self.assertIn(
+            "src/screenshots/DeepbridDownloader.png",
+            DownloaderApp.readme_image_paths(),
+        )
 
     def test_about_parser_recognizes_linked_readme_badges(self) -> None:
         badge_line = (
@@ -1256,6 +1261,13 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(OUTPUT_DIR.parent, APP_DATA_DIR)
         self.assertNotEqual(DATABASE_PATH, LEGACY_DATABASE_PATH)
         self.assertNotEqual(DATABASE_PATH, LEGACY_QUEUE_DATABASE_PATH)
+        self.assertEqual(LEGACY_DATABASE_PATH.parent.name, "database")
+        self.assertEqual(
+            LEGACY_DATABASE_PATHS[1],
+            LEGACY_DATABASE_PATH.parent.parent / "deepbrid_downloader.sqlite3",
+        )
+        self.assertEqual(IMAGE_ROOT.name, "img")
+        self.assertTrue(IMAGE_ROOT.is_dir())
 
     def test_dark_theme_state_is_persisted(self) -> None:
         app = object.__new__(DownloaderApp)
@@ -1405,7 +1417,7 @@ class LogRedactionTests(unittest.TestCase):
             old_directory = root / "download"
             old_directory.mkdir()
             old_database = old_directory / "queue.sqlite3"
-            new_database = root / "src" / "deepbrid_downloader.sqlite3"
+            new_database = root / "src" / "database" / "deepbrid_downloader.sqlite3"
             with closing(sqlite3.connect(old_database)) as connection:
                 connection.execute("CREATE TABLE data (value TEXT NOT NULL)")
                 connection.execute("INSERT INTO data VALUES ('preserved')")
@@ -2131,7 +2143,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         )
 
     def test_antialiased_globe_assets_are_square_pngs_for_both_themes(self) -> None:
-        asset_directory = Path(__file__).resolve().parent.parent / "src"
+        asset_directory = Path(__file__).resolve().parent.parent / "src" / "img"
         for filename in ("usenet-globe-light.png", "usenet-globe-dark.png"):
             with self.subTest(filename=filename):
                 asset = (asset_directory / filename).read_bytes()
