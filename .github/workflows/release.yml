@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -30,22 +36,24 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Set up Python 3.15
+      - name: Set up Python 3.14
         uses: actions/setup-python@v6
         with:
-          python-version: '3.15'
+          python-version: '3.14'
 
       - name: Verify tag matches app version
         id: version
         shell: bash
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_NAME="${{ inputs.release_tag || github.ref_name }}"
+          TAG_VERSION="${TAG_NAME#v}"
           APP_VERSION="$(python -c 'from src.app_info import __version__; print(__version__)')"
           if [ "$TAG_VERSION" != "$APP_VERSION" ]; then
-            echo "Release tag $GITHUB_REF_NAME does not match app version $APP_VERSION" >&2
+            echo "Release tag $TAG_NAME does not match app version $APP_VERSION" >&2
             exit 1
           fi
           echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: |
@@ -123,6 +131,7 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           files: |
             release-artifacts/**
           body_path: release-summary.md
