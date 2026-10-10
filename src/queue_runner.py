@@ -87,6 +87,7 @@ class QueueRunner:
             returned_name = None
             quick_attempts = 0
             blocked = False
+            skip_queue_item = False
 
             if direct_download:
                 generated_url = item.url
@@ -105,16 +106,23 @@ class QueueRunner:
                         self.log(f"Link generation attempt {quick_attempts} failed: {error}")
                         if not error.retryable:
                             blocked = True
+                            skip_queue_item = error.skip_queue_item
                             self.store.update(
                                 item.id,
                                 status="blocked",
                                 error=self._stored_error(error),
                             )
                             self.events.put(StatusEvent(item.id, "Blocked by Deepbrid"))
-                            self.log(
-                                "Deepbrid marked this response non-retryable. The queue is paused; "
-                                "contact Deepbrid support."
-                            )
+                            if skip_queue_item:
+                                self.log(
+                                    "Deepbrid does not support this filehost. "
+                                    "Skipping this item and continuing the queue."
+                                )
+                            else:
+                                self.log(
+                                    "Deepbrid marked this response non-retryable. The queue is paused; "
+                                    "contact Deepbrid support."
+                                )
                             break
                         if quick_attempts < 5:
                             status = f"Link retry {quick_attempts + 1}/5 in 3s"
@@ -147,6 +155,8 @@ class QueueRunner:
             if blocked:
                 self.active_cancel_events.pop(item.id, None)
                 self.events.put(RefreshEvent())
+                if skip_queue_item:
+                    continue
                 break
             if not generated_url:
                 self.active_cancel_events.pop(item.id, None)

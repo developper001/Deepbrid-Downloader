@@ -300,6 +300,71 @@ class QueueRunnerTests(unittest.TestCase):
             self.assertEqual(item.status, "blocked")
             self.assertEqual(item.error, "DeepbridError")
 
+    def test_runner_continues_after_unsupported_filehost_and_downloads_usenet_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add("https://unsupported.example/file.zip")
+            usenet_urls = [
+                "https://usenet.example/download/first",
+                "https://usenet.example/download/second",
+            ]
+            for index, url in enumerate(usenet_urls, start=1):
+                store.add(
+                    url,
+                    host_status="up",
+                    host_message="Usenet Finder",
+                    filename=f"episode-{index}.mkv",
+                )
+            events: queue.Queue = queue.Queue()
+            generated_urls: list[str] = []
+            downloaded_urls: list[str] = []
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def generate_link(self, url: str) -> tuple[str, str]:
+                    generated_urls.append(url)
+                    raise DeepbridError(
+                        "Filehoster not supported",
+                        retryable=False,
+                        skip_queue_item=True,
+                    )
+
+                def download(
+                    self,
+                    url,
+                    filename,
+                    directory,
+                    _should_stop,
+                    _on_progress,
+                    **kwargs,
+                ) -> bool:
+                    downloaded_urls.append(url)
+                    (directory / filename).write_bytes(b"file")
+                    kwargs["on_size_verified"](True)
+                    return True
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    events,
+                    threading.Event(),
+                    {},
+                    lambda _message: None,
+                ).run()
+
+            items = store.list_items()
+            self.assertEqual(generated_urls, ["https://unsupported.example/file.zip"])
+            self.assertEqual(downloaded_urls, usenet_urls)
+            self.assertEqual([item.status for item in items], ["blocked", "completed", "completed"])
+
     def test_runner_stops_when_api_key_validation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
@@ -2467,6 +2532,7 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
                 DeepbridClient("test-key").generate_link("https://unsupported.example/file")
 
         self.assertFalse(raised.exception.retryable)
+        self.assertTrue(raised.exception.skip_queue_item)
 
     def test_valid_api_key_account_response_is_accepted(self) -> None:
         response = FakeResponse(200, {}, b'{"type":"premium","error":0}')

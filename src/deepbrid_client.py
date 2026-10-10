@@ -17,10 +17,18 @@ APP_USER_AGENT = "DeepBridDownloader/0.2"
 
 
 class DeepbridError(Exception):
-    def __init__(self, message: str, *, retryable: bool = True, status_code: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = True,
+        status_code: int | None = None,
+        skip_queue_item: bool = False,
+    ):
         super().__init__(message)
         self.retryable = retryable
         self.status_code = status_code
+        self.skip_queue_item = skip_queue_item
 
 
 class DeepbridClient:
@@ -170,6 +178,7 @@ class DeepbridClient:
             raise DeepbridError(
                 f"{message}\nHTTP 200; response body: {logged_body}\nRequest: {curl_command}",
                 retryable=retryable,
+                skip_queue_item=error_code in (10, "10"),
             )
         generated_url = result.get("link")
         if not isinstance(generated_url, str) or not generated_url:
