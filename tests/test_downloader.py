@@ -2379,13 +2379,70 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._request_running = False
         dialog.results = Mock()
         dialog.results.selection.return_value = ("selected-result",)
-        dialog._results = {}
-        dialog.resolve_button = Mock()
+        dialog._results = {
+            "selected-result": SimpleNamespace(token="selected-token")
+        }
+        dialog._restoring_result_token = None
         with patch.object(dialog, "resolve_selected") as resolve_selected:
             dialog._selection_changed(Mock())
 
-        dialog.resolve_button.configure.assert_called_once_with(state="normal")
         resolve_selected.assert_called_once_with()
+
+    def test_right_click_result_offers_refresh_selected(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.dialog = Mock()
+        dialog._request_running = False
+        result = SimpleNamespace(token="selected-token")
+        dialog._results = {"result-row": result}
+        dialog.results = Mock()
+        dialog.results.identify_row.return_value = "result-row"
+        dialog.results.selection.return_value = ()
+        event = SimpleNamespace(y=15, x_root=100, y_root=200)
+
+        with (
+            patch("src.usenet_finder_dialog.tk.Menu") as menu_class,
+            patch.object(dialog, "resolve_selected") as refresh,
+        ):
+            self.assertEqual(dialog._show_result_context_menu(event), "break")
+
+        dialog.results.selection_set.assert_called_once_with("result-row")
+        menu = menu_class.return_value
+        self.assertEqual(menu.add_command.call_args.kwargs["label"], "Refresh selected")
+        self.assertEqual(menu.add_command.call_args.kwargs["state"], "normal")
+        menu.tk_popup.assert_called_once_with(100, 200)
+        menu.grab_release.assert_called_once_with()
+        menu.add_command.call_args.kwargs["command"]()
+        refresh.assert_called_once_with()
+
+    def test_right_click_resolved_file_offers_add_selected(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.dialog = Mock()
+        dialog._request_running = False
+        file = FinderFile("episode.mkv", "https://example.test/file", "1 GB", True, None, {})
+        dialog._files = {"file-row": file}
+        dialog.files = Mock()
+        selected: list[str] = []
+        dialog.files.identify_row.return_value = "file-row"
+        dialog.files.selection.side_effect = lambda: tuple(selected)
+        dialog.files.selection_set.side_effect = lambda item_id: selected.append(item_id)
+        dialog._update_file_actions = Mock()
+        event = SimpleNamespace(y=15, x_root=100, y_root=200)
+
+        with (
+            patch("src.usenet_finder_dialog.tk.Menu") as menu_class,
+            patch.object(dialog, "add_selected_files") as add_selected,
+        ):
+            self.assertEqual(dialog._show_file_context_menu(event), "break")
+
+        self.assertEqual(selected, ["file-row"])
+        dialog._update_file_actions.assert_called_once_with()
+        menu = menu_class.return_value
+        self.assertEqual(menu.add_command.call_args.kwargs["label"], "Add selected to queue")
+        self.assertEqual(menu.add_command.call_args.kwargs["state"], "normal")
+        menu.tk_popup.assert_called_once_with(100, 200)
+        menu.grab_release.assert_called_once_with()
+        menu.add_command.call_args.kwargs["command"]()
+        add_selected.assert_called_once_with()
 
 
     def test_resolving_a_cached_result_skips_the_finder_request(self) -> None:

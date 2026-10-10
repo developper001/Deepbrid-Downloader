@@ -81,6 +81,7 @@ class UsenetFinderDialog:
         self._files: dict[str, FinderFile] = {}
         self._file_sort_column = "name"
         self._file_sort_reverse = False
+        self._suppress_result_selection_token: str | None = None
         self.search_column_order, self.search_visible_columns = self._load_column_layout(
             "usenet_search_column_order",
             "usenet_search_visible_columns",
@@ -260,16 +261,16 @@ class UsenetFinderDialog:
         self.results.configure(yscrollcommand=results_scrollbar.set)
         self.results.bind("<<TreeviewSelect>>", self._selection_changed)
         self.results.bind("<Double-1>", lambda _event: self.resolve_selected())
+        self.results.bind("<Button-3>", self._show_result_context_menu)
+        self.results.bind("<Button-2>", self._show_result_context_menu)
 
         result_actions = ttk.Frame(frame)
         result_actions.grid(row=5, column=0, sticky="ew", pady=(8, 8))
-        self.resolve_button = ttk.Button(
+        ttk.Button(
             result_actions,
-            text="Refresh selected",
-            command=self.resolve_selected,
-            state="disabled",
-        )
-        self.resolve_button.pack(side="left")
+            text="Search columns...",
+            command=lambda: self._show_column_settings("search"),
+        ).pack(side="left")
         self.more_button = ttk.Button(
             result_actions,
             text="Load more",
@@ -277,11 +278,6 @@ class UsenetFinderDialog:
             state="disabled",
         )
         self.more_button.pack(side="left", padx=(8, 0))
-        ttk.Button(
-            result_actions,
-            text="Search columns...",
-            command=lambda: self._show_column_settings("search"),
-        ).pack(side="right")
         self.status = tk.StringVar(
             master=self.dialog,
             value="Open Chrome / sign in before searching.",
@@ -317,6 +313,8 @@ class UsenetFinderDialog:
         files_scrollbar.grid(row=7, column=1, sticky="ns")
         self.files.configure(yscrollcommand=files_scrollbar.set)
         self.files.bind("<<TreeviewSelect>>", self._file_selection_changed)
+        self.files.bind("<Button-3>", self._show_file_context_menu)
+        self.files.bind("<Button-2>", self._show_file_context_menu)
         resolved_header = ttk.Frame(frame)
         resolved_header.grid(row=6, column=0, sticky="ew", pady=(0, 4))
         resolved_header.columnconfigure(0, weight=1)
@@ -325,11 +323,6 @@ class UsenetFinderDialog:
             column=0,
             sticky="sw",
         )
-        ttk.Button(
-            resolved_header,
-            text="File columns...",
-            command=lambda: self._show_column_settings("files"),
-        ).grid(row=0, column=1, sticky="e")
         frame.rowconfigure(7, weight=2)
         file_actions = ttk.Frame(frame)
         file_actions.grid(row=8, column=0, sticky="ew", pady=(8, 0))
@@ -347,6 +340,11 @@ class UsenetFinderDialog:
             state="disabled",
         )
         self.add_accessible_button.pack(side="left", padx=(8, 0))
+        ttk.Button(
+            file_actions,
+            text="File columns...",
+            command=lambda: self._show_column_settings("files"),
+        ).pack(side="left", padx=(8, 0))
 
     def open_browser(self) -> bool:
         try:
@@ -630,7 +628,6 @@ class UsenetFinderDialog:
     def _begin_request(self, message: str) -> None:
         self._request_running = True
         self.search_button.configure(state="disabled")
-        self.resolve_button.configure(state="disabled")
         self.more_button.configure(state="disabled")
         self.add_selected_button.configure(state="disabled")
         self.add_accessible_button.configure(state="disabled")
@@ -639,18 +636,77 @@ class UsenetFinderDialog:
     def _selection_changed(self, _event: tk.Event) -> None:
         if self._request_running:
             return
-        selected = bool(self.results.selection())
-        self.resolve_button.configure(state="normal" if selected else "disabled")
-        if selected:
-            selected_result = self._results.get(self.results.selection()[0])
+        selection = self.results.selection()
+        if selection:
+            selected = self._results.get(selection[0])
             if (
-                selected_result is not None
-                and selected_result.token == self._restoring_result_token
+                selected is not None
+                and selected.token == getattr(
+                    self,
+                    "_suppress_result_selection_token",
+                    None,
+                )
             ):
-                self._restoring_result_token = None
+                self._suppress_result_selection_token = None
                 return
+        if not selection:
+            return
+        selected_result = self._results.get(selection[0])
+        if (
+            selected_result is not None
+            and selected_result.token == self._restoring_result_token
+        ):
             self._restoring_result_token = None
-            self.resolve_selected()
+            return
+        self._restoring_result_token = None
+        self.resolve_selected()
+
+    def _show_result_context_menu(self, event: tk.Event) -> str:
+        item_id = self.results.identify_row(event.y)
+        if not item_id:
+            return "break"
+        result = self._results.get(item_id)
+        if result is None:
+            return "break"
+        if item_id not in self.results.selection():
+            if not self._request_running:
+                self._suppress_result_selection_token = result.token
+            self.results.selection_set(item_id)
+        menu = tk.Menu(self.dialog, tearoff=0)
+        menu.add_command(
+            label="Refresh selected",
+            command=self.resolve_selected,
+            state="disabled" if self._request_running else "normal",
+        )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def _show_file_context_menu(self, event: tk.Event) -> str:
+        item_id = self.files.identify_row(event.y)
+        if not item_id:
+            return "break"
+        if item_id not in self.files.selection():
+            self.files.selection_set(item_id)
+            self._update_file_actions()
+        can_add = any(
+            self._files.get(selected_id) is not None
+            and self._files[selected_id].is_accessible
+            for selected_id in self.files.selection()
+        )
+        menu = tk.Menu(self.dialog, tearoff=0)
+        menu.add_command(
+            label="Add selected to queue",
+            command=self.add_selected_files,
+            state="normal" if can_add and not self._request_running else "disabled",
+        )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
 
     def _process_events(self) -> None:
         if not self.dialog.winfo_exists():
@@ -668,9 +724,6 @@ class UsenetFinderDialog:
                 continue
             self._request_running = False
             self.search_button.configure(state="normal")
-            self.resolve_button.configure(
-                state="normal" if self.results.selection() else "disabled"
-            )
             self.more_button.configure(
                 state="normal" if self._has_more else "disabled"
             )
