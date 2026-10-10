@@ -18,6 +18,7 @@ LAST_SELECTED_RESULT_PURPOSE = b"usenet-finder-last-selected-result-v1"
 RESOLVED_CACHE_PURPOSE = b"usenet-finder-resolved-cache-v1"
 SEARCH_CACHE_PURPOSE = b"usenet-finder-search-cache-v1"
 CACHE_DURATION_SETTING = "usenet_finder_cache_duration_hours"
+HIDE_AUXILIARY_FILES_SETTING = "usenet_finder_hide_par2_nfo"
 DEFAULT_CACHE_DURATION_HOURS = 24
 MIN_CACHE_DURATION_HOURS = 1
 MAX_CACHE_DURATION_HOURS = 720

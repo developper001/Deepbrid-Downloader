@@ -53,6 +53,7 @@ class FinderController(Protocol):
     def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]: ...
     def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_settings(self, initial_filter: str = "") -> None: ...
+    def _set_usenet_finder_hide_auxiliary_files(self, enabled: bool) -> None: ...
 
 
 class UsenetFinderDialog:
@@ -82,7 +83,7 @@ class UsenetFinderDialog:
         self._file_order: list[str] = []
         self._file_sort_column = "name"
         self._file_sort_reverse = False
-        self._hide_auxiliary_files = False
+        self._hide_auxiliary_files = app.usenet_finder_hide_auxiliary_files
         self._suppress_result_selection_token: str | None = None
         self.search_column_order, self.search_visible_columns = self._load_column_layout(
             "usenet_search_column_order",
@@ -1111,7 +1112,16 @@ class UsenetFinderDialog:
         return extension in {".par2", ".nfo"}
 
     def _toggle_auxiliary_files_filter(self) -> None:
-        self._hide_auxiliary_files = not self._hide_auxiliary_files
+        try:
+            self.app._set_usenet_finder_hide_auxiliary_files(
+                not self._hide_auxiliary_files
+            )
+        except (OSError, SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not save Usenet resolved-file filter setting: {error}")
+            self.status.set(f"Could not save filter setting: {error}")
+
+    def _set_auxiliary_files_hidden(self, enabled: bool) -> None:
+        self._hide_auxiliary_files = enabled
         self.files.selection_remove(*self.files.selection())
         self._render_file_rows()
         self.auxiliary_files_filter_button.configure(

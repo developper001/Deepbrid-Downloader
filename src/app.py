@@ -63,6 +63,7 @@ from .usenet_browser import UsenetBrowserSession
 from .usenet_finder import is_valid_finder_link
 from .usenet_finder_state import (
     CACHE_DURATION_SETTING,
+    HIDE_AUXILIARY_FILES_SETTING,
     UsenetFinderState,
     valid_cache_duration_hours,
 )
@@ -407,6 +408,9 @@ class DownloaderApp:
         self.console_visible = False
         self.dark_theme = config.dark_theme
         self.usenet_finder_cache_duration_hours = config.usenet_finder_cache_duration_hours
+        self.usenet_finder_hide_auxiliary_files = (
+            config.usenet_finder_hide_auxiliary_files
+        )
         self.append_output_log_enabled = config.append_output_log_enabled
         self.append_output_log_path = tk.StringVar(
             master=root,
@@ -1332,6 +1336,20 @@ class DownloaderApp:
         validated_hours = valid_cache_duration_hours(hours)
         self.secure_store.set_setting(CACHE_DURATION_SETTING, str(validated_hours))
         self.usenet_finder_cache_duration_hours = validated_hours
+
+    def _set_usenet_finder_hide_auxiliary_files(self, enabled: bool) -> None:
+        self.secure_store.set_setting(
+            HIDE_AUXILIARY_FILES_SETTING,
+            "true" if enabled else "false",
+        )
+        self.usenet_finder_hide_auxiliary_files = enabled
+        dialog = self.usenet_finder_dialog
+        if dialog is not None:
+            try:
+                if dialog.dialog.winfo_exists():
+                    dialog._set_auxiliary_files_hidden(enabled)
+            except tk.TclError:
+                pass
 
     def _set_append_output_log(self, enabled: bool, path_text: str) -> None:
         path_text = path_text.strip()

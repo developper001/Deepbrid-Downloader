@@ -95,6 +95,7 @@ from src.usenet_finder_state import (
     CACHE_DURATION_SETTING,
     CACHE_TTL_SECONDS,
     DEFAULT_CACHE_DURATION_HOURS,
+    HIDE_AUXILIARY_FILES_SETTING,
     UsenetFinderState,
     valid_cache_duration_hours,
 )
@@ -590,6 +591,7 @@ class AppConfigurationTests(unittest.TestCase):
                 config.usenet_finder_cache_duration_hours,
                 DEFAULT_CACHE_DURATION_HOURS,
             )
+            self.assertFalse(config.usenet_finder_hide_auxiliary_files)
             self.assertFalse(config.append_output_log_enabled)
             self.assertEqual(config.append_output_log_path, default_log_path)
             with closing(sqlite3.connect(database)) as connection:
@@ -612,6 +614,7 @@ class AppConfigurationTests(unittest.TestCase):
             store.set_setting("output_directory", str(downloads / "custom"))
             store.set_setting("visible_columns", json.dumps(["filename", "progress"]))
             store.set_setting(CACHE_DURATION_SETTING, "48")
+            store.set_setting(HIDE_AUXILIARY_FILES_SETTING, "true")
             log_path = downloads / "diagnostics.log"
             store.set_setting("append_output_log_enabled", "true")
             store.set_setting("append_output_log_path", str(log_path))
@@ -630,6 +633,7 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertEqual(config.output_dir, downloads / "custom")
             self.assertEqual(config.visible_columns, ["filename", "progress"])
             self.assertEqual(config.usenet_finder_cache_duration_hours, 48)
+            self.assertTrue(config.usenet_finder_hide_auxiliary_files)
             self.assertTrue(config.append_output_log_enabled)
             self.assertEqual(config.append_output_log_path, log_path)
 
@@ -905,6 +909,24 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
         self.assertEqual(app.usenet_finder_cache_duration_hours, 36)
         self.assertEqual(saved_settings[CACHE_DURATION_SETTING], "36")
+
+    def test_usenet_auxiliary_file_filter_setting_is_persisted(self) -> None:
+        saved_settings: dict[str, str] = {}
+        app = object.__new__(DownloaderApp)
+        app.secure_store = SimpleNamespace(
+            set_setting=lambda name, value: saved_settings.__setitem__(name, value)
+        )
+        finder_dialog = SimpleNamespace(
+            dialog=SimpleNamespace(winfo_exists=lambda: True),
+            _set_auxiliary_files_hidden=Mock(),
+        )
+        app.usenet_finder_dialog = finder_dialog
+
+        app._set_usenet_finder_hide_auxiliary_files(True)
+
+        self.assertTrue(app.usenet_finder_hide_auxiliary_files)
+        self.assertEqual(saved_settings[HIDE_AUXILIARY_FILES_SETTING], "true")
+        finder_dialog._set_auxiliary_files_hidden.assert_called_once_with(True)
 
     def test_single_instance_lock_rejects_second_owner_and_releases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -2387,6 +2409,10 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog.auxiliary_files_filter_button = Mock()
         dialog._update_file_actions = Mock()
         dialog.status = Mock()
+        dialog.app = SimpleNamespace(
+            _set_usenet_finder_hide_auxiliary_files=dialog._set_auxiliary_files_hidden,
+            _log=Mock(),
+        )
 
         dialog._show_package(FinderPackage("Example", (regular, parity, info), {}))
         dialog._toggle_auxiliary_files_filter()

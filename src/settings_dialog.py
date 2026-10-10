@@ -24,6 +24,7 @@ class SettingsController(Protocol):
     auto_check_updates: tk.BooleanVar
     dark_theme: bool
     usenet_finder_cache_duration_hours: int
+    usenet_finder_hide_auxiliary_files: bool
     append_output_log_enabled: bool
     append_output_log_path: tk.StringVar
     startup_manager: StartupManager
@@ -38,6 +39,7 @@ class SettingsController(Protocol):
     def _configure_startup(self, button: ttk.Button, status: tk.StringVar) -> None: ...
     def _persist_auto_check_updates(self) -> None: ...
     def _set_usenet_finder_cache_duration(self, hours: int) -> None: ...
+    def _set_usenet_finder_hide_auxiliary_files(self, enabled: bool) -> None: ...
     def _clear_usenet_finder_cache(self) -> None: ...
     def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_columns_dialog(self) -> None: ...
@@ -330,6 +332,41 @@ class SettingsDialog:
             "Usenet Finder cache",
             "usenet usenet finder search resolved links cache duration expiry clear",
             build_finder_cache,
+        )
+
+        hide_auxiliary_files = tk.BooleanVar(
+            master=self.dialog,
+            value=app.usenet_finder_hide_auxiliary_files,
+        )
+        auxiliary_files_status = tk.StringVar(master=self.dialog)
+
+        def save_auxiliary_file_filter() -> None:
+            enabled = hide_auxiliary_files.get()
+            try:
+                app._set_usenet_finder_hide_auxiliary_files(enabled)
+            except (OSError, SecureStorageError, sqlite3.Error) as error:
+                hide_auxiliary_files.set(app.usenet_finder_hide_auxiliary_files)
+                auxiliary_files_status.set(f"Could not save setting: {error}")
+                app._log(f"Could not save Usenet resolved-file filter setting: {error}")
+                return
+            auxiliary_files_status.set("Saved.")
+
+        def build_auxiliary_file_filter(controls: ttk.Frame) -> None:
+            ttk.Checkbutton(
+                controls,
+                text="Hide PAR2 and NFO files in resolved results",
+                variable=hide_auxiliary_files,
+                command=save_auxiliary_file_filter,
+            ).pack(anchor="w")
+            ttk.Label(controls, textvariable=auxiliary_files_status).pack(
+                anchor="w",
+                pady=(4, 0),
+            )
+
+        add_setting(
+            "Usenet resolved files",
+            "usenet finder hide par2 nfo auxiliary files filter resolved results",
+            build_auxiliary_file_filter,
         )
 
         history_status = tk.StringVar(master=self.dialog)

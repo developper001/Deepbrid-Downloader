@@ -9,6 +9,7 @@ from .secure_store import SecureStorageError, SecureStore
 from .usenet_finder_state import (
     CACHE_DURATION_SETTING,
     DEFAULT_CACHE_DURATION_HOURS,
+    HIDE_AUXILIARY_FILES_SETTING,
     valid_cache_duration_hours,
 )
 
@@ -34,6 +35,7 @@ class AppConfiguration:
     hosts: dict[str, str]
     dark_theme: bool
     usenet_finder_cache_duration_hours: int
+    usenet_finder_hide_auxiliary_files: bool
     append_output_log_enabled: bool
     append_output_log_path: Path
 
@@ -207,6 +209,9 @@ class AppConfiguration:
             hosts=hosts,
             dark_theme=secure_store.get_setting("dark_theme") == "true",
             usenet_finder_cache_duration_hours=cache_duration_hours,
+            usenet_finder_hide_auxiliary_files=(
+                secure_store.get_setting(HIDE_AUXILIARY_FILES_SETTING) == "true"
+            ),
             append_output_log_enabled=setting_is_enabled(
                 secure_store.get_setting(OUTPUT_LOG_ENABLED_SETTING),
                 default=False,
