@@ -154,6 +154,45 @@ class FakeSelectionTable:
 
 
 class AppConfigurationTests(unittest.TestCase):
+    def test_legacy_default_columns_are_migrated_to_show_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "settings.sqlite3")
+            store.set_setting(
+                "visible_columns",
+                json.dumps(
+                    [
+                        "filename",
+                        "host",
+                        "size",
+                        "progress",
+                        "time_remaining",
+                        "eta",
+                        "verification",
+                    ]
+                ),
+            )
+            store.set_setting("progress_column_initialized", "true")
+            store.set_setting("progress_percentage_column_initialized", "true")
+
+            config = AppConfiguration.load(
+                store,
+                COLUMN_ORDER,
+                DEFAULT_COLUMNS,
+                lambda: Path(temporary_directory),
+                lambda: None,
+                lambda: None,
+                lambda: Path(temporary_directory) / "deepbrid-output.log",
+            )
+
+            self.assertEqual(
+                config.visible_columns[:3],
+                ["filename", "extension", "host"],
+            )
+            self.assertEqual(
+                json.loads(store.get_setting("visible_columns") or "[]"),
+                config.visible_columns,
+            )
+
     def test_configuration_loads_defaults_and_persists_column_migrations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             database = Path(temporary_directory) / "settings.sqlite3"
@@ -365,6 +404,26 @@ class ApplicationShutdownTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_action_dialog_maximize_button_toggles_and_restores_geometry(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        dialog = Mock()
+        dialog.geometry.return_value = "800x500+100+100"
+        button = Mock()
+        state: dict[str, bool | str] = {"maximized": False, "geometry": ""}
+
+        app._toggle_dialog_maximize(dialog, button, state)
+
+        dialog.state.assert_called_once_with("zoomed")
+        button.configure.assert_called_once_with(text="Restore")
+        self.assertTrue(state["maximized"])
+
+        app._toggle_dialog_maximize(dialog, button, state)
+
+        dialog.state.assert_called_with("normal")
+        dialog.geometry.assert_called_with("800x500+100+100")
+        button.configure.assert_called_with(text="Maximize")
+        self.assertFalse(state["maximized"])
+
     def test_linux_startup_configuration_creates_and_removes_autostart_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             home = Path(temporary_directory) / "user home"
@@ -1235,7 +1294,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertNotIn("remaining", DEFAULT_COLUMNS)
         self.assertNotIn("status", DEFAULT_COLUMNS)
         self.assertIn("extension", COLUMN_ORDER)
-        self.assertNotIn("extension", DEFAULT_COLUMNS)
+        self.assertEqual(DEFAULT_COLUMNS[:3], ("filename", "extension", "host"))
         self.assertIn("progress", DEFAULT_COLUMNS)
         self.assertIn("progress_percentage", COLUMN_ORDER)
         self.assertNotIn("progress_percentage", DEFAULT_COLUMNS)

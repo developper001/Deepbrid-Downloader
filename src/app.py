@@ -111,7 +111,16 @@ COLUMN_ORDER = (
     "eta",
     "verification",
 )
-DEFAULT_COLUMNS = ("filename", "host", "size", "progress", "time_remaining", "eta", "verification")
+DEFAULT_COLUMNS = (
+    "filename",
+    "extension",
+    "host",
+    "size",
+    "progress",
+    "time_remaining",
+    "eta",
+    "verification",
+)
 API_KEY_DASHBOARD_URL = "https://www.deepbrid.com/devices"
 DEEPBRID_DASHBOARD_URL = "https://www.deepbrid.com/dashboard"
 
@@ -409,6 +418,8 @@ class DownloaderApp:
         self.file_host_links_input: tk.Text | None = None
         self.file_host_status_button: ttk.Button | None = None
         self.file_host_confirm_button: ttk.Button | None = None
+        self.file_host_dialog_logo: tk.Canvas | None = None
+        self.torrent_dialog_logo: tk.Canvas | None = None
         self._hosts_popup_update = None
         self.console_visible = False
         self.dark_theme = config.dark_theme
@@ -474,13 +485,13 @@ class DownloaderApp:
         self.settings_button.pack(side="right")
         self.add_torrent_button = ttk.Button(
             header_actions,
-            text="Add torrent",
+            text="Add torrents",
             command=self._show_add_torrent_dialog,
         )
         self.add_torrent_button.pack(side="right", padx=(0, 8))
         self.usenet_finder_button = ttk.Button(
             header_actions,
-            text="Add from Usenet",
+            text="Find Usenet links",
             command=self._show_usenet_finder,
         )
         self.usenet_finder_button.pack(side="right", padx=(0, 8))
@@ -706,12 +717,40 @@ class DownloaderApp:
 
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
-        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=1)
         frame.columnconfigure(0, weight=1)
+
+        header = ttk.Frame(frame)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        header.columnconfigure(0, weight=1)
+        self.file_host_dialog_logo = self._create_action_dialog_logo(
+            header,
+            "file-host",
+        )
+        self.file_host_dialog_logo.grid(row=0, column=0, sticky="w")
+        header_actions = ttk.Frame(header)
+        header_actions.grid(row=0, column=1, sticky="e")
+        self.file_host_status_button = ttk.Button(
+            header_actions,
+            text="Host status",
+            command=self._show_file_host_status,
+        )
+        self.file_host_status_button.pack(side="right")
+        maximize_state = {"maximized": False, "geometry": ""}
+        maximize_button = ttk.Button(
+            header_actions,
+            text="Maximize",
+            command=lambda: self._toggle_dialog_maximize(
+                dialog,
+                maximize_button,
+                maximize_state,
+            ),
+        )
+        maximize_button.pack(side="right", padx=(0, 8))
         ttk.Label(
             frame,
             text="Paste supported file-host links or HTML containing links here:",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 6))
         links_input = tk.Text(frame, wrap="word", undo=True)
         self.file_host_links_input = links_input
         colors = self.theme_colors
@@ -722,19 +761,13 @@ class DownloaderApp:
             selectbackground=colors["selection"],
             selectforeground=colors["foreground"],
         )
-        links_input.grid(row=1, column=0, sticky="nsew")
+        links_input.grid(row=2, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=links_input.yview)
-        scrollbar.grid(row=1, column=1, sticky="ns")
+        scrollbar.grid(row=2, column=1, sticky="ns")
         links_input.configure(yscrollcommand=scrollbar.set)
 
         actions = ttk.Frame(frame)
-        actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        self.file_host_status_button = ttk.Button(
-            actions,
-            text="Host status",
-            command=self._show_file_host_status,
-        )
-        self.file_host_status_button.pack(side="left")
+        actions.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
         self.file_host_confirm_button = ttk.Button(
             actions,
@@ -852,31 +885,146 @@ class DownloaderApp:
 
     def _show_add_torrent_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)
-        dialog.title("Add torrent")
+        dialog.title("Add torrents")
+        dialog.geometry("760x240")
+        dialog.minsize(650, 210)
+        dialog.resizable(True, True)
         dialog.transient(self.root)
-        dialog.resizable(False, False)
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
 
-        frame = ttk.Frame(dialog, padding=16)
+        frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
+        frame.columnconfigure(0, weight=1)
+        header = ttk.Frame(frame)
+        header.pack(fill="x", pady=(0, 14))
+        header.columnconfigure(0, weight=1)
+        self.torrent_dialog_logo = self._create_action_dialog_logo(
+            header,
+            "torrent",
+        )
+        self.torrent_dialog_logo.grid(row=0, column=0, sticky="w")
+        header_actions = ttk.Frame(header)
+        header_actions.grid(row=0, column=1, sticky="e")
+        ttk.Button(
+            header_actions,
+            text="Select .torrent file(s)",
+            command=lambda: self._choose_torrent_files(dialog),
+        ).pack(side="right", padx=(8, 0))
+        ttk.Button(
+            header_actions,
+            text="Select torrent folder",
+            command=lambda: self._choose_torrent_folder(dialog),
+        ).pack(side="right", padx=(8, 0))
+        maximize_state = {"maximized": False, "geometry": ""}
+        maximize_button = ttk.Button(
+            header_actions,
+            text="Maximize",
+            command=lambda: self._toggle_dialog_maximize(
+                dialog,
+                maximize_button,
+                maximize_state,
+            ),
+        )
+        maximize_button.pack(side="right")
         ttk.Label(
             frame,
             text="Choose one or more .torrent files, or select a folder containing them.",
-        ).pack(anchor="w", pady=(0, 12))
-        ttk.Button(
-            frame,
-            text="Select .torrent file(s)",
-            command=lambda: self._choose_torrent_files(dialog),
-        ).pack(fill="x", pady=(0, 8))
-        ttk.Button(
-            frame,
-            text="Select torrent folder",
-            command=lambda: self._choose_torrent_folder(dialog),
-        ).pack(fill="x", pady=(0, 8))
-        ttk.Button(frame, text="Cancel", command=dialog.destroy).pack(anchor="e")
+        ).pack(anchor="w", pady=(0, 10))
+        ttk.Button(frame, text="Cancel", command=dialog.destroy).pack(
+            anchor="e",
+            pady=(12, 0),
+        )
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         dialog.grab_set()
         dialog.focus_set()
+
+    def _create_action_dialog_logo(
+        self,
+        parent: ttk.Frame,
+        kind: str,
+    ) -> tk.Canvas:
+        colors = self.theme_colors
+        canvas = tk.Canvas(
+            parent,
+            width=220,
+            height=48,
+            background=colors["background"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        primary = colors["foreground"]
+        accent = colors["accent"]
+        if kind == "file-host":
+            canvas.create_oval(5, 9, 36, 40, outline=accent, width=3)
+            canvas.create_oval(17, 9, 48, 40, outline=primary, width=3)
+            canvas.create_text(
+                58,
+                16,
+                anchor="w",
+                text="FILE-HOST",
+                fill=primary,
+                font=("Segoe UI", 12, "bold"),
+            )
+            canvas.create_text(
+                59,
+                33,
+                anchor="w",
+                text="LINKS",
+                fill=accent,
+                font=("Segoe UI", 9, "bold"),
+            )
+        else:
+            canvas.create_polygon(
+                8, 7, 29, 7, 39, 17, 39, 41, 8, 41,
+                fill=colors["surface"],
+                outline=accent,
+                width=2,
+            )
+            canvas.create_line(29, 7, 29, 17, 39, 17, fill=accent, width=2)
+            canvas.create_line(14, 24, 32, 24, fill=primary, width=2)
+            canvas.create_line(14, 30, 32, 30, fill=primary, width=2)
+            canvas.create_line(14, 36, 26, 36, fill=primary, width=2)
+            canvas.create_text(
+                49,
+                16,
+                anchor="w",
+                text="TORRENT",
+                fill=primary,
+                font=("Segoe UI", 12, "bold"),
+            )
+            canvas.create_text(
+                50,
+                33,
+                anchor="w",
+                text="DOWNLOAD",
+                fill=accent,
+                font=("Segoe UI", 9, "bold"),
+            )
+        return canvas
+
+    def _toggle_dialog_maximize(
+        self,
+        dialog: tk.Toplevel,
+        button: ttk.Button,
+        state: dict[str, bool | str],
+    ) -> None:
+        if state["maximized"]:
+            dialog.state("normal")
+            if state["geometry"]:
+                dialog.geometry(str(state["geometry"]))
+            state["maximized"] = False
+            button.configure(text="Maximize")
+            return
+
+        state["geometry"] = dialog.geometry()
+        try:
+            dialog.state("zoomed")
+        except tk.TclError:
+            dialog.geometry(
+                f"{dialog.winfo_screenwidth()}x{dialog.winfo_screenheight()}+0+0"
+            )
+        state["maximized"] = True
+        button.configure(text="Restore")
 
     def _choose_torrent_files(self, parent: tk.Misc) -> None:
         filenames = filedialog.askopenfilenames(

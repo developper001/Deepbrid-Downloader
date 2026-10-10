@@ -71,6 +71,7 @@ class AppConfiguration:
 
         visible_columns = list(default_columns)
         saved_columns = secure_store.get_setting("visible_columns")
+        migrate_legacy_default_columns = False
         if saved_columns:
             try:
                 requested_columns = json.loads(saved_columns)
@@ -100,6 +101,17 @@ class AppConfiguration:
                         "eta",
                     ]:
                         visible_columns = list(default_columns)
+                    elif visible_columns == [
+                        "filename",
+                        "host",
+                        "size",
+                        "progress",
+                        "time_remaining",
+                        "eta",
+                        "verification",
+                    ] and "extension" in column_order:
+                        visible_columns = list(default_columns)
+                        migrate_legacy_default_columns = True
                     if not visible_columns:
                         visible_columns = list(default_columns)
             except json.JSONDecodeError:
@@ -130,6 +142,9 @@ class AppConfiguration:
         visible_columns = [
             column for column in configured_order if column in visible_set
         ]
+
+        if migrate_legacy_default_columns:
+            secure_store.set_setting("visible_columns", json.dumps(visible_columns))
 
         if secure_store.get_setting("progress_column_initialized") != "true":
             configured_order.remove("progress")
