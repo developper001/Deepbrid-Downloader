@@ -1417,6 +1417,33 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(app.table.selection(), ())
         self.assertIsNone(app._selection_anchor)
 
+    def test_horizontal_table_scrollbar_tracks_column_overflow(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app._schedule_progress_indicator_layout = Mock()
+        scrollbar = Mock()
+
+        app._update_table_scrollbar(
+            scrollbar,
+            "0.1",
+            "0.9",
+            show_if_needed=True,
+        )
+        scrollbar.set.assert_called_once_with("0.1", "0.9")
+        scrollbar.grid.assert_called_once_with()
+        scrollbar.grid_remove.assert_not_called()
+
+        scrollbar.reset_mock()
+        app._update_table_scrollbar(
+            scrollbar,
+            "0",
+            "1",
+            show_if_needed=True,
+        )
+        scrollbar.set.assert_called_once_with("0", "1")
+        scrollbar.grid_remove.assert_called_once_with()
+        scrollbar.grid.assert_not_called()
+        self.assertEqual(app._schedule_progress_indicator_layout.call_count, 2)
+
     def test_bulk_actions_use_display_order(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
         app.table = FakeSelectionTable(["1", "2", "3"])

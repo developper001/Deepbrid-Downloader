@@ -62,7 +62,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 - Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
 - The bottom progress bar tracks settled enabled links plus the active file's partial progress; its caption shows queue count and total ETA.
 - The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
-- Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults. The file extension is available but hidden by default.
+- Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults. The file extension is available but hidden by default. Resize table columns as needed; the horizontal scrollbar appears when visible columns no longer fit.
 - Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
 - The Host Status window opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
 - The app keeps active partial files and automatically resumes queued work after startup. Closing the window requests a safe stop and waits for the active network read to return before exit, preserving the partial file for resume.

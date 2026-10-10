@@ -542,9 +542,9 @@ class DownloaderApp:
         }
         for column, label in self.column_labels.items():
             self.table.heading(column, text=label, command=lambda key=column: self._sort_by(key))
-        self.table.column("filename", width=250, minwidth=140, stretch=True)
+        self.table.column("filename", width=250, minwidth=140, stretch=False)
         self.table.column("extension", width=90, minwidth=75, stretch=False)
-        self.table.column("link", width=330, minwidth=150, stretch=True)
+        self.table.column("link", width=330, minwidth=150, stretch=False)
         self.table.column("host", width=135, minwidth=100, stretch=False)
         self.table.column("status", width=120, minwidth=90, stretch=False)
         self.table.column("size", width=145, minwidth=120, stretch=False, anchor="e")
@@ -570,6 +570,7 @@ class DownloaderApp:
                 table_horizontal_scrollbar,
                 first,
                 last,
+                show_if_needed=True,
             ),
         )
         table_scrollbar.configure(command=lambda *args: self._scroll_table("y", *args))
@@ -1771,8 +1772,15 @@ class DownloaderApp:
         scrollbar: ttk.Scrollbar,
         first: str,
         last: str,
+        *,
+        show_if_needed: bool = False,
     ) -> None:
         scrollbar.set(first, last)
+        if show_if_needed:
+            if float(first) > 0 or float(last) < 1:
+                scrollbar.grid()
+            else:
+                scrollbar.grid_remove()
         self._schedule_progress_indicator_layout()
 
     def _scroll_table(self, axis: str, *args: str) -> None:
