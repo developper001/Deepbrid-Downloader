@@ -43,10 +43,14 @@ from src.app import (
     DATABASE_PATH,
     COLUMN_ORDER,
     DEFAULT_COLUMNS,
+    FILE_HOST_LOGO_DARK_PATH,
+    FILE_HOST_LOGO_LIGHT_PATH,
     DownloaderApp,
     LEGACY_DATABASE_PATH,
     LEGACY_QUEUE_DATABASE_PATH,
     OUTPUT_DIR,
+    TORRENT_LOGO_DARK_PATH,
+    TORRENT_LOGO_LIGHT_PATH,
     _ConsoleStream,
     append_output_log_line,
     default_download_directory,
@@ -404,25 +408,18 @@ class ApplicationShutdownTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
-    def test_action_dialog_maximize_button_toggles_and_restores_geometry(self) -> None:
-        app = DownloaderApp.__new__(DownloaderApp)
-        dialog = Mock()
-        dialog.geometry.return_value = "800x500+100+100"
-        button = Mock()
-        state: dict[str, bool | str] = {"maximized": False, "geometry": ""}
+    def test_action_dialog_logos_have_light_and_dark_high_resolution_assets(self) -> None:
+        for logo_path in (
+            FILE_HOST_LOGO_LIGHT_PATH,
+            FILE_HOST_LOGO_DARK_PATH,
+            TORRENT_LOGO_LIGHT_PATH,
+            TORRENT_LOGO_DARK_PATH,
+        ):
+            contents = logo_path.read_bytes()
 
-        app._toggle_dialog_maximize(dialog, button, state)
-
-        dialog.state.assert_called_once_with("zoomed")
-        button.configure.assert_called_once_with(text="Restore")
-        self.assertTrue(state["maximized"])
-
-        app._toggle_dialog_maximize(dialog, button, state)
-
-        dialog.state.assert_called_with("normal")
-        dialog.geometry.assert_called_with("800x500+100+100")
-        button.configure.assert_called_with(text="Maximize")
-        self.assertFalse(state["maximized"])
+            self.assertEqual(contents[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertGreaterEqual(struct.unpack(">I", contents[16:20])[0], 200)
+            self.assertGreaterEqual(struct.unpack(">I", contents[20:24])[0], 40)
 
     def test_linux_startup_configuration_creates_and_removes_autostart_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

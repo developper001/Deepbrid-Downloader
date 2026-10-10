@@ -97,6 +97,10 @@ ICON_PATH = RESOURCE_ROOT / "src" / "deepbrid-logo.png"
 ICON_ICO_PATH = RESOURCE_ROOT / "src" / "deepbrid-favicon.ico"
 WORDMARK_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark.png"
 WORDMARK_LIGHT_PATH = RESOURCE_ROOT / "src" / "deepbrid-wordmark-light.png"
+FILE_HOST_LOGO_LIGHT_PATH = RESOURCE_ROOT / "src" / "file-host-links-light.png"
+FILE_HOST_LOGO_DARK_PATH = RESOURCE_ROOT / "src" / "file-host-links-dark.png"
+TORRENT_LOGO_LIGHT_PATH = RESOURCE_ROOT / "src" / "torrent-download-light.png"
+TORRENT_LOGO_DARK_PATH = RESOURCE_ROOT / "src" / "torrent-download-dark.png"
 COLUMN_ORDER = (
     "filename",
     "extension",
@@ -418,8 +422,8 @@ class DownloaderApp:
         self.file_host_links_input: tk.Text | None = None
         self.file_host_status_button: ttk.Button | None = None
         self.file_host_confirm_button: ttk.Button | None = None
-        self.file_host_dialog_logo: tk.Canvas | None = None
-        self.torrent_dialog_logo: tk.Canvas | None = None
+        self.action_dialog_logo_labels: dict[str, ttk.Label] = {}
+        self.action_dialog_logo_images: dict[str, tk.PhotoImage] = {}
         self._hosts_popup_update = None
         self.console_visible = False
         self.dark_theme = config.dark_theme
@@ -711,7 +715,6 @@ class DownloaderApp:
         dialog.geometry("800x500")
         dialog.minsize(600, 350)
         dialog.resizable(True, True)
-        dialog.transient(self.root)
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         dialog.bind("<Destroy>", lambda event: self._file_host_dialog_destroyed(event, dialog), add="+")
 
@@ -723,11 +726,11 @@ class DownloaderApp:
         header = ttk.Frame(frame)
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         header.columnconfigure(0, weight=1)
-        self.file_host_dialog_logo = self._create_action_dialog_logo(
-            header,
-            "file-host",
+        self._create_action_dialog_logo(header, dialog, "file-host").grid(
+            row=0,
+            column=0,
+            sticky="w",
         )
-        self.file_host_dialog_logo.grid(row=0, column=0, sticky="w")
         header_actions = ttk.Frame(header)
         header_actions.grid(row=0, column=1, sticky="e")
         self.file_host_status_button = ttk.Button(
@@ -736,17 +739,6 @@ class DownloaderApp:
             command=self._show_file_host_status,
         )
         self.file_host_status_button.pack(side="right")
-        maximize_state = {"maximized": False, "geometry": ""}
-        maximize_button = ttk.Button(
-            header_actions,
-            text="Maximize",
-            command=lambda: self._toggle_dialog_maximize(
-                dialog,
-                maximize_button,
-                maximize_state,
-            ),
-        )
-        maximize_button.pack(side="right", padx=(0, 8))
         ttk.Label(
             frame,
             text="Paste supported file-host links or HTML containing links here:",
@@ -889,7 +881,6 @@ class DownloaderApp:
         dialog.geometry("760x240")
         dialog.minsize(650, 210)
         dialog.resizable(True, True)
-        dialog.transient(self.root)
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
 
         frame = ttk.Frame(dialog, padding=12)
@@ -898,11 +889,11 @@ class DownloaderApp:
         header = ttk.Frame(frame)
         header.pack(fill="x", pady=(0, 14))
         header.columnconfigure(0, weight=1)
-        self.torrent_dialog_logo = self._create_action_dialog_logo(
-            header,
-            "torrent",
+        self._create_action_dialog_logo(header, dialog, "torrent").grid(
+            row=0,
+            column=0,
+            sticky="w",
         )
-        self.torrent_dialog_logo.grid(row=0, column=0, sticky="w")
         header_actions = ttk.Frame(header)
         header_actions.grid(row=0, column=1, sticky="e")
         ttk.Button(
@@ -915,17 +906,6 @@ class DownloaderApp:
             text="Select torrent folder",
             command=lambda: self._choose_torrent_folder(dialog),
         ).pack(side="right", padx=(8, 0))
-        maximize_state = {"maximized": False, "geometry": ""}
-        maximize_button = ttk.Button(
-            header_actions,
-            text="Maximize",
-            command=lambda: self._toggle_dialog_maximize(
-                dialog,
-                maximize_button,
-                maximize_state,
-            ),
-        )
-        maximize_button.pack(side="right")
         ttk.Label(
             frame,
             text="Choose one or more .torrent files, or select a folder containing them.",
@@ -941,90 +921,18 @@ class DownloaderApp:
     def _create_action_dialog_logo(
         self,
         parent: ttk.Frame,
-        kind: str,
-    ) -> tk.Canvas:
-        colors = self.theme_colors
-        canvas = tk.Canvas(
-            parent,
-            width=220,
-            height=48,
-            background=colors["background"],
-            highlightthickness=0,
-            borderwidth=0,
-        )
-        primary = colors["foreground"]
-        accent = colors["accent"]
-        if kind == "file-host":
-            canvas.create_oval(5, 9, 36, 40, outline=accent, width=3)
-            canvas.create_oval(17, 9, 48, 40, outline=primary, width=3)
-            canvas.create_text(
-                58,
-                16,
-                anchor="w",
-                text="FILE-HOST",
-                fill=primary,
-                font=("Segoe UI", 12, "bold"),
-            )
-            canvas.create_text(
-                59,
-                33,
-                anchor="w",
-                text="LINKS",
-                fill=accent,
-                font=("Segoe UI", 9, "bold"),
-            )
-        else:
-            canvas.create_polygon(
-                8, 7, 29, 7, 39, 17, 39, 41, 8, 41,
-                fill=colors["surface"],
-                outline=accent,
-                width=2,
-            )
-            canvas.create_line(29, 7, 29, 17, 39, 17, fill=accent, width=2)
-            canvas.create_line(14, 24, 32, 24, fill=primary, width=2)
-            canvas.create_line(14, 30, 32, 30, fill=primary, width=2)
-            canvas.create_line(14, 36, 26, 36, fill=primary, width=2)
-            canvas.create_text(
-                49,
-                16,
-                anchor="w",
-                text="TORRENT",
-                fill=primary,
-                font=("Segoe UI", 12, "bold"),
-            )
-            canvas.create_text(
-                50,
-                33,
-                anchor="w",
-                text="DOWNLOAD",
-                fill=accent,
-                font=("Segoe UI", 9, "bold"),
-            )
-        return canvas
-
-    def _toggle_dialog_maximize(
-        self,
         dialog: tk.Toplevel,
-        button: ttk.Button,
-        state: dict[str, bool | str],
-    ) -> None:
-        if state["maximized"]:
-            dialog.state("normal")
-            if state["geometry"]:
-                dialog.geometry(str(state["geometry"]))
-            state["maximized"] = False
-            button.configure(text="Maximize")
-            return
-
-        state["geometry"] = dialog.geometry()
-        try:
-            dialog.state("zoomed")
-        except tk.TclError:
-            dialog.geometry(
-                f"{dialog.winfo_screenwidth()}x{dialog.winfo_screenheight()}+0+0"
-            )
-        state["maximized"] = True
-        button.configure(text="Restore")
+        kind: str,
+    ) -> ttk.Label:
+        if kind == "file-host":
+            logo_path = FILE_HOST_LOGO_DARK_PATH if self.dark_theme else FILE_HOST_LOGO_LIGHT_PATH
+        else:
+            logo_path = TORRENT_LOGO_DARK_PATH if self.dark_theme else TORRENT_LOGO_LIGHT_PATH
+        image = tk.PhotoImage(master=dialog, file=str(logo_path))
+        label = ttk.Label(parent, image=image)
+        self.action_dialog_logo_images[kind] = image
+        self.action_dialog_logo_labels[kind] = label
+        return label
 
     def _choose_torrent_files(self, parent: tk.Misc) -> None:
         filenames = filedialog.askopenfilenames(
@@ -2749,6 +2657,28 @@ class DownloaderApp:
         self.brand_logo_label.configure(
             image=self.brand_logo_dark if self.dark_theme else self.brand_logo_light
         )
+        logo_paths = {
+            "file-host": (
+                FILE_HOST_LOGO_LIGHT_PATH,
+                FILE_HOST_LOGO_DARK_PATH,
+            ),
+            "torrent": (
+                TORRENT_LOGO_LIGHT_PATH,
+                TORRENT_LOGO_DARK_PATH,
+            ),
+        }
+        theme_index = 1 if self.dark_theme else 0
+        for kind, label in self.action_dialog_logo_labels.items():
+            try:
+                if label.winfo_exists():
+                    image = tk.PhotoImage(
+                        master=label,
+                        file=str(logo_paths[kind][theme_index]),
+                    )
+                    label.configure(image=image)
+                    self.action_dialog_logo_images[kind] = image
+            except tk.TclError:
+                continue
         self._position_progress_indicators()
         self._log("Dark theme enabled." if self.dark_theme else "Light theme enabled.")
 

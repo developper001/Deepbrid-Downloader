@@ -12,6 +12,24 @@ DIST = ROOT / "dist"
 ARTIFACTS = ROOT / "release-artifacts"
 
 
+def action_dialog_logo_data_args() -> list[str]:
+    data_separator = ";" if os.name == "nt" else ":"
+    logo_files = (
+        "file-host-links-dark.png",
+        "file-host-links-light.png",
+        "torrent-download-dark.png",
+        "torrent-download-light.png",
+    )
+    return [
+        argument
+        for logo_file in logo_files
+        for argument in (
+            "--add-data",
+            f"{ROOT / 'src' / logo_file}{data_separator}src",
+        )
+    ]
+
+
 def sha256sum(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -41,6 +59,7 @@ def build_windows() -> Path:
         "--noconsole",
         "--icon",
         str(ROOT / "src" / "deepbrid-favicon.ico"),
+        *action_dialog_logo_data_args(),
         "--name",
         "DeepbridDownloader",
         "--distpath",
@@ -60,6 +79,7 @@ def build_linux() -> Path:
         "-m",
         "PyInstaller",
         "--onefile",
+        *action_dialog_logo_data_args(),
         "--name",
         "DeepbridDownloader",
         "--distpath",
@@ -79,6 +99,7 @@ def build_macos() -> Path:
         "-m",
         "PyInstaller",
         "--onefile",
+        *action_dialog_logo_data_args(),
         "--name",
         "DeepbridDownloader",
         "--distpath",
