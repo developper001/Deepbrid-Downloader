@@ -1,4 +1,5 @@
 cryptography>=42
 filelock>=3.12
 platformdirs>=4
+tkinterdnd2>=0.4.3
 websocket-client>=1.8

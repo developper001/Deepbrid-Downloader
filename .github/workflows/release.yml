@@ -68,6 +68,7 @@ jobs:
             --clean \
             --onefile \
             --noconsole \
+            --collect-all tkinterdnd2 \
             "${ICON_ARGS[@]}" \
             --name DeepbridDownloader \
             --distpath dist \

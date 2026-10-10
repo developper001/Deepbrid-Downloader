@@ -172,7 +172,7 @@ python -m unittest -q tests.test_downloader tests.test_queue
 
 ## Torrent downloads
 
-Open **Add torrents**, then choose **Select .torrent file(s)** to select one or more files or **Select torrent folder** to scan a folder and its subfolders. Torrent uploads are limited to 5 MiB each and require a Deepbrid Premium account and API key. The app submits torrents and checks their cloud-job status through the Deepbrid API; Chrome does not need to be open. When a torrent is ready, its returned files are added to the regular download queue and downloaded to the configured output folder. The app keeps the torrent job ID and requests fresh download links when needed because those links expire.
+Open **Add torrents**, then choose **Select .torrent file(s)** to select one or more files, **Select torrent folder** to scan a folder and its subfolders, or drop torrent files/folders onto the drop area. Torrent uploads are limited to 5 MiB each and require a Deepbrid Premium account and API key. The app submits torrents and checks their cloud-job status through the Deepbrid API; Chrome does not need to be open. When a torrent is ready, its returned files are added to the regular download queue and downloaded to the configured output folder. The app keeps the torrent job ID and requests fresh download links when needed because those links expire.
 
 GitHub Actions runs the same tests on pushes to `main` and pull requests across Ubuntu, Windows, and macOS for supported Python versions. The dependency audit runs weekly only and skips the platform test matrix.
 

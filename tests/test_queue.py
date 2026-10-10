@@ -576,6 +576,49 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
 
 
 class TorrentQueueUiTests(unittest.TestCase):
+    def test_torrent_drop_collects_multiple_files_and_folder_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            folder = root / "folder with spaces"
+            nested = folder / "nested"
+            nested.mkdir(parents=True)
+            first = root / "first.torrent"
+            second = nested / "second.TORRENT"
+            ignored = nested / "notes.txt"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            ignored.write_text("ignore", encoding="utf-8")
+
+            paths = DownloaderApp._torrent_paths_from_drop(
+                (str(folder), str(first), str(ignored))
+            )
+
+            self.assertEqual(paths, [first, second])
+
+    def test_torrent_drop_queues_parsed_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            first = Path(temporary_directory) / "first file.torrent"
+            second = Path(temporary_directory) / "second.torrent"
+            first.touch()
+            second.touch()
+            dropped_paths = (str(first), str(second))
+            app = DownloaderApp.__new__(DownloaderApp)
+            app.root = SimpleNamespace(
+                tk=SimpleNamespace(splitlist=lambda _data: dropped_paths)
+            )
+            app.theme_colors = {"surface": "#ffffff"}
+            app._add_torrent_paths = Mock()
+            dialog = Mock()
+            drop_zone = Mock()
+            event = SimpleNamespace(data="tcl-list-data")
+
+            result = app._handle_torrent_drop(event, dialog, drop_zone)
+
+            self.assertEqual(result, "copy")
+            drop_zone.configure.assert_called_once_with(background="#ffffff")
+            dialog.destroy.assert_called_once_with()
+            app._add_torrent_paths.assert_called_once_with([first, second])
+
     def test_canceling_torrent_file_picker_does_not_show_no_files_popup(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
         parent = Mock()

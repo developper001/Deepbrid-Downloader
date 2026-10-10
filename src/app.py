@@ -16,6 +16,8 @@ import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from tkinterdnd2 import COPY, DND_FILES, Tk as DndTk
+from tkinterdnd2.TkinterDnD import DnDEvent
 
 from platformdirs import user_data_dir, user_downloads_dir
 
@@ -878,16 +880,17 @@ class DownloaderApp:
     def _show_add_torrent_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title("Add torrents")
-        dialog.geometry("760x240")
-        dialog.minsize(650, 210)
+        dialog.geometry("760x340")
+        dialog.minsize(650, 300)
         dialog.resizable(True, True)
         dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
 
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
         header = ttk.Frame(frame)
-        header.pack(fill="x", pady=(0, 14))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         header.columnconfigure(0, weight=1)
         self._create_action_dialog_logo(header, dialog, "torrent").grid(
             row=0,
@@ -909,14 +912,96 @@ class DownloaderApp:
         ttk.Label(
             frame,
             text="Choose one or more .torrent files, or select a folder containing them.",
-        ).pack(anchor="w", pady=(0, 10))
-        ttk.Button(frame, text="Cancel", command=dialog.destroy).pack(
-            anchor="e",
+        ).grid(row=1, column=0, sticky="w")
+        drop_zone = tk.Label(
+            frame,
+            text="Drop .torrent files or folders here",
+            font=("Segoe UI", 12),
+            relief="ridge",
+            borderwidth=2,
+            background=self.theme_colors["surface"],
+            foreground=self.theme_colors["foreground"],
+            padx=12,
+            pady=18,
+        )
+        drop_zone.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+        drop_zone.drop_target_register(DND_FILES)
+        drop_zone.dnd_bind(
+            "<<DropEnter>>",
+            lambda _event: self._set_torrent_drop_highlight(drop_zone, True),
+        )
+        drop_zone.dnd_bind(
+            "<<DropLeave>>",
+            lambda _event: self._set_torrent_drop_highlight(drop_zone, False),
+        )
+        drop_zone.dnd_bind(
+            "<<Drop>>",
+            lambda event: self._handle_torrent_drop(event, dialog, drop_zone),
+        )
+        ttk.Button(frame, text="Cancel", command=dialog.destroy).grid(
+            row=3,
+            column=0,
+            sticky="e",
             pady=(12, 0),
         )
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         dialog.grab_set()
         dialog.focus_set()
+
+    def _set_torrent_drop_highlight(self, drop_zone: tk.Label, active: bool) -> str:
+        drop_zone.configure(
+            background=(
+                self.theme_colors["accent"]
+                if active
+                else self.theme_colors["surface"]
+            )
+        )
+        return COPY
+
+    def _handle_torrent_drop(
+        self,
+        event: DnDEvent,
+        dialog: tk.Toplevel,
+        drop_zone: tk.Label,
+    ) -> str:
+        drop_zone.configure(background=self.theme_colors["surface"])
+        try:
+            dropped_paths = self.root.tk.splitlist(event.data)
+            paths = self._torrent_paths_from_drop(dropped_paths)
+        except (OSError, tk.TclError) as error:
+            message = f"Could not read dropped torrent files: {error}"
+            self.status_text.set("Could not read dropped torrent files")
+            self._log(message)
+            messagebox.showerror("Torrent drop failed", message, parent=dialog)
+            return COPY
+        if not paths:
+            messagebox.showinfo(
+                "No torrent files found",
+                "Drop .torrent files or folders containing .torrent files.",
+                parent=dialog,
+            )
+            return COPY
+        dialog.destroy()
+        self._add_torrent_paths(paths)
+        return COPY
+
+    @staticmethod
+    def _torrent_paths_from_drop(dropped_paths: tuple[str, ...]) -> list[Path]:
+        torrent_paths: list[Path] = []
+        for dropped_path in dropped_paths:
+            path = Path(dropped_path)
+            if path.is_dir():
+                torrent_paths.extend(
+                    candidate
+                    for candidate in path.rglob("*")
+                    if candidate.is_file() and candidate.suffix.casefold() == ".torrent"
+                )
+            elif path.is_file() and path.suffix.casefold() == ".torrent":
+                torrent_paths.append(path)
+        return sorted(
+            torrent_paths,
+            key=lambda path: (path.name.casefold(), str(path).casefold()),
+        )
 
     def _create_action_dialog_logo(
         self,
@@ -3243,7 +3328,7 @@ def main() -> None:
         )
         root.destroy()
         return
-    root = tk.Tk()
+    root = DndTk()
     try:
         DownloaderApp(root)
     except Exception:
