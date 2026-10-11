@@ -736,13 +736,14 @@ class DownloaderApp:
         )
 
     def _persist_file_host_links_draft(self, links_input: tk.Text | None = None) -> bool:
-        if self.file_host_links_save_after:
+        save_after = getattr(self, "file_host_links_save_after", None)
+        if save_after:
             try:
-                self.root.after_cancel(self.file_host_links_save_after)
+                self.root.after_cancel(save_after)
             except tk.TclError:
                 pass
             self.file_host_links_save_after = None
-        draft_input = links_input or self.file_host_links_input
+        draft_input = links_input or getattr(self, "file_host_links_input", None)
         if draft_input is None:
             return True
         try:
