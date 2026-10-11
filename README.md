@@ -143,6 +143,10 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 
 ![Refresh hosts](src/screenshots/host-status-refresh.png)
 
+### Adding file-host links
+
+![Add file-host links](src/screenshots/file-host-links-dialog.png)
+
 ### About and release updates
 
 ![About window with GitHub link and update check](src/screenshots/about-and-update-check.png)
@@ -164,6 +168,10 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 ![Dark mode](src/screenshots/dark-mode-theme.png)
 
 ![Console logs](src/screenshots/console-full-logs.png)
+
+### Torrent uploads
+
+![Torrent upload dialog](src/screenshots/torrent-upload-dialog.png)
 
 ## Tests
 
