@@ -15,6 +15,7 @@ from src.app_events import ApiKeyErrorEvent, WorkerDoneEvent
 from src.deepbrid_client import DeepbridError
 from src.queue_runner import QueueRunner
 from src.queue_store import QueueStore
+from src.queue_table import host_label_for_item, sort_queue_item
 from src.queue_types import QueueSource, QueueStatus
 from src.remote_jobs import RemoteJob, RemoteJobFile
 from src.usenet_finder import file_size_bytes
@@ -44,6 +45,7 @@ class QueueStoreTests(unittest.TestCase):
             store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
             store.add_torrent_file("collection.torrent", b"torrent-data")
             item = store.list_items()[0]
+            store.update(item.id, host_message="Host not listed by Deepbrid")
 
             store.expand_torrent_job(
                 item.id,
@@ -59,6 +61,14 @@ class QueueStoreTests(unittest.TestCase):
             self.assertEqual([file.source for file in files], [QueueSource.TORRENT_CLOUD] * 2)
             self.assertEqual([file.remote_job_id for file in files], ["remote-42"] * 2)
             self.assertEqual([file.remote_file_index for file in files], [0, 1])
+            self.assertEqual([file.host_message for file in files], ["Torrent", "Torrent"])
+            self.assertEqual([host_label_for_item(file) for file in files], ["Torrent", "Torrent"])
+            self.assertTrue(
+                all(
+                    sort_queue_item(file, "host", {}, {}, 0) == "torrent"
+                    for file in files
+                )
+            )
             self.assertEqual([file.deepbrid_link for file in files], [
                 "https://deepbrid.example/file/1",
                 "https://deepbrid.example/file/2",

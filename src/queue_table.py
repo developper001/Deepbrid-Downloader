@@ -108,6 +108,12 @@ def full_file_path(output_dir: Path, filename: str) -> str:
     return str((output_dir / filename).resolve())
 
 
+def host_label_for_item(item: QueueItem) -> str:
+    if item.source == QueueSource.TORRENT_CLOUD:
+        return "Torrent"
+    return item.host_message
+
+
 def sort_queue_item(
     item: QueueItem,
     column: str,
@@ -127,7 +133,7 @@ def sort_queue_item(
     if column == "link":
         return item.url.casefold()
     if column == "host":
-        return item.host_message.casefold()
+        return host_label_for_item(item).casefold()
     if column == "status":
         return item.host_status.casefold()
     if column == "size":
@@ -259,6 +265,7 @@ class QueueTableView:
             row_id = str(item.id)
             seen.add(row_id)
             host_status = item.host_status.replace("_", " ").title()
+            host_label = host_label_for_item(item)
             if item.status == QueueStatus.RETRYING:
                 queue_status = app.item_status_messages.get(item.id, "Retrying")
             else:
@@ -289,7 +296,7 @@ class QueueTableView:
                     if item.source == QueueSource.TORRENT_CLOUD
                     else item.url
                 ),
-                item.host_message,
+                host_label,
                 host_status,
                 f"{format_bytes(item.downloaded)} / {format_bytes(item.total)}",
                 "",

@@ -195,7 +195,7 @@ class QueueStore:
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO downloads "
                 "(url, url_ciphertext, source, host_status, host_message, filename, torrent_data) "
-                "VALUES (?, ?, ?, 'up', 'Torrent cloud', ?, ?)",
+                "VALUES (?, ?, ?, 'up', 'Torrent', ?, ?)",
                 (
                     url_hash,
                     encrypted_url,
@@ -238,6 +238,7 @@ class QueueStore:
                     connection.execute(
                         "UPDATE downloads SET url = ?, url_ciphertext = ?, filename = ?, "
                         "total = ?, downloaded = 0, deepbrid_link = ?, remote_job_id = ?, "
+                        "host_message = 'Torrent', "
                         "remote_file_index = 0, torrent_data = NULL, status = ?, error = NULL "
                         "WHERE id = ?",
                         (
@@ -256,7 +257,7 @@ class QueueStore:
                         "INSERT INTO downloads "
                         "(url, url_ciphertext, source, remote_job_id, remote_file_index, "
                         "status, total, filename, deepbrid_link, host_status, host_message) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'up', 'Torrent cloud')",
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'up', 'Torrent')",
                         (
                             url_hash,
                             encrypted_url,
