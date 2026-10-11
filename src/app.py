@@ -118,6 +118,13 @@ FILE_HOST_LOGO_LIGHT_PATH = IMAGE_ROOT / "file-host-links-light.png"
 FILE_HOST_LOGO_DARK_PATH = IMAGE_ROOT / "file-host-links-dark.png"
 TORRENT_LOGO_LIGHT_PATH = IMAGE_ROOT / "torrent-download-light.png"
 TORRENT_LOGO_DARK_PATH = IMAGE_ROOT / "torrent-download-dark.png"
+FILE_HOST_LINKS_DRAFT_SETTING = "file_host_links_draft"
+FILE_HOST_LINKS_DRAFT_PURPOSE = b"file-host-links-draft-v1"
+FILE_HOST_LINKS_PLACEHOLDER = (
+    "Examples:\n"
+    "https://1fichier.com/?example\n"
+    "https://rapidgator.net/file/example/archive.zip"
+)
 DEFAULT_COLUMNS = (
     "filename",
     "extension",
@@ -361,6 +368,8 @@ class DownloaderApp:
         self.usenet_finder_dialog: UsenetFinderDialog | None = None
         self.file_host_links_dialog: tk.Toplevel | None = None
         self.file_host_links_input: tk.Text | None = None
+        self.file_host_links_placeholder: tk.Label | None = None
+        self.file_host_links_save_after: str | None = None
         self.file_host_status_button: ttk.Button | None = None
         self.file_host_confirm_button: ttk.Button | None = None
         self.action_dialog_logo_labels: dict[str, ttk.Label] = {}
@@ -592,7 +601,10 @@ class DownloaderApp:
         dialog.geometry("800x500")
         dialog.minsize(600, 350)
         dialog.resizable(True, True)
-        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.protocol(
+            "WM_DELETE_WINDOW",
+            lambda: self._close_file_host_links_dialog(dialog, links_input),
+        )
         dialog.bind("<Destroy>", lambda event: self._file_host_dialog_destroyed(event, dialog), add="+")
 
         frame = ttk.Frame(dialog, padding=12)
@@ -618,9 +630,23 @@ class DownloaderApp:
         self.file_host_status_button.pack(side="right")
         ttk.Label(
             frame,
-            text="Paste supported file-host links or HTML containing links here:",
+            text="Paste supported file-host links or HTML containing links here. Your draft is saved automatically:",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 6))
-        links_input = tk.Text(frame, wrap="word", undo=True)
+        try:
+            initial_draft = self.secure_store.get_encrypted_setting(
+                FILE_HOST_LINKS_DRAFT_SETTING,
+                FILE_HOST_LINKS_DRAFT_PURPOSE,
+            ) or ""
+        except (SecureStorageError, sqlite3.Error, OSError) as error:
+            initial_draft = ""
+            self.status_text.set("Could not load saved file-host links")
+            self._log(f"Could not load the saved file-host link draft: {error}")
+
+        links_area = ttk.Frame(frame)
+        links_area.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        links_area.rowconfigure(0, weight=1)
+        links_area.columnconfigure(0, weight=1)
+        links_input = tk.Text(links_area, wrap="word", undo=True)
         self.file_host_links_input = links_input
         colors = self.theme_colors
         links_input.configure(
@@ -630,28 +656,122 @@ class DownloaderApp:
             selectbackground=colors["selection"],
             selectforeground=colors["foreground"],
         )
-        links_input.grid(row=2, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=links_input.yview)
-        scrollbar.grid(row=2, column=1, sticky="ns")
+        links_input.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(links_area, orient="vertical", command=links_input.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
         links_input.configure(yscrollcommand=scrollbar.set)
+        placeholder = tk.Label(
+            links_area,
+            text=FILE_HOST_LINKS_PLACEHOLDER,
+            justify="left",
+            anchor="nw",
+            background=colors["field"],
+            foreground=colors["disabled_foreground"],
+            padx=4,
+            pady=4,
+        )
+        self.file_host_links_placeholder = placeholder
+        placeholder.place(x=8, y=8)
+        placeholder.bind(
+            "<Button-1>",
+            lambda _event: self._focus_file_host_links_input(links_input, placeholder),
+        )
+        links_input.insert("1.0", initial_draft)
+        links_input.edit_modified(False)
+        if initial_draft:
+            placeholder.place_forget()
+        links_input.bind(
+            "<<Modified>>",
+            lambda event: self._file_host_links_modified(event, links_input, placeholder),
+        )
 
         actions = ttk.Frame(frame)
         actions.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(
+            actions,
+            text="Cancel",
+            command=lambda: self._close_file_host_links_dialog(dialog, links_input),
+        ).pack(side="right")
         self.file_host_confirm_button = ttk.Button(
             actions,
             text="Add to queue",
-            command=lambda: self._add_link(
-                links_input.get("1.0", "end").strip(),
-                parent=dialog,
-            ),
+            command=lambda: self._submit_file_host_links(dialog, links_input),
             state="normal" if self.hosts else "disabled",
         )
         self.file_host_confirm_button.pack(side="right", padx=(0, 8))
         self._update_file_host_dialog_controls()
-        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.bind(
+            "<Escape>",
+            lambda _event: self._close_file_host_links_dialog(dialog, links_input),
+        )
         dialog.grab_set()
         links_input.focus_set()
+
+    def _focus_file_host_links_input(
+        self,
+        links_input: tk.Text,
+        placeholder: tk.Label,
+    ) -> None:
+        placeholder.place_forget()
+        links_input.focus_set()
+
+    def _file_host_links_modified(
+        self,
+        event: tk.Event,
+        links_input: tk.Text,
+        placeholder: tk.Label,
+    ) -> None:
+        if event.widget != links_input or not links_input.edit_modified():
+            return
+        links_input.edit_modified(False)
+        if links_input.get("1.0", "end-1c"):
+            placeholder.place_forget()
+        else:
+            placeholder.place(x=8, y=8)
+        if self.file_host_links_save_after:
+            self.root.after_cancel(self.file_host_links_save_after)
+        self.file_host_links_save_after = self.root.after(
+            300,
+            lambda: self._persist_file_host_links_draft(links_input),
+        )
+
+    def _persist_file_host_links_draft(self, links_input: tk.Text | None = None) -> bool:
+        if self.file_host_links_save_after:
+            try:
+                self.root.after_cancel(self.file_host_links_save_after)
+            except tk.TclError:
+                pass
+            self.file_host_links_save_after = None
+        draft_input = links_input or self.file_host_links_input
+        if draft_input is None:
+            return True
+        try:
+            self.secure_store.set_encrypted_setting(
+                FILE_HOST_LINKS_DRAFT_SETTING,
+                draft_input.get("1.0", "end-1c"),
+                FILE_HOST_LINKS_DRAFT_PURPOSE,
+            )
+        except (SecureStorageError, sqlite3.Error, OSError) as error:
+            self.status_text.set("Could not save file-host links")
+            self._log(f"Could not save the file-host link draft: {error}")
+            return False
+        return True
+
+    def _close_file_host_links_dialog(
+        self,
+        dialog: tk.Toplevel,
+        links_input: tk.Text,
+    ) -> None:
+        self._persist_file_host_links_draft(links_input)
+        dialog.destroy()
+
+    def _submit_file_host_links(
+        self,
+        dialog: tk.Toplevel,
+        links_input: tk.Text,
+    ) -> None:
+        self._persist_file_host_links_draft(links_input)
+        self._add_link(links_input.get("1.0", "end").strip(), parent=dialog)
 
     def _show_file_host_status(self) -> None:
         dialog = self.file_host_links_dialog
@@ -696,6 +816,7 @@ class DownloaderApp:
             return
         self.file_host_links_dialog = None
         self.file_host_links_input = None
+        self.file_host_links_placeholder = None
         self.file_host_status_button = None
         self.file_host_confirm_button = None
 
@@ -2961,6 +3082,7 @@ class DownloaderApp:
         if self.closing:
             return
         self.closing = True
+        self._persist_file_host_links_draft()
         self._persist_theme()
         self.stop_event.set()
         for cancel_event in self.active_cancel_events.values():

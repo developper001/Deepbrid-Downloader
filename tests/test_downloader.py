@@ -41,6 +41,8 @@ from src.app import (
     API_KEY_DASHBOARD_URL,
     APP_DATA_DIR,
     DATABASE_PATH,
+    FILE_HOST_LINKS_DRAFT_PURPOSE,
+    FILE_HOST_LINKS_DRAFT_SETTING,
     COLUMN_ORDER,
     DEFAULT_COLUMNS,
     FILE_HOST_LOGO_DARK_PATH,
@@ -1562,6 +1564,37 @@ class SecureStoreTests(unittest.TestCase):
                     "SELECT value FROM app_settings WHERE name = 'finder_cache'"
                 ).fetchone()[0]
             self.assertNotIn(b"private.example", bytes(value))
+
+    def test_file_host_link_draft_is_persisted_encrypted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "queue.sqlite3"
+            store = SecureStore(database_path)
+            draft = "https://1fichier.com/?private-link"
+
+            class FakeText:
+                def get(self, *_args: str) -> str:
+                    return draft
+
+            app = object.__new__(DownloaderApp)
+            app.root = SimpleNamespace()
+            app.file_host_links_save_after = None
+            app.file_host_links_input = FakeText()
+            app.secure_store = store
+
+            self.assertTrue(app._persist_file_host_links_draft())
+            self.assertEqual(
+                store.get_encrypted_setting(
+                    FILE_HOST_LINKS_DRAFT_SETTING,
+                    FILE_HOST_LINKS_DRAFT_PURPOSE,
+                ),
+                draft,
+            )
+            with closing(sqlite3.connect(database_path)) as connection:
+                value = connection.execute(
+                    "SELECT value FROM app_settings WHERE name = ?",
+                    (FILE_HOST_LINKS_DRAFT_SETTING,),
+                ).fetchone()[0]
+            self.assertNotIn(b"private-link", bytes(value))
 
 
 class UsenetFinderStateTests(unittest.TestCase):

@@ -59,7 +59,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 
 ## How to use
 
-- Select **Add file-host links** to open the resizable link-entry window, paste one or more supported links or HTML containing links, then choose **Add to queue**. Use **Host status** in that window to view and refresh supported hosts.
+- Select **Add file-host links** to open the resizable link-entry window, paste one or more supported links or HTML containing links, then choose **Add to queue**. The draft is encrypted and retained when the window closes or links are queued. Use **Host status** in that window to view and refresh supported hosts.
 - The app filters for hosts supported by Deepbrid and ignores unsupported ones. It accepts supported links even when a host is currently unavailable, including comma-separated host aliases.
 - Queue priority follows the displayed row order and updates when links are added, removed, or sorted.
 - Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
