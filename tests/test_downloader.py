@@ -7,6 +7,7 @@ import sqlite3
 import struct
 import tempfile
 import threading
+import tkinter as tk
 import unittest
 import urllib.error
 import urllib.parse
@@ -281,6 +282,26 @@ class AppConfigurationTests(unittest.TestCase):
 
 
 class ApplicationShutdownTests(unittest.TestCase):
+    def test_shutdown_prunes_tcl_commands_already_removed_by_interpreter(self) -> None:
+        interpreter = tk.Tcl()
+        live_command = interpreter.register(lambda: None)
+        stale_command = interpreter.register(lambda: None)
+        interpreter.tk.deletecommand(stale_command)
+        app = object.__new__(DownloaderApp)
+        app.root = SimpleNamespace(
+            _tclCommands=[live_command, stale_command],
+            tk=interpreter.tk,
+        )
+        app._log = Mock()
+
+        app._prune_deleted_tcl_commands()
+
+        self.assertEqual(app.root._tclCommands, [live_command])
+        app._log.assert_called_once_with(
+            "Skipped cleanup of 1 Tcl callback(s) already removed during shutdown."
+        )
+        interpreter.tk.deletecommand(live_command)
+
     def test_close_signals_download_cancellation_and_waits_for_worker(self) -> None:
         scheduled: list[tuple[int, object]] = []
         destroyed: list[bool] = []

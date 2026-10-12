@@ -3099,8 +3099,28 @@ class DownloaderApp:
         if self.worker and self.worker.is_alive():
             self.root.after(100, self._finish_close)
             return
+        self._prune_deleted_tcl_commands()
         self._restore_console_capture()
         self.root.destroy()
+
+    def _prune_deleted_tcl_commands(self) -> None:
+        commands = getattr(self.root, "_tclCommands", None)
+        if not commands:
+            return
+        registered_commands = set(
+            self.root.tk.splitlist(self.root.tk.call("info", "commands"))
+        )
+        stale_commands = [
+            command for command in commands if command not in registered_commands
+        ]
+        if stale_commands:
+            commands[:] = [
+                command for command in commands if command in registered_commands
+            ]
+            self._log(
+                "Skipped cleanup of "
+                f"{len(stale_commands)} Tcl callback(s) already removed during shutdown."
+            )
 
 
 def _show_startup_error(root: tk.Tk, details: str) -> None:
