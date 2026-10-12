@@ -2067,6 +2067,25 @@ class UsenetFinderDialogTests(unittest.TestCase):
         self.assertEqual(file_size_bytes("17.88 KB"), 17_880)
         self.assertIsNone(file_size_bytes("Unknown"))
 
+    def test_ctrl_a_selects_all_resolved_files(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.files = Mock()
+        dialog.files.get_children.return_value = ("first", "second")
+
+        self.assertEqual(dialog._select_all_files(), "break")
+
+        dialog.files.selection_set.assert_called_once_with("first", "second")
+        dialog.files.focus.assert_called_once_with("first")
+
+    def test_clearing_search_query_clears_category(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.query = SimpleNamespace(get=lambda: "   ")
+        dialog.category = Mock()
+
+        dialog._search_query_changed()
+
+        dialog.category.set.assert_called_once_with("")
+
     def test_usenet_column_layout_defaults_and_saved_layouts(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         dialog.app = SimpleNamespace(secure_store=Mock())

@@ -215,6 +215,7 @@ class UsenetFinderDialog:
             values=("",),
             width=18,
         )
+        self.query.trace_add("write", self._search_query_changed)
         self.category_picker.grid(
             row=0,
             column=3,
@@ -316,6 +317,7 @@ class UsenetFinderDialog:
         files_scrollbar.grid(row=7, column=1, sticky="ns")
         self.files.configure(yscrollcommand=files_scrollbar.set)
         self.files.bind("<<TreeviewSelect>>", self._file_selection_changed)
+        self.files.bind("<Control-a>", self._select_all_files)
         self.files.bind("<Button-3>", self._show_file_context_menu)
         self.files.bind("<Button-2>", self._show_file_context_menu)
         resolved_header = ttk.Frame(frame)
@@ -372,6 +374,10 @@ class UsenetFinderDialog:
             "then return and search."
         )
         return True
+
+    def _search_query_changed(self, *_args: object) -> None:
+        if not self.query.get().strip():
+            self.category.set("")
 
     def _search_history_selected(self, _event: tk.Event | None = None) -> None:
         selected_query = self.query.get()
@@ -1142,6 +1148,13 @@ class UsenetFinderDialog:
 
     def _file_selection_changed(self, _event: tk.Event | None = None) -> None:
         self._update_file_actions()
+
+    def _select_all_files(self, _event: tk.Event | None = None) -> str:
+        item_ids = self.files.get_children("")
+        if item_ids:
+            self.files.selection_set(*item_ids)
+            self.files.focus(item_ids[0])
+        return "break"
 
     def _update_file_actions(self) -> None:
         selected = self.files.selection()
