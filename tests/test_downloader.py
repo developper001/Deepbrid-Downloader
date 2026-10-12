@@ -1655,6 +1655,19 @@ class UsenetFinderStateTests(unittest.TestCase):
             self.assertEqual(state.load_search_history(), [])
             self.assertEqual(state.load_search(), ("example", "TV"))
 
+    def test_search_history_entry_can_be_deleted_without_clearing_last_search(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
+            state = UsenetFinderState(store, clock=lambda: 1000)
+            state.save_search("example", "TV")
+            state.save_search("example", "Movies")
+
+            self.assertTrue(state.delete_search_history_entry("example", "TV"))
+            self.assertFalse(state.delete_search_history_entry("missing", ""))
+
+            self.assertEqual(state.load_search_history(), [("example", "Movies")])
+            self.assertEqual(state.load_search(), ("example", "Movies"))
+
     def test_last_selected_result_persists_and_resolved_links_use_configured_ttl(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = SecureStore(Path(temporary_directory) / "queue.sqlite3")
@@ -2085,6 +2098,75 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._search_query_changed()
 
         dialog.category.set.assert_called_once_with("")
+
+    def test_delete_key_removes_selected_search_history_entry(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.query_entry = Mock()
+        dialog.query_entry.current.return_value = 1
+        dialog.query_entry.tk = Mock()
+        dialog.query_history = [("example", "TV"), ("example", "Movies")]
+        dialog.state = Mock()
+        dialog.state.delete_search_history_entry.return_value = True
+        dialog.app = SimpleNamespace(_log=Mock())
+        dialog.status = Mock()
+        dialog.query = Mock()
+        dialog.category = Mock()
+
+        with patch.object(dialog, "_update_search_history_options") as update_options:
+            self.assertEqual(dialog._delete_selected_search_history_entry(), "break")
+
+        dialog.state.delete_search_history_entry.assert_called_once_with("example", "Movies")
+        update_options.assert_called_once_with()
+        dialog.query.set.assert_called_once_with("")
+        dialog.category.set.assert_called_once_with("")
+        dialog.query_entry.tk.call.assert_called_once_with(
+            "ttk::combobox::Unpost",
+            dialog.query_entry,
+        )
+        dialog.status.set.assert_called_once_with(
+            "Usenet Finder search history entry deleted."
+        )
+
+    def test_delete_key_uses_highlighted_history_row_in_open_dropdown(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.query_entry = Mock()
+        dialog.query_entry.__str__ = Mock(return_value="combo")
+        dialog.query_entry.current.return_value = -1
+        dialog.query_entry.tk = Mock()
+        dialog.query_history = [
+            ("example", "TV"),
+            ("example", "Movies"),
+            ("example", "Music"),
+        ]
+        dialog.dialog = Mock()
+        dialog.dialog.tk.call.return_value = "2"
+        dialog.dialog.tk.splitlist.return_value = ("2",)
+        dialog.state = Mock()
+        dialog.state.delete_search_history_entry.return_value = True
+        dialog.app = SimpleNamespace(_log=Mock())
+        dialog.status = Mock()
+        dialog.query = Mock()
+        dialog.category = Mock()
+        event = SimpleNamespace(widget="combo.popdown.f.l")
+
+        with patch.object(dialog, "_update_search_history_options"):
+            self.assertEqual(
+                dialog._delete_selected_search_history_entry(event),
+                "break",
+            )
+
+        dialog.dialog.tk.call.assert_called_once_with(
+            "combo.popdown.f.l",
+            "curselection",
+        )
+        dialog.state.delete_search_history_entry.assert_called_once_with(
+            "example",
+            "Music",
+        )
+        dialog.query_entry.tk.call.assert_called_once_with(
+            "ttk::combobox::Unpost",
+            dialog.query_entry,
+        )
 
     def test_usenet_column_layout_defaults_and_saved_layouts(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)

@@ -207,6 +207,15 @@ class UsenetFinderDialog:
         self.query_entry.grid(row=0, column=1, sticky="ew")
         self.query_entry.bind("<Return>", lambda _event: self.search())
         self.query_entry.bind("<<ComboboxSelected>>", self._search_history_selected)
+        self._search_history_delete_bindings = []
+        for key_sequence in ("<Delete>", "<KP_Delete>"):
+            binding_id = self.dialog.bind_all(
+                key_sequence,
+                self._delete_selected_search_history_entry,
+                add="+",
+            )
+            if binding_id is not None:
+                self._search_history_delete_bindings.append((key_sequence, binding_id))
         ttk.Label(search_row, text="Category").grid(row=0, column=2, padx=(12, 8))
         self.category = tk.StringVar(master=self.dialog)
         self.category_picker = ttk.Combobox(
@@ -419,6 +428,52 @@ class UsenetFinderDialog:
                 self.CLEAR_HISTORY_OPTION,
             )
         )
+
+    def _delete_selected_search_history_entry(
+        self,
+        _event: tk.Event | None = None,
+    ) -> str | None:
+        history_index: int | None = None
+        event_widget = getattr(_event, "widget", None)
+        if event_widget is not None:
+            widget_path = str(event_widget)
+            combo_path = str(self.query_entry)
+            if widget_path != combo_path and not widget_path.startswith(
+                f"{combo_path}.popdown"
+            ):
+                return None
+            if widget_path.startswith(f"{combo_path}.popdown"):
+                try:
+                    selection = self.dialog.tk.splitlist(
+                        self.dialog.tk.call(widget_path, "curselection")
+                    )
+                except tk.TclError as error:
+                    self.app._log(
+                        f"Could not read Usenet search history selection: {error}"
+                    )
+                    self.status.set(f"Could not read search history selection: {error}")
+                    return "break"
+                if not selection:
+                    return "break"
+                history_index = int(selection[0])
+        if history_index is None:
+            history_index = self.query_entry.current()
+        if not 0 <= history_index < len(self.query_history):
+            return None
+        query, category = self.query_history[history_index]
+        try:
+            if not self.state.delete_search_history_entry(query, category):
+                return None
+            self._update_search_history_options()
+        except (UsenetFinderStateError, SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not delete Usenet Finder search history entry: {error}")
+            self.status.set(f"Could not delete search history entry: {error}")
+            return "break"
+        self.query.set("")
+        self.category.set("")
+        self.query_entry.tk.call("ttk::combobox::Unpost", self.query_entry)
+        self.status.set("Usenet Finder search history entry deleted.")
+        return "break"
 
     def _check_browser_health(self) -> None:
         if not self.dialog.winfo_exists():
@@ -1208,6 +1263,9 @@ class UsenetFinderDialog:
         return f"Inaccessible: {file.inaccessible}" if file.inaccessible else "No link available"
 
     def close(self) -> None:
+        for key_sequence, binding_id in self._search_history_delete_bindings:
+            self.dialog._unbind(("bind", "all", key_sequence), binding_id)
+        self._search_history_delete_bindings.clear()
         if self._poll_id is not None:
             try:
                 self.dialog.after_cancel(self._poll_id)

@@ -132,6 +132,18 @@ class UsenetFinderState:
     def clear_search_history(self) -> None:
         self.secure_store.set_setting(SEARCH_HISTORY_SETTING, "[]")
 
+    def delete_search_history_entry(self, query: str, category: str) -> bool:
+        history = self.load_search_history()
+        entry = (query, category)
+        updated_history = [saved for saved in history if saved != entry]
+        if len(updated_history) == len(history):
+            return False
+        self.secure_store.set_setting(
+            SEARCH_HISTORY_SETTING,
+            json.dumps(updated_history),
+        )
+        return True
+
     def save_last_selected_result(
         self,
         query: str,
