@@ -2581,6 +2581,20 @@ class DownloaderApp:
             indicatorcolor=[("selected", colors["accent"]), ("!selected", colors["field"])],
         )
         style.configure("TEntry", fieldbackground=colors["field"], foreground=colors["foreground"])
+        style.configure(
+            "TCombobox",
+            fieldbackground=colors["field"],
+            foreground=colors["foreground"],
+            background=colors["surface"],
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("disabled", colors["field"]), ("readonly", colors["field"])],
+            foreground=[
+                ("disabled", colors["disabled_foreground"]),
+                ("readonly", colors["foreground"]),
+            ],
+        )
         style.configure("Treeview", background=colors["surface"], fieldbackground=colors["surface"], foreground=colors["foreground"], rowheight=25)
         style.configure("Treeview.Heading", background=colors["background"], foreground=colors["foreground"])
         style.map(
