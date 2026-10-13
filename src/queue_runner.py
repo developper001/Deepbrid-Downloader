@@ -233,7 +233,7 @@ class QueueRunner:
                 self.store.update(
                     item.id,
                     status=QueueStatus.FAILED,
-                    error=self._stored_error(error),
+                    error=stored_error(error),
                 )
                 self.events.put(StatusEvent(item.id, "Failed"))
                 self.log(f"Download failed for {filename}: {error}")

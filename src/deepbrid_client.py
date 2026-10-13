@@ -363,7 +363,8 @@ class DeepbridClient:
                     download_url, "<TEMPORARY_DOWNLOAD_URL_REDACTED>"
                 )
                 raise DeepbridError(
-                    f"Download returned HTTP {error.code}: {detail}\nRequest: {curl_command}"
+                    f"Download returned HTTP {error.code}: {detail}\nRequest: {curl_command}",
+                    status_code=error.code,
                 ) from error
             error.close()
             partial.unlink(missing_ok=True)

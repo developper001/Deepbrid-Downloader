@@ -233,6 +233,47 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class QueueRunnerTests(unittest.TestCase):
+    def test_runner_records_download_http_error_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add(
+                "https://usenet.example/download/session",
+                filename="episode.mkv",
+                source=QueueSource.USENET,
+            )
+            events: queue.Queue = queue.Queue()
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def download(self, *_args, **_kwargs) -> bool:
+                    raise DeepbridError(
+                        "Download returned HTTP 404: Session not found",
+                        status_code=404,
+                    )
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    events,
+                    threading.Event(),
+                    {},
+                    lambda _message: None,
+                ).run()
+
+            item = store.list_items()[0]
+            self.assertEqual(item.status, QueueStatus.FAILED)
+            self.assertEqual(item.error, "HTTP 404")
+            event_types = [type(events.get_nowait()) for _ in range(events.qsize())]
+            self.assertIn(WorkerDoneEvent, event_types)
+
     def test_runner_does_not_retry_unsupported_filehost(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = QueueStore(Path(temporary_directory) / "queue.sqlite3")

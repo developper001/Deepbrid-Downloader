@@ -3023,6 +3023,7 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
                         lambda *_: None,
                     )
 
+        self.assertEqual(raised.exception.status_code, 503)
         message = str(raised.exception)
         self.assertIn("upstream offline", message)
         self.assertIn("curl -L", message)
