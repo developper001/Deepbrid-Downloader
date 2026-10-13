@@ -56,7 +56,7 @@ from .app_events import (
 )
 from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
 from .link_utils import extract_http_links, extract_supported_links, supported_link_status
-from .queue_store import QueueStore
+from .queue_store import QueueItem, QueueStore
 from .queue_runner import QueueRunner
 from .queue_table import (
     COLUMN_LABELS as QUEUE_COLUMN_LABELS,
@@ -73,7 +73,11 @@ from .queue_types import QueueSource, QueueStatus
 from .settings_dialog import SettingsDialog
 from .usenet_finder_dialog import UsenetFinderDialog
 from .usenet_browser import UsenetBrowserSession
-from .usenet_finder import is_valid_finder_link
+from .usenet_finder import (
+    UsenetFinderClient,
+    UsenetFinderError,
+    is_valid_finder_link,
+)
 from .usenet_finder_state import (
     CACHE_DURATION_SETTING,
     HIDE_AUXILIARY_FILES_SETTING,
@@ -1114,14 +1118,20 @@ class DownloaderApp:
 
     def add_usenet_links(
         self,
-        links: list[tuple[str, str] | tuple[str, str, int | None]],
+        links: list[
+            tuple[str, str]
+            | tuple[str, str, int | None]
+            | tuple[str, str, int | None, str, int]
+        ],
     ) -> tuple[int, int, int]:
         added_count = 0
         duplicate_count = 0
         invalid_count = 0
         for entry in links:
             link, filename = entry[:2]
-            total = entry[2] if len(entry) == 3 else None
+            total = entry[2] if len(entry) >= 3 else None
+            finder_result_token = entry[3] if len(entry) == 5 else None
+            finder_file_index = entry[4] if len(entry) == 5 else None
             if not is_valid_finder_link(link):
                 invalid_count += 1
                 continue
@@ -1133,6 +1143,8 @@ class DownloaderApp:
                 filename=safe_name,
                 total=total,
                 source=QueueSource.USENET,
+                finder_result_token=finder_result_token,
+                finder_file_index=finder_file_index,
             ):
                 added_count += 1
             else:
@@ -1145,6 +1157,53 @@ class DownloaderApp:
             f"skipped {duplicate_count} duplicate(s) and {invalid_count} invalid link(s)."
         )
         return added_count, duplicate_count, invalid_count
+
+    def _refresh_usenet_download_link(self, item: QueueItem) -> str:
+        token = item.finder_result_token
+        file_index = item.finder_file_index
+        if token is None or file_index is None:
+            state = UsenetFinderState(self.secure_store)
+            selected = state.load_last_selected_result()
+            if selected is None:
+                raise UsenetFinderError(
+                    "No saved Finder result is available for this older queue item. "
+                    "Open Usenet Finder, sign in, resolve the result again, and add the file."
+                )
+            token = selected[2]
+            self._log(
+                f"Queue item {item.id} has no saved Finder reference; checking the last "
+                "resolved Finder result by file name."
+            )
+
+        package = UsenetFinderClient(self.usenet_browser).resolve(token)
+        if file_index is None:
+            matches = [
+                index
+                for index, file in enumerate(package.files)
+                if safe_filename(file.name, file.link, item.id).casefold()
+                == (item.filename or "").casefold()
+            ]
+            if len(matches) != 1:
+                raise UsenetFinderError(
+                    "Could not identify exactly one matching file in the saved Finder result. "
+                    "Open Usenet Finder, resolve the correct result, and add the file again."
+                )
+            file_index = matches[0]
+            self.store.update(
+                item.id,
+                finder_result_token=token,
+                finder_file_index=file_index,
+            )
+        if file_index >= len(package.files):
+            raise UsenetFinderError(
+                "The resolved package no longer contains the queued file."
+            )
+        file = package.files[file_index]
+        if not file.is_accessible:
+            raise UsenetFinderError(
+                f"The queued file is no longer accessible: {file.inaccessible or 'no link available'}."
+            )
+        return file.link
 
     def _refresh_hosts(self, show_popup: bool = False) -> None:
         if self.refresh_hosts_button.instate(["disabled"]):
@@ -2748,6 +2807,7 @@ class DownloaderApp:
             self.stop_event,
             self.active_cancel_events,
             self._log,
+            refresh_usenet_link=self._refresh_usenet_download_link,
         )
         self.worker = threading.Thread(target=runner.run, daemon=True)
         self.worker.start()

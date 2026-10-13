@@ -18,7 +18,8 @@ from src.queue_store import QueueStore
 from src.queue_table import host_label_for_item, sort_queue_item
 from src.queue_types import QueueSource, QueueStatus
 from src.remote_jobs import RemoteJob, RemoteJobFile
-from src.usenet_finder import file_size_bytes
+from src.usenet_finder import FinderFile, FinderPackage, file_size_bytes
+from src.usenet_finder_state import UsenetFinderState
 
 
 class QueueStoreTests(unittest.TestCase):
@@ -133,6 +134,27 @@ class QueueStoreTests(unittest.TestCase):
             assert item is not None
             self.assertEqual(item.source, QueueSource.PREMIUM_LINK)
 
+    def test_usenet_finder_reference_is_saved_for_link_renewal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "queue.sqlite3"
+            store = QueueStore(database_path)
+            store.add(
+                "https://usenet.example/download/session",
+                filename="episode.mkv",
+                source=QueueSource.USENET,
+                finder_result_token="private-result-token",
+                finder_file_index=2,
+            )
+
+            item = store.list_items()[0]
+            self.assertEqual(item.finder_result_token, "private-result-token")
+            self.assertEqual(item.finder_file_index, 2)
+            with closing(sqlite3.connect(database_path)) as connection:
+                stored_token = connection.execute(
+                    "SELECT finder_result_token FROM downloads"
+                ).fetchone()[0]
+            self.assertNotIn(b"private-result-token", bytes(stored_token))
+
     def test_queue_store_rejects_unknown_sources_and_statuses(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
@@ -233,6 +255,130 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class QueueRunnerTests(unittest.TestCase):
+    def test_runner_renews_expired_usenet_session_and_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add(
+                "https://usenet.example/download/expired",
+                filename="episode.mkv",
+                source=QueueSource.USENET,
+                finder_result_token="result-token",
+                finder_file_index=1,
+            )
+            events: queue.Queue = queue.Queue()
+            requested_urls: list[str] = []
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def download(self, url, filename, directory, _should_stop, _progress, **kwargs):
+                    requested_urls.append(url)
+                    if url.endswith("/expired"):
+                        raise DeepbridError(
+                            "Download returned HTTP 404: {\"detail\":\"Session not found\"}",
+                            status_code=404,
+                        )
+                    (directory / filename).write_bytes(b"file")
+                    kwargs["on_size_verified"](True)
+                    return True
+
+            refreshed_references: list[tuple[str | None, int | None]] = []
+
+            def refresh_link(item) -> str:
+                refreshed_references.append(
+                    (item.finder_result_token, item.finder_file_index)
+                )
+                return "https://usenet.example/download/refreshed"
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    events,
+                    threading.Event(),
+                    {},
+                    lambda _message: None,
+                    refresh_usenet_link=refresh_link,
+                ).run()
+
+            item = store.list_items()[0]
+            self.assertEqual(
+                requested_urls,
+                [
+                    "https://usenet.example/download/expired",
+                    "https://usenet.example/download/refreshed",
+                ],
+            )
+            self.assertEqual(refreshed_references, [("result-token", 1)])
+            self.assertEqual(item.status, QueueStatus.COMPLETED)
+            self.assertEqual(item.deepbrid_link, "https://usenet.example/download/refreshed")
+            self.assertEqual(item.finder_result_token, "result-token")
+
+    def test_runner_attempts_renewal_for_legacy_usenet_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add(
+                "https://usenet.example/download/expired",
+                filename="episode.mkv",
+                source=QueueSource.USENET,
+            )
+            events: queue.Queue = queue.Queue()
+            requested_urls: list[str] = []
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def download(self, url, filename, directory, _should_stop, _progress, **kwargs):
+                    requested_urls.append(url)
+                    if url.endswith("/expired"):
+                        raise DeepbridError(
+                            'Download returned HTTP 404: {"detail":"Session not found"}',
+                            status_code=404,
+                        )
+                    (directory / filename).write_bytes(b"file")
+                    kwargs["on_size_verified"](True)
+                    return True
+
+            refreshed_items = []
+
+            def refresh_link(item) -> str:
+                refreshed_items.append(item)
+                return "https://usenet.example/download/refreshed"
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    events,
+                    threading.Event(),
+                    {},
+                    lambda _message: None,
+                    refresh_usenet_link=refresh_link,
+                ).run()
+
+            self.assertEqual(
+                requested_urls,
+                [
+                    "https://usenet.example/download/expired",
+                    "https://usenet.example/download/refreshed",
+                ],
+            )
+            self.assertEqual(len(refreshed_items), 1)
+            self.assertIsNone(refreshed_items[0].finder_result_token)
+            self.assertEqual(store.list_items()[0].status, QueueStatus.COMPLETED)
+
     def test_runner_records_download_http_error_without_crashing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
@@ -648,6 +794,59 @@ class QueueRunnerTests(unittest.TestCase):
 
 
 class UsenetFinderQueueIntegrationTests(unittest.TestCase):
+    def test_legacy_queue_item_renews_by_last_resolved_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app = DownloaderApp.__new__(DownloaderApp)
+            app.store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            app.secure_store = app.store.secure_store
+            app.usenet_browser = object()
+            app._log = Mock()
+            app.store.add(
+                "https://usenet.example/download/expired",
+                filename="episode.mkv",
+                source=QueueSource.USENET,
+            )
+            item = app.store.list_items()[0]
+            UsenetFinderState(app.secure_store).save_last_selected_result(
+                "episode",
+                "",
+                "result-token",
+                0,
+            )
+            package = FinderPackage(
+                "Episode package",
+                (
+                    FinderFile(
+                        "other.mkv",
+                        "https://usenet.example/download/other",
+                        "",
+                        True,
+                        None,
+                        {},
+                    ),
+                    FinderFile(
+                        "episode.mkv",
+                        "https://usenet.example/download/refreshed",
+                        "",
+                        True,
+                        None,
+                        {},
+                    ),
+                ),
+                {},
+            )
+            with patch(
+                "src.app.UsenetFinderClient"
+            ) as client_class:
+                client_class.return_value.resolve.return_value = package
+
+                renewed_link = app._refresh_usenet_download_link(item)
+
+            self.assertEqual(renewed_link, "https://usenet.example/download/refreshed")
+            renewed_item = app.store.list_items()[0]
+            self.assertEqual(renewed_item.finder_result_token, "result-token")
+            self.assertEqual(renewed_item.finder_file_index, 1)
+
     def test_accessible_finder_links_enter_the_normal_queue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             app = DownloaderApp.__new__(DownloaderApp)
@@ -662,16 +861,27 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
                     (link, "..\\..\\episode.mkv", file_size_bytes("1.1 GB")),
                     (link, "episode.mkv"),
                     ("file:///private/file", "private-file"),
+                    (
+                        "https://usenet.example/download/456?ticket=private",
+                        "second.mkv",
+                        file_size_bytes("500 MB"),
+                        "finder-result-token",
+                        3,
+                    ),
                 ]
             )
 
-            self.assertEqual(counts, (1, 1, 1))
+            self.assertEqual(counts, (2, 1, 1))
             item = app.store.next_item()
             assert item is not None
             self.assertEqual(item.url, link)
             self.assertEqual(item.filename, "_.._episode.mkv")
             self.assertEqual(item.host_message, "Usenet Finder")
             self.assertEqual(item.total, 1_100_000_000)
+            renewed_item = app.store.list_items()[1]
+            self.assertEqual(renewed_item.finder_result_token, "finder-result-token")
+            self.assertEqual(renewed_item.finder_file_index, 3)
+            self.assertEqual(renewed_item.total, 500_000_000)
             app._apply_host_statuses({})
             item = app.store.next_item()
             assert item is not None

@@ -50,7 +50,14 @@ class FinderController(Protocol):
     usenet_browser: UsenetBrowserSession
     secure_store: SecureStore
     def _log(self, message: str) -> None: ...
-    def add_usenet_links(self, links: list[tuple[str, str]]) -> tuple[int, int, int]: ...
+    def add_usenet_links(
+        self,
+        links: list[
+            tuple[str, str]
+            | tuple[str, str, int | None]
+            | tuple[str, str, int | None, str, int]
+        ],
+    ) -> tuple[int, int, int]: ...
     def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_settings(self, initial_filter: str = "") -> None: ...
     def _set_usenet_finder_hide_auxiliary_files(self, enabled: bool) -> None: ...
@@ -80,6 +87,8 @@ class UsenetFinderDialog:
         self._browser_check_running = False
         self._restoring_result_token: str | None = None
         self._files: dict[str, FinderFile] = {}
+        self._finder_file_indices: dict[str, int] = {}
+        self._resolved_result_token: str | None = None
         self._file_order: list[str] = []
         self._file_sort_column = "name"
         self._file_sort_reverse = False
@@ -582,6 +591,7 @@ class UsenetFinderDialog:
                 self._restoring_result_token = token
                 self.results.selection_set(item_id)
                 self.results.focus(item_id)
+            self._resolved_result_token = token
             self._show_package(package)
             self.status.set(
                 f"Restored last resolved links ({len(package.files)} file(s)); "
@@ -649,6 +659,7 @@ class UsenetFinderDialog:
         result = self._results.get(selection[0])
         if result is None:
             return
+        self._resolved_result_token = result.token
         try:
             result_offset = self._result_page_offsets.get(result.token, 0)
             self.state.save_last_selected_result(
@@ -1102,8 +1113,9 @@ class UsenetFinderDialog:
     def _show_package(self, package: FinderPackage) -> None:
         self.files.delete(*self.files.get_children())
         self._files.clear()
+        self._finder_file_indices.clear()
         self._file_order.clear()
-        for file in package.files:
+        for file_index, file in enumerate(package.files):
             item_id = self.files.insert(
                 "",
                 "end",
@@ -1116,6 +1128,7 @@ class UsenetFinderDialog:
                 tags=("inaccessible",) if not file.is_accessible else (),
             )
             self._files[item_id] = file
+            self._finder_file_indices[item_id] = file_index
             self._file_order.append(item_id)
         self._sort_files(self._file_sort_column, toggle=False)
         package_label = f" ({package.name})" if package.name else ""
@@ -1242,9 +1255,22 @@ class UsenetFinderDialog:
         if not files:
             self.status.set("No accessible files selected to add.")
             return
-        added, duplicates, invalid = self.app.add_usenet_links(
-            [(file.link, file.name, file_size_bytes(file.size)) for file in files]
-        )
+        links: list[
+            tuple[str, str, int | None]
+            | tuple[str, str, int | None, str, int]
+        ] = []
+        for file in files:
+            item_id = next(
+                key for key, candidate in self._files.items() if candidate is file
+            )
+            link = (file.link, file.name, file_size_bytes(file.size))
+            if self._resolved_result_token is not None:
+                links.append(
+                    (*link, self._resolved_result_token, self._finder_file_indices[item_id])
+                )
+            else:
+                links.append(link)
+        added, duplicates, invalid = self.app.add_usenet_links(links)
         self.status.set(
             f"Added {added} file(s) to the download queue; skipped {duplicates} "
             f"duplicate(s) and {invalid} invalid link(s). Click Start to download."

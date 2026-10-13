@@ -15,6 +15,7 @@ from .queue_types import QueueSource, QueueStatus
 URL_AAD = b"download-original-url-v1"
 DEEPBRID_LINK_AAD = b"download-generated-url-v1"
 TORRENT_DATA_AAD = b"torrent-file-data-v1"
+FINDER_RESULT_TOKEN_AAD = b"usenet-finder-result-token-v1"
 MAX_TORRENT_FILE_SIZE = 5 * 1024 * 1024
 
 @dataclass(frozen=True)
@@ -36,6 +37,8 @@ class QueueItem:
     source: QueueSource
     remote_job_id: str | None
     remote_file_index: int | None
+    finder_result_token: str | None
+    finder_file_index: int | None
 
 
 class QueueStore:
@@ -52,6 +55,8 @@ class QueueStore:
                     source TEXT NOT NULL DEFAULT '{QueueSource.PREMIUM_LINK.value}',
                     remote_job_id TEXT,
                     remote_file_index INTEGER,
+                    finder_result_token BLOB,
+                    finder_file_index INTEGER,
                     torrent_data BLOB,
                     status TEXT NOT NULL DEFAULT '{QueueStatus.QUEUED}',
                     size_verified INTEGER NOT NULL DEFAULT 0,
@@ -76,6 +81,8 @@ class QueueStore:
                 "source": f"TEXT NOT NULL DEFAULT '{QueueSource.PREMIUM_LINK.value}'",
                 "remote_job_id": "TEXT",
                 "remote_file_index": "INTEGER",
+                "finder_result_token": "BLOB",
+                "finder_file_index": "INTEGER",
                 "torrent_data": "BLOB",
                 "size_verified": "INTEGER NOT NULL DEFAULT 0",
                 "deepbrid_link": "TEXT",
@@ -98,7 +105,8 @@ class QueueStore:
             )
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT id, url, url_ciphertext, deepbrid_link, error FROM downloads"
+                "SELECT id, url, url_ciphertext, deepbrid_link, "
+                "finder_result_token, error FROM downloads"
             ).fetchall()
         for row in rows:
             if row["url_ciphertext"] is None:
@@ -119,6 +127,21 @@ class QueueStore:
                     )
             elif isinstance(row["deepbrid_link"], bytes):
                 self.secure_store.decrypt_text(row["deepbrid_link"], DEEPBRID_LINK_AAD)
+            if isinstance(row["finder_result_token"], str):
+                encrypted_token = self.secure_store.encrypt_text(
+                    row["finder_result_token"],
+                    FINDER_RESULT_TOKEN_AAD,
+                )
+                with self._connect() as connection:
+                    connection.execute(
+                        "UPDATE downloads SET finder_result_token = ? WHERE id = ?",
+                        (encrypted_token, row["id"]),
+                    )
+            elif isinstance(row["finder_result_token"], bytes):
+                self.secure_store.decrypt_text(
+                    row["finder_result_token"],
+                    FINDER_RESULT_TOKEN_AAD,
+                )
             if isinstance(row["error"], str) and row["error"]:
                 match = re.search(r"HTTP\s+(\d{3})", row["error"])
                 safe_error = f"HTTP {match.group(1)}" if match else "Previous error details cleared"
@@ -156,6 +179,8 @@ class QueueStore:
         filename: str | None = None,
         total: int | None = None,
         source: QueueSource = QueueSource.PREMIUM_LINK,
+        finder_result_token: str | None = None,
+        finder_file_index: int | None = None,
     ) -> bool:
         if total is not None and (
             isinstance(total, bool) or not isinstance(total, int) or total < 0
@@ -163,13 +188,32 @@ class QueueStore:
             raise ValueError("Queue item total must be a non-negative integer.")
         if not isinstance(source, QueueSource):
             raise ValueError(f"Unsupported queue source: {source!r}")
+        if (finder_result_token is None) != (finder_file_index is None):
+            raise ValueError("Usenet Finder token and file index must be provided together.")
+        if finder_result_token is not None and (
+            source != QueueSource.USENET
+            or not finder_result_token
+            or isinstance(finder_file_index, bool)
+            or not isinstance(finder_file_index, int)
+            or finder_file_index < 0
+        ):
+            raise ValueError("Invalid Usenet Finder queue reference.")
         url_hash = self.secure_store.hash_text(url, URL_AAD)
         encrypted_url = self.secure_store.encrypt_text(url, URL_AAD)
+        encrypted_finder_token = (
+            self.secure_store.encrypt_text(
+                finder_result_token,
+                FINDER_RESULT_TOKEN_AAD,
+            )
+            if finder_result_token is not None
+            else None
+        )
         with self._connect() as connection:
             cursor = connection.execute(
                 "INSERT OR IGNORE INTO downloads "
-                "(url, url_ciphertext, source, host_status, host_message, filename, total) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(url, url_ciphertext, source, host_status, host_message, filename, total, "
+                "finder_result_token, finder_file_index) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     url_hash,
                     encrypted_url,
@@ -178,6 +222,8 @@ class QueueStore:
                     host_message,
                     filename,
                     total,
+                    encrypted_finder_token,
+                    finder_file_index,
                 ),
             )
             return cursor.rowcount > 0
@@ -333,6 +379,7 @@ class QueueStore:
             "status", "downloaded", "total", "filename", "error", "deepbrid_link",
             "host_status", "host_message", "enabled", "size_verified",
             "force", "remote_job_id", "remote_file_index", "torrent_data",
+            "finder_result_token", "finder_file_index",
         }
         if not fields or not fields.keys() <= allowed:
             raise ValueError("Unsupported queue fields")
@@ -344,6 +391,11 @@ class QueueStore:
         if isinstance(fields.get("deepbrid_link"), str):
             fields["deepbrid_link"] = self.secure_store.encrypt_text(
                 fields["deepbrid_link"], DEEPBRID_LINK_AAD
+            )
+        if isinstance(fields.get("finder_result_token"), str):
+            fields["finder_result_token"] = self.secure_store.encrypt_text(
+                fields["finder_result_token"],
+                FINDER_RESULT_TOKEN_AAD,
             )
         if fields.get("torrent_data") is not None:
             torrent_data = fields["torrent_data"]
@@ -383,4 +435,13 @@ class QueueStore:
             source=QueueSource(row["source"]),
             remote_job_id=row["remote_job_id"],
             remote_file_index=row["remote_file_index"],
+            finder_result_token=(
+                self.secure_store.decrypt_text(
+                    bytes(row["finder_result_token"]),
+                    FINDER_RESULT_TOKEN_AAD,
+                )
+                if row["finder_result_token"] is not None
+                else None
+            ),
+            finder_file_index=row["finder_file_index"],
         )

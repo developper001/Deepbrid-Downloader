@@ -77,7 +77,7 @@ On Linux, Tkinter may need to be installed through the operating system package 
 
 If premium-link generation fails transiently, the app makes up to five attempts with a short pause between them, then falls back to hourly retries until it succeeds or is stopped. Cloudflare's browser-signature block and Deepbrid's unsupported-filehost response are treated as non-retryable and pause the queue. When the host reports an expected file size, the app checks the received byte count before marking the download complete; mismatches fail and keep the partial file for retry. If the host provides no expected size, the completed file is marked not verified. Requests use the documented Deepbrid API and the app's user agent identifier, and active downloads keep their partial files for a clean resume.
 
-Usenet Finder links may expire independently of the download queue. If a resumed transfer fails with HTTP 404 and "Session not found", resolve the result again in Usenet Finder and add the newly returned file link; retrying the old link cannot renew its session.
+Usenet Finder links may expire independently of the download queue. If a transfer fails with HTTP 404 and "Session not found", the app asks the authenticated dedicated Chrome session to resolve the result again and retries once with the refreshed file link. New queue entries keep an encrypted reference to the Finder result and file. Older entries try the last selected Finder result, matching the queued file by its unique filename; a successful match is saved for future renewals. Keep the dedicated browser open and signed in. If there is no saved result or the file cannot be matched uniquely, select and resolve the correct result in Usenet Finder, then retry the failed queue item.
 
 ## Usenet Finder
 

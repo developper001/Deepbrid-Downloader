@@ -128,7 +128,7 @@ class UsenetWorkflow:
         _cancel_event: threading.Event,
     ) -> SourceResolution:
         self.context.log(f"Using direct Usenet file URL for queue item {item.id}.")
-        return SourceResolution(item.url, item.filename)
+        return SourceResolution(item.deepbrid_link or item.url, item.filename)
 
 
 class TorrentWorkflow:

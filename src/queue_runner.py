@@ -15,7 +15,7 @@ from .app_events import (
     WorkerDoneEvent,
 )
 from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
-from .queue_store import QueueStore
+from .queue_store import QueueItem, QueueStore
 from .queue_types import QueueSource, QueueStatus
 from .queue_workflows import (
     PremiumLinkWorkflow,
@@ -25,6 +25,7 @@ from .queue_workflows import (
     UsenetWorkflow,
     stored_error,
 )
+from .usenet_finder import UsenetFinderError, is_valid_finder_link
 
 
 class QueueRunner:
@@ -37,6 +38,7 @@ class QueueRunner:
         stop_event: threading.Event,
         active_cancel_events: dict[int, threading.Event],
         log: Callable[[str], None],
+        refresh_usenet_link: Callable[[QueueItem], str] | None = None,
     ):
         self.store = store
         self.api_key = api_key
@@ -45,6 +47,7 @@ class QueueRunner:
         self.stop_event = stop_event
         self.active_cancel_events = active_cancel_events
         self.log = log
+        self.refresh_usenet_link = refresh_usenet_link
         context = QueueWorkflowContext(store, events, stop_event, log)
         self.source_workflows = {
             QueueSource.PREMIUM_LINK: PremiumLinkWorkflow(context),
@@ -193,20 +196,58 @@ class QueueRunner:
                 self.store.update(item.id, filename=filename)
 
             try:
-                completed = client.download(
-                    generated_url,
+                download_args = (
                     filename,
                     self.output_dir,
                     lambda: self.stop_event.is_set() or item_cancel_event.is_set(),
                     progress,
-                    overwrite_existing=item.force,
-                    on_size_verified=record_size_verification,
-                    on_filename=(
+                )
+                download_options = {
+                    "overwrite_existing": item.force,
+                    "on_size_verified": record_size_verification,
+                    "on_filename": (
                         record_download_filename
                         if item.source == QueueSource.TORRENT_CLOUD
                         else None
                     ),
-                )
+                }
+                try:
+                    completed = client.download(
+                        generated_url,
+                        *download_args,
+                        **download_options,
+                    )
+                except DeepbridError as error:
+                    if not (
+                        item.source == QueueSource.USENET
+                        and error.status_code == 404
+                        and "session not found" in str(error).casefold()
+                        and self.refresh_usenet_link is not None
+                    ):
+                        raise
+                    self.log(
+                        f"Usenet download session expired for queue item {item.id}; "
+                        "requesting a fresh Finder link."
+                    )
+                    try:
+                        refreshed_url = self.refresh_usenet_link(item)
+                    except (UsenetFinderError, ValueError) as refresh_error:
+                        raise DeepbridError(
+                            f"Usenet link expired and could not be renewed: {refresh_error}",
+                            status_code=404,
+                        ) from refresh_error
+                    if not is_valid_finder_link(refreshed_url):
+                        raise DeepbridError(
+                            "Usenet Finder returned an invalid renewed file link.",
+                            status_code=404,
+                        )
+                    self.store.update(item.id, deepbrid_link=refreshed_url)
+                    self.log(f"Renewed Usenet link for queue item {item.id}; retrying download.")
+                    completed = client.download(
+                        refreshed_url,
+                        *download_args,
+                        **download_options,
+                    )
                 if completed:
                     final_size = (self.output_dir / filename).stat().st_size
                     self.store.update(

@@ -2231,6 +2231,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog.files.get_children.return_value = ()
         dialog.files.insert.return_value = "episode"
         dialog._files = {}
+        dialog._finder_file_indices = {}
         dialog._file_order = []
         dialog._file_sort_column = "name"
         dialog._file_sort_reverse = False
@@ -2298,6 +2299,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog.files.insert.side_effect = ("video-row", "par2-row", "nfo-row")
         dialog.files.selection.return_value = ("par2-row",)
         dialog._files = {}
+        dialog._finder_file_indices = {}
         dialog._file_order = []
         dialog._file_sort_column = "name"
         dialog._file_sort_reverse = False
