@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+import sqlite3
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
@@ -8,6 +10,7 @@ from tkinter import ttk
 from .deepbrid_client import safe_filename
 from .queue_store import QueueItem
 from .queue_types import QueueSource, QueueStatus
+from .secure_store import SecureStorageError
 
 COLUMN_ORDER = (
     "filename",
@@ -39,6 +42,37 @@ COLUMN_LABELS = {
     "time_remaining": "ETA",
     "eta": "Status",
     "verification": "Verification",
+}
+
+COLUMN_WIDTHS = {
+    "filename": 250,
+    "file_path": 420,
+    "extension": 90,
+    "link": 330,
+    "host": 135,
+    "status": 120,
+    "size": 145,
+    "progress": 145,
+    "progress_percentage": 95,
+    "remaining": 105,
+    "time_remaining": 95,
+    "eta": 170,
+    "verification": 110,
+}
+COLUMN_MIN_WIDTHS = {
+    "filename": 140,
+    "file_path": 180,
+    "extension": 75,
+    "link": 150,
+    "host": 100,
+    "status": 90,
+    "size": 120,
+    "progress": 125,
+    "progress_percentage": 75,
+    "remaining": 90,
+    "time_remaining": 80,
+    "eta": 130,
+    "verification": 95,
 }
 
 
@@ -168,7 +202,13 @@ def sort_queue_item(
 
 
 class QueueTableView:
-    def __init__(self, app, parent: ttk.Panedwindow, visible_columns: list[str]):
+    def __init__(
+        self,
+        app,
+        parent: ttk.Panedwindow,
+        visible_columns: list[str],
+        column_widths: dict[str, int],
+    ):
         self.app = app
         self.progress_indicator_values: dict[str, tuple[float | None, str]] = {}
         self.progress_indicator_canvases: dict[str, tk.Canvas] = {}
@@ -189,19 +229,17 @@ class QueueTableView:
                 text=label,
                 command=lambda key=column: app._sort_by(key),
             )
-        self.table.column("filename", width=250, minwidth=140, stretch=False)
-        self.table.column("file_path", width=420, minwidth=180, stretch=False)
-        self.table.column("extension", width=90, minwidth=75, stretch=False)
-        self.table.column("link", width=330, minwidth=150, stretch=False)
-        self.table.column("host", width=135, minwidth=100, stretch=False)
-        self.table.column("status", width=120, minwidth=90, stretch=False)
-        self.table.column("size", width=145, minwidth=120, stretch=False, anchor="e")
-        self.table.column("progress", width=145, minwidth=125, stretch=False, anchor="center")
-        self.table.column("progress_percentage", width=95, minwidth=75, stretch=False, anchor="center")
-        self.table.column("remaining", width=105, minwidth=90, stretch=False, anchor="e")
-        self.table.column("time_remaining", width=95, minwidth=80, stretch=False, anchor="e")
-        self.table.column("eta", width=170, minwidth=130, stretch=False)
-        self.table.column("verification", width=110, minwidth=95, stretch=False)
+        for column in COLUMN_ORDER:
+            options = {
+                "width": column_widths[column],
+                "minwidth": COLUMN_MIN_WIDTHS[column],
+                "stretch": False,
+            }
+            if column in {"size", "remaining", "time_remaining"}:
+                options["anchor"] = "e"
+            elif column in {"progress", "progress_percentage"}:
+                options["anchor"] = "center"
+            self.table.column(column, **options)
         self.table.configure(displaycolumns=visible_columns)
         self.table.grid(row=0, column=0, sticky="nsew")
 
@@ -243,8 +281,23 @@ class QueueTableView:
             "<Button-5>",
         ):
             self.table.bind(sequence, self.schedule_layout, add="+")
+        self.table.bind("<ButtonRelease-1>", self._column_resize_finished, add="+")
 
         parent.add(table_frame, weight=4)
+
+    def _column_resize_finished(self, event: tk.Event) -> None:
+        if self.table.identify_region(event.x, event.y) != "separator":
+            return
+        widths = {
+            column: int(self.table.column(column, "width"))
+            for column in COLUMN_ORDER
+        }
+        try:
+            self.app.secure_store.set_setting("column_widths", json.dumps(widths))
+        except (OSError, sqlite3.Error, SecureStorageError) as error:
+            self.app._log(f"Could not save download queue column widths: {error}")
+            return
+        self.app.column_widths = widths
 
     def refresh(self) -> None:
         app = self.app

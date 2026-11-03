@@ -60,6 +60,8 @@ from .queue_store import QueueItem, QueueStore
 from .queue_runner import QueueRunner
 from .queue_table import (
     COLUMN_LABELS as QUEUE_COLUMN_LABELS,
+    COLUMN_MIN_WIDTHS as QUEUE_COLUMN_MIN_WIDTHS,
+    COLUMN_WIDTHS as QUEUE_COLUMN_WIDTHS,
     COLUMN_ORDER,
     QueueTableView,
     format_bytes,
@@ -74,8 +76,10 @@ from .settings_dialog import SettingsDialog
 from .usenet_finder_dialog import (
     HOST_COLUMNS,
     HOST_COLUMN_LABELS,
+    HOST_COLUMN_MIN_WIDTHS,
     UsenetFinderDialog,
     load_table_column_layout,
+    load_table_column_widths,
 )
 from .usenet_browser import UsenetBrowserSession
 from .usenet_finder import (
@@ -369,6 +373,7 @@ class DownloaderApp:
         self._last_saved_priority_order: tuple[int, ...] | None = None
         self.visible_columns = config.visible_columns
         self.column_order = config.column_order
+        self.column_widths = config.column_widths
         self.output_dir = config.output_dir
         self.output_dir_text = tk.StringVar(value=str(self.output_dir))
         self.hosts = config.hosts
@@ -496,7 +501,12 @@ class DownloaderApp:
 
         self.panes = ttk.Panedwindow(main, orient="vertical")
         self.panes.grid(row=2, column=0, columnspan=2, sticky="nsew")
-        self.queue_table_view = QueueTableView(self, self.panes, self.visible_columns)
+        self.queue_table_view = QueueTableView(
+            self,
+            self.panes,
+            self.visible_columns,
+            self.column_widths,
+        )
         self.table = self.queue_table_view.table
         self.column_labels = QUEUE_COLUMN_LABELS
         self.progress_indicator_values = self.queue_table_view.progress_indicator_values
@@ -1309,9 +1319,19 @@ class DownloaderApp:
 
         for column, label in HOST_COLUMN_LABELS.items():
             table.heading(column, text=label, command=lambda key=column: sort_by(key))
-        table.column("host", width=220, anchor="w")
-        table.column("availability", width=220, anchor="w")
-        table.column("limit", width=140, anchor="e")
+        column_widths = load_table_column_widths(self.secure_store, "hosts")
+        for column, anchor in (
+            ("host", "w"),
+            ("availability", "w"),
+            ("limit", "e"),
+        ):
+            table.column(
+                column,
+                width=column_widths[column],
+                minwidth=HOST_COLUMN_MIN_WIDTHS[column],
+                stretch=False,
+                anchor=anchor,
+            )
         _column_order, visible_columns = load_table_column_layout(
             self.secure_store,
             "hosts",
@@ -1320,7 +1340,22 @@ class DownloaderApp:
         table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
-        table.configure(yscrollcommand=scrollbar.set)
+        horizontal_scrollbar = ttk.Scrollbar(
+            table_frame,
+            orient="horizontal",
+            command=table.xview,
+        )
+        horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
+        table.configure(
+            yscrollcommand=scrollbar.set,
+            xscrollcommand=lambda first, last: self._update_table_scrollbar(
+                horizontal_scrollbar,
+                first,
+                last,
+                show_if_needed=True,
+            ),
+        )
+        table.bind("<ButtonRelease-1>", self._save_host_column_widths, add="+")
 
         def update_hosts(
             updated_hosts: dict[str, str],
@@ -1403,6 +1438,21 @@ class DownloaderApp:
             self.hosts_popup = None
             self.hosts_popup_table = None
             self._hosts_popup_update = None
+
+    def _save_host_column_widths(self, event: tk.Event | None = None) -> None:
+        table = self.hosts_popup_table
+        if table is None:
+            return
+        if event is not None and table.identify_region(event.x, event.y) != "separator":
+            return
+        widths = {column: int(table.column(column, "width")) for column in HOST_COLUMNS}
+        try:
+            self.secure_store.set_setting(
+                "host_status_column_widths",
+                json.dumps(widths),
+            )
+        except (OSError, sqlite3.Error, SecureStorageError) as error:
+            self._log(f"Could not save host status column widths: {error}")
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
         for item in self.store.list_items():
@@ -2085,8 +2135,8 @@ class DownloaderApp:
         dialog = tk.Toplevel(self.root)
         dialog.title("Columns")
         dialog.resizable(True, True)
-        dialog.geometry("500x390")
-        dialog.minsize(460, 300)
+        dialog.geometry("520x440")
+        dialog.minsize(480, 360)
 
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
@@ -2095,15 +2145,17 @@ class DownloaderApp:
 
         tree = ttk.Treeview(
             frame,
-            columns=("name", "visibility"),
+            columns=("name", "visibility", "width"),
             show="headings",
             selectmode="browse",
             height=len(COLUMN_ORDER),
         )
         tree.heading("name", text="Column")
         tree.heading("visibility", text="Visibility")
+        tree.heading("width", text="Width")
         tree.column("name", width=250, minwidth=190, stretch=True)
         tree.column("visibility", width=110, minwidth=100, stretch=False, anchor="center")
+        tree.column("width", width=75, minwidth=65, stretch=False, anchor="e")
         tree.grid(row=0, column=0, sticky="nsew")
         tree_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         tree_scrollbar.grid(row=0, column=1, sticky="ns")
@@ -2112,6 +2164,7 @@ class DownloaderApp:
         working_order = list(self.column_order)
         working_visible = set(self.visible_columns)
         visible_variable = tk.BooleanVar(master=dialog)
+        width_variable = tk.StringVar(master=dialog)
 
         def selected_column() -> str | None:
             selected = tree.selection()
@@ -2121,12 +2174,18 @@ class DownloaderApp:
             column = selected_column()
             if column is None:
                 visible_variable.set(False)
+                width_variable.set("")
                 visibility_check.configure(state="disabled")
+                width_spinbox.configure(state="disabled")
+                set_width_button.configure(state="disabled")
                 move_up_button.configure(state="disabled")
                 move_down_button.configure(state="disabled")
                 return
             visible_variable.set(column in working_visible)
+            width_variable.set(str(working_widths[column]))
             visibility_check.configure(state="normal")
+            width_spinbox.configure(state="normal")
+            set_width_button.configure(state="normal")
             position = working_order.index(column)
             move_up_button.configure(state="normal" if position > 0 else "disabled")
             move_down_button.configure(
@@ -2143,6 +2202,7 @@ class DownloaderApp:
                     values=(
                         self.column_labels[column],
                         "Visible" if column in working_visible else "Hidden",
+                        working_widths[column],
                     ),
                 )
             if selected in working_order:
@@ -2178,9 +2238,39 @@ class DownloaderApp:
             working_order[:] = COLUMN_ORDER
             working_visible.clear()
             working_visible.update(DEFAULT_COLUMNS)
+            working_widths.clear()
+            working_widths.update(QUEUE_COLUMN_WIDTHS)
             render_order(DEFAULT_COLUMNS[0])
 
+        working_widths = dict(self.column_widths)
+
+        def apply_width() -> bool:
+            column = selected_column()
+            if column is None:
+                return True
+            try:
+                width = int(width_variable.get())
+            except ValueError:
+                messagebox.showwarning(
+                    "Invalid column width",
+                    "Enter a whole number for the column width.",
+                    parent=dialog,
+                )
+                return False
+            if not QUEUE_COLUMN_MIN_WIDTHS[column] <= width <= 10000:
+                messagebox.showwarning(
+                    "Invalid column width",
+                    f"Enter a width from {QUEUE_COLUMN_MIN_WIDTHS[column]} to 10000.",
+                    parent=dialog,
+                )
+                return False
+            working_widths[column] = width
+            render_order(column)
+            return True
+
         def apply_changes() -> None:
+            if selected_column() is not None and not apply_width():
+                return
             if not working_visible:
                 messagebox.showwarning(
                     "Columns required",
@@ -2188,13 +2278,23 @@ class DownloaderApp:
                     parent=dialog,
                 )
                 return
-            self.column_order = list(working_order)
-            self.visible_columns = [
-                column for column in self.column_order if column in working_visible
+            ordered_visible = [
+                column for column in working_order if column in working_visible
             ]
+            try:
+                self.secure_store.set_setting("column_order", json.dumps(working_order))
+                self.secure_store.set_setting("visible_columns", json.dumps(ordered_visible))
+                self.secure_store.set_setting("column_widths", json.dumps(working_widths))
+            except (OSError, sqlite3.Error, SecureStorageError) as error:
+                self._log(f"Could not save download queue column settings: {error}")
+                messagebox.showerror("Could not save columns", str(error), parent=dialog)
+                return
+            self.column_order = list(working_order)
+            self.visible_columns = ordered_visible
+            self.column_widths = dict(working_widths)
             self.table.configure(displaycolumns=self.visible_columns)
-            self.secure_store.set_setting("column_order", json.dumps(self.column_order))
-            self.secure_store.set_setting("visible_columns", json.dumps(self.visible_columns))
+            for column, width in self.column_widths.items():
+                self.table.column(column, width=width)
             dialog.destroy()
 
         move_buttons = ttk.Frame(frame)
@@ -2216,8 +2316,27 @@ class DownloaderApp:
             state="disabled",
         )
         visibility_check.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        width_controls = ttk.Frame(frame)
+        width_controls.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(width_controls, text="Selected column width (pixels)").pack(side="left")
+        width_spinbox = ttk.Spinbox(
+            width_controls,
+            from_=30,
+            to=10000,
+            textvariable=width_variable,
+            width=8,
+            state="disabled",
+        )
+        width_spinbox.pack(side="left", padx=(8, 4))
+        set_width_button = ttk.Button(
+            width_controls,
+            text="Set width",
+            command=apply_width,
+            state="disabled",
+        )
+        set_width_button.pack(side="left")
         actions = ttk.Frame(frame)
-        actions.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        actions.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(12, 0))
         ttk.Button(actions, text="Reset to defaults", command=reset_defaults).pack(side="left")
         ttk.Button(actions, text="Apply", command=apply_changes).pack(side="right", padx=(0, 8))
         ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(side="right")

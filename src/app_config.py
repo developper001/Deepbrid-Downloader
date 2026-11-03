@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .column_widths import load_column_widths
+from .queue_table import COLUMN_MIN_WIDTHS, COLUMN_WIDTHS
 from .secure_store import SecureStorageError, SecureStore
 from .usenet_finder_state import (
     CACHE_DURATION_SETTING,
@@ -31,6 +33,7 @@ class AppConfiguration:
     auto_start_downloads: bool
     visible_columns: list[str]
     column_order: list[str]
+    column_widths: dict[str, int]
     output_dir: Path
     hosts: dict[str, str]
     dark_theme: bool
@@ -220,6 +223,13 @@ class AppConfiguration:
             ),
             visible_columns=visible_columns,
             column_order=configured_order,
+            column_widths=load_column_widths(
+                secure_store,
+                "column_widths",
+                column_order,
+                COLUMN_WIDTHS,
+                COLUMN_MIN_WIDTHS,
+            ),
             output_dir=output_dir,
             hosts=hosts,
             dark_theme=secure_store.get_setting("dark_theme") == "true",

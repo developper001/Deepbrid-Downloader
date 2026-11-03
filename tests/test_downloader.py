@@ -75,7 +75,7 @@ from src.app import (
     validate_api_key,
     validate_output_folder,
 )
-from src.queue_table import full_file_path
+from src.queue_table import QueueTableView, full_file_path
 from src.link_utils import extract_supported_links, supported_link_status
 from src.queue_store import QueueStore
 from src.settings_dialog import SettingsDialog
@@ -102,6 +102,7 @@ from src.usenet_finder_dialog import (
     _configure_horizontal_scrollbar,
     _read_column_widths,
     load_table_column_layout,
+    load_table_column_widths,
 )
 from src.usenet_finder_state import (
     CACHE_DURATION_SETTING,
@@ -256,12 +257,17 @@ class AppConfigurationTests(unittest.TestCase):
                 config.column_order[config.column_order.index("progress") + 1],
                 "progress_percentage",
             )
+            self.assertEqual(config.column_widths["filename"], 250)
 
             store.set_setting("auto_start_downloads_on_startup", "false")
             store.set_setting("dark_theme", "true")
             store.set_setting("hosts", json.dumps({"example.com": "up"}))
             store.set_setting("output_directory", str(downloads / "custom"))
             store.set_setting("visible_columns", json.dumps(["filename", "progress"]))
+            store.set_setting(
+                "column_widths",
+                json.dumps({"filename": 500, "link": 800}),
+            )
             store.set_setting(CACHE_DURATION_SETTING, "48")
             store.set_setting(HIDE_AUXILIARY_FILES_SETTING, "false")
             log_path = downloads / "diagnostics.log"
@@ -281,6 +287,8 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertEqual(config.hosts, {"example.com": "up"})
             self.assertEqual(config.output_dir, downloads / "custom")
             self.assertEqual(config.visible_columns, ["filename", "progress"])
+            self.assertEqual(config.column_widths["filename"], 500)
+            self.assertEqual(config.column_widths["link"], 800)
             self.assertEqual(config.usenet_finder_cache_duration_hours, 48)
             self.assertFalse(config.usenet_finder_hide_auxiliary_files)
             self.assertTrue(config.append_output_log_enabled)
@@ -1109,6 +1117,35 @@ class ValidationAndPresentationTests(unittest.TestCase):
         store.get_setting.assert_any_call("host_status_column_order")
         store.get_setting.assert_any_call("host_status_visible_columns")
 
+    def test_host_column_widths_restore_saved_values(self) -> None:
+        store = Mock()
+        store.get_setting.side_effect = lambda name: (
+            json.dumps({"host": 360, "availability": 250, "limit": 140})
+            if name == "host_status_column_widths"
+            else None
+        )
+
+        widths = load_table_column_widths(store, "hosts")
+
+        self.assertEqual(widths, {"host": 360, "availability": 250, "limit": 140})
+
+    def test_host_column_widths_are_saved_after_resizing(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.hosts_popup_table = Mock()
+        widths = {"host": 360, "availability": 280, "limit": 160}
+        app.hosts_popup_table.column.side_effect = lambda column, _option: str(
+            widths[column]
+        )
+        app.secure_store = Mock()
+        app._log = Mock()
+
+        app._save_host_column_widths()
+
+        app.secure_store.set_setting.assert_called_once_with(
+            "host_status_column_widths",
+            json.dumps(widths),
+        )
+
     def test_host_column_settings_can_open_directly_from_settings(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
         app.hosts_popup_table = None
@@ -1225,6 +1262,26 @@ class ValidationAndPresentationTests(unittest.TestCase):
         scrollbar.grid_remove.assert_called_once_with()
         scrollbar.grid.assert_not_called()
         self.assertEqual(app._schedule_progress_indicator_layout.call_count, 2)
+
+    def test_queue_column_widths_are_saved_after_resizing(self) -> None:
+        view = QueueTableView.__new__(QueueTableView)
+        view.table = Mock()
+        view.table.identify_region.return_value = "separator"
+        widths = {column: 150 + index for index, column in enumerate(COLUMN_ORDER)}
+        view.table.column.side_effect = lambda column, _option: str(widths[column])
+        view.app = SimpleNamespace(
+            secure_store=Mock(),
+            column_widths={},
+            _log=Mock(),
+        )
+
+        view._column_resize_finished(SimpleNamespace(x=100, y=10))
+
+        view.app.secure_store.set_setting.assert_called_once_with(
+            "column_widths",
+            json.dumps(widths),
+        )
+        self.assertEqual(view.app.column_widths, widths)
 
     def test_bulk_actions_use_display_order(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)

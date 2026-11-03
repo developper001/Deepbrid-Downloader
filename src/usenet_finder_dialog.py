@@ -24,6 +24,7 @@ from .usenet_finder import (
 from .usenet_browser import UsenetBrowserSession
 from .secure_store import SecureStorageError, SecureStore
 from .usenet_finder_state import UsenetFinderState, UsenetFinderStateError
+from .column_widths import load_column_widths as _read_column_widths
 
 
 SEARCH_COLUMNS = ("title", "category", "size", "date")
@@ -49,6 +50,16 @@ HOST_COLUMN_LABELS = {
     "availability": "Availability",
     "limit": "Daily remaining",
 }
+HOST_COLUMN_WIDTHS = {
+    "host": 220,
+    "availability": 220,
+    "limit": 140,
+}
+HOST_COLUMN_MIN_WIDTHS = {
+    "host": 100,
+    "availability": 100,
+    "limit": 70,
+}
 SEARCH_COLUMN_WIDTHS = {
     "title": 470,
     "category": 100,
@@ -60,6 +71,18 @@ FILE_COLUMN_WIDTHS = {
     "extension": 100,
     "size": 120,
     "availability": 150,
+}
+SEARCH_COLUMN_MIN_WIDTHS = {
+    "title": 200,
+    "category": 70,
+    "size": 70,
+    "date": 70,
+}
+FILE_COLUMN_MIN_WIDTHS = {
+    "name": 200,
+    "extension": 70,
+    "size": 70,
+    "availability": 70,
 }
 
 
@@ -75,29 +98,6 @@ def _configure_horizontal_scrollbar(
             scrollbar.grid_remove()
 
     table.configure(xscrollcommand=update_scrollbar)
-
-
-def _read_column_widths(
-    secure_store: SecureStore,
-    setting: str,
-    columns: tuple[str, ...],
-    defaults: dict[str, int],
-) -> dict[str, int]:
-    try:
-        saved_widths = json.loads(secure_store.get_setting(setting) or "{}")
-    except (json.JSONDecodeError, sqlite3.Error):
-        return defaults.copy()
-    if not isinstance(saved_widths, dict):
-        return defaults.copy()
-    return {
-        column: (
-            saved_widths[column]
-            if type(saved_widths.get(column)) is int
-            and 30 <= saved_widths[column] <= 10000
-            else defaults[column]
-        )
-        for column in columns
-    }
 
 
 def _read_column_layout(
@@ -161,6 +161,33 @@ def load_table_column_layout(
     )
 
 
+def load_table_column_widths(
+    secure_store: SecureStore,
+    table_name: str,
+) -> dict[str, int]:
+    if table_name == "search":
+        columns, defaults = SEARCH_COLUMNS, SEARCH_COLUMN_WIDTHS
+        setting = "usenet_search_column_widths"
+        minimums = SEARCH_COLUMN_MIN_WIDTHS
+    elif table_name == "files":
+        columns, defaults = FILE_COLUMNS, FILE_COLUMN_WIDTHS
+        setting = "usenet_file_column_widths"
+        minimums = FILE_COLUMN_MIN_WIDTHS
+    elif table_name == "hosts":
+        columns, defaults = HOST_COLUMNS, HOST_COLUMN_WIDTHS
+        setting = "host_status_column_widths"
+        minimums = HOST_COLUMN_MIN_WIDTHS
+    else:
+        raise ValueError(f"Unknown column table: {table_name}")
+    return _read_column_widths(
+        secure_store,
+        setting,
+        columns,
+        defaults,
+        minimums,
+    )
+
+
 class FinderController(Protocol):
     root: tk.Tk
     theme_colors: dict[str, str]
@@ -217,11 +244,9 @@ class UsenetFinderDialog:
             SEARCH_COLUMNS,
             DEFAULT_SEARCH_COLUMNS,
         )
-        self.search_column_widths = _read_column_widths(
+        self.search_column_widths = load_table_column_widths(
             app.secure_store,
-            "usenet_search_column_widths",
-            SEARCH_COLUMNS,
-            SEARCH_COLUMN_WIDTHS,
+            "search",
         )
         self.file_column_order, self.file_visible_columns = self._load_column_layout(
             "usenet_file_column_order",
@@ -229,11 +254,9 @@ class UsenetFinderDialog:
             FILE_COLUMNS,
             DEFAULT_FILE_COLUMNS,
         )
-        self.file_column_widths = _read_column_widths(
+        self.file_column_widths = load_table_column_widths(
             app.secure_store,
-            "usenet_file_column_widths",
-            FILE_COLUMNS,
-            FILE_COLUMN_WIDTHS,
+            "files",
         )
         self.client = UsenetFinderClient(app.usenet_browser)
         self.state = UsenetFinderState(
@@ -1141,6 +1164,9 @@ class UsenetFinderDialog:
             defaults = DEFAULT_SEARCH_COLUMNS
             order_setting = "usenet_search_column_order"
             visible_setting = "usenet_search_visible_columns"
+            width_setting = "usenet_search_column_widths"
+            width_defaults = SEARCH_COLUMN_WIDTHS
+            width_minimums = SEARCH_COLUMN_MIN_WIDTHS
             title = "Usenet search-result columns"
         elif table_name == "files":
             columns = FILE_COLUMNS
@@ -1148,6 +1174,9 @@ class UsenetFinderDialog:
             defaults = DEFAULT_FILE_COLUMNS
             order_setting = "usenet_file_column_order"
             visible_setting = "usenet_file_visible_columns"
+            width_setting = "usenet_file_column_widths"
+            width_defaults = FILE_COLUMN_WIDTHS
+            width_minimums = FILE_COLUMN_MIN_WIDTHS
             title = "Usenet resolved-file columns"
         elif table_name == "hosts":
             columns = HOST_COLUMNS
@@ -1155,33 +1184,39 @@ class UsenetFinderDialog:
             defaults = DEFAULT_HOST_COLUMNS
             order_setting = "host_status_column_order"
             visible_setting = "host_status_visible_columns"
+            width_setting = "host_status_column_widths"
+            width_defaults = HOST_COLUMN_WIDTHS
+            width_minimums = HOST_COLUMN_MIN_WIDTHS
             title = "Host status columns"
         else:
             raise ValueError(f"Unknown column table: {table_name}")
 
         working_order, visible = load_table_column_layout(app.secure_store, table_name)
         working_visible = set(visible)
+        working_widths = load_table_column_widths(app.secure_store, table_name)
 
         dialog = tk.Toplevel(parent)
         dialog.title(title)
         dialog.resizable(True, True)
-        dialog.geometry("470x300")
-        dialog.minsize(430, 260)
+        dialog.geometry("500x360")
+        dialog.minsize(460, 320)
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
         column_tree = ttk.Treeview(
             frame,
-            columns=("name", "visibility"),
+            columns=("name", "visibility", "width"),
             show="headings",
             selectmode="browse",
             height=len(columns),
         )
         column_tree.heading("name", text="Column")
         column_tree.heading("visibility", text="Visibility")
+        column_tree.heading("width", text="Width")
         column_tree.column("name", width=220, stretch=True)
         column_tree.column("visibility", width=110, minwidth=100, stretch=False, anchor="center")
+        column_tree.column("width", width=70, minwidth=60, stretch=False, anchor="e")
         column_tree.grid(row=0, column=0, sticky="nsew")
         column_scrollbar = ttk.Scrollbar(
             frame,
@@ -1192,6 +1227,7 @@ class UsenetFinderDialog:
         column_tree.configure(yscrollcommand=column_scrollbar.set)
 
         visible_variable = tk.BooleanVar(master=dialog)
+        width_variable = tk.StringVar(master=dialog)
 
         def selected_column() -> str | None:
             selection = column_tree.selection()
@@ -1201,12 +1237,18 @@ class UsenetFinderDialog:
             column = selected_column()
             if column is None:
                 visible_variable.set(False)
+                width_variable.set("")
                 visibility_check.configure(state="disabled")
+                width_spinbox.configure(state="disabled")
+                set_width_button.configure(state="disabled")
                 move_up_button.configure(state="disabled")
                 move_down_button.configure(state="disabled")
                 return
             visible_variable.set(column in working_visible)
+            width_variable.set(str(working_widths[column]))
             visibility_check.configure(state="normal")
+            width_spinbox.configure(state="normal")
+            set_width_button.configure(state="normal")
             position = working_order.index(column)
             move_up_button.configure(state="normal" if position else "disabled")
             move_down_button.configure(
@@ -1223,6 +1265,7 @@ class UsenetFinderDialog:
                     values=(
                         labels[column],
                         "Visible" if column in working_visible else "Hidden",
+                        working_widths[column],
                     ),
                 )
             if selected in working_order:
@@ -1258,9 +1301,37 @@ class UsenetFinderDialog:
             working_order[:] = columns
             working_visible.clear()
             working_visible.update(defaults)
+            working_widths.clear()
+            working_widths.update(width_defaults)
             render_order(columns[0])
 
+        def apply_width() -> bool:
+            column = selected_column()
+            if column is None:
+                return True
+            try:
+                width = int(width_variable.get())
+            except ValueError:
+                messagebox.showwarning(
+                    "Invalid column width",
+                    "Enter a whole number for the column width.",
+                    parent=dialog,
+                )
+                return False
+            if not width_minimums[column] <= width <= 10000:
+                messagebox.showwarning(
+                    "Invalid column width",
+                    f"Enter a width from {width_minimums[column]} to 10000.",
+                    parent=dialog,
+                )
+                return False
+            working_widths[column] = width
+            render_order(column)
+            return True
+
         def apply_changes() -> None:
+            if selected_column() is not None and not apply_width():
+                return
             if not working_visible:
                 messagebox.showwarning(
                     "Columns required",
@@ -1274,7 +1345,8 @@ class UsenetFinderDialog:
             try:
                 app.secure_store.set_setting(order_setting, json.dumps(working_order))
                 app.secure_store.set_setting(visible_setting, json.dumps(ordered_visible))
-            except (OSError, sqlite3.Error) as error:
+                app.secure_store.set_setting(width_setting, json.dumps(working_widths))
+            except (OSError, sqlite3.Error, SecureStorageError) as error:
                 app._log(f"Could not save column settings: {error}")
                 messagebox.showerror(
                     "Could not save columns",
@@ -1284,6 +1356,8 @@ class UsenetFinderDialog:
                 return
             if table is not None:
                 table.configure(displaycolumns=ordered_visible)
+                for column, width in working_widths.items():
+                    table.column(column, width=width)
             if on_apply is not None:
                 on_apply(list(working_order), ordered_visible)
             dialog.destroy()
@@ -1310,8 +1384,27 @@ class UsenetFinderDialog:
             state="disabled",
         )
         visibility_check.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        width_controls = ttk.Frame(frame)
+        width_controls.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(width_controls, text="Selected column width (pixels)").pack(side="left")
+        width_spinbox = ttk.Spinbox(
+            width_controls,
+            from_=30,
+            to=10000,
+            textvariable=width_variable,
+            width=8,
+            state="disabled",
+        )
+        width_spinbox.pack(side="left", padx=(8, 4))
+        set_width_button = ttk.Button(
+            width_controls,
+            text="Set width",
+            command=apply_width,
+            state="disabled",
+        )
+        set_width_button.pack(side="left")
         actions = ttk.Frame(frame)
-        actions.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        actions.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(12, 0))
         ttk.Button(actions, text="Reset to defaults", command=reset_defaults).pack(side="left")
         ttk.Button(actions, text="Apply", command=apply_changes).pack(
             side="right",
