@@ -907,7 +907,7 @@ class DownloaderApp:
         ).pack(side="right", padx=(8, 0))
         ttk.Button(
             header_actions,
-            text="Select torrent folder",
+            text="Select torrents recursively from folder",
             command=lambda: self._choose_torrent_folder(dialog),
         ).pack(side="right", padx=(8, 0))
         ttk.Label(
