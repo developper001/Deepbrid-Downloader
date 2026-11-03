@@ -78,6 +78,7 @@ from src.app import (
 from src.queue_table import full_file_path
 from src.link_utils import extract_supported_links, supported_link_status
 from src.queue_store import QueueStore
+from src.settings_dialog import SettingsDialog
 from src.secure_store import SecureStore
 from src.single_instance import acquire_single_instance
 from src.startup_manager import (
@@ -1013,12 +1014,9 @@ class ValidationAndPresentationTests(unittest.TestCase):
         app = DownloaderApp.__new__(DownloaderApp)
         app.hosts = {"cached.example": "up"}
         app.host_limits = {"cached.example": "5 GB remaining"}
+        app._hosts_refreshing = False
         app.api_key = SimpleNamespace(get=lambda: "test-key")
         app.status_text = SimpleNamespace(set=lambda _value: None)
-        app.refresh_hosts_button = SimpleNamespace(
-            instate=lambda _states: False,
-            configure=lambda **_kwargs: None,
-        )
         sequence: list[object] = []
         pending_callbacks = []
         app._show_hosts_popup = lambda hosts, limits, error: sequence.append(
@@ -1039,6 +1037,34 @@ class ValidationAndPresentationTests(unittest.TestCase):
 
         thread_class.assert_called_once_with(target=app._load_hosts, args=("test-key",), daemon=True)
         thread_class.return_value.start.assert_called_once_with()
+
+    def test_settings_host_popup_takes_and_restores_modal_grab(self) -> None:
+        settings = SettingsDialog.__new__(SettingsDialog)
+        settings.dialog = Mock()
+        settings.dialog.winfo_exists.return_value = True
+        popup = Mock()
+        settings.app = SimpleNamespace(
+            hosts_popup=popup,
+            _refresh_hosts=Mock(),
+        )
+        destroy_callback: list[object] = []
+
+        def bind(_sequence, callback, *, add):
+            self.assertEqual(add, "+")
+            destroy_callback.append(callback)
+
+        popup.bind.side_effect = bind
+
+        settings._show_host_status()
+
+        settings.dialog.grab_release.assert_called_once_with()
+        settings.app._refresh_hosts.assert_called_once_with(show_popup=True)
+        popup.transient.assert_called_once_with(settings.dialog)
+        popup.grab_set.assert_called_once_with()
+        popup.lift.assert_called_once_with()
+
+        destroy_callback[0](SimpleNamespace(widget=popup))
+        settings.dialog.grab_set.assert_called_once_with()
 
     def test_host_rows_filter_and_sort_by_each_column(self) -> None:
         rows = [

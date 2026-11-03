@@ -368,6 +368,7 @@ class DownloaderApp:
         self.output_dir_text = tk.StringVar(value=str(self.output_dir))
         self.hosts = config.hosts
         self.host_limits: dict[str, str] = {}
+        self._hosts_refreshing = False
         self.hosts_popup: tk.Toplevel | None = None
         self.usenet_finder_dialog: UsenetFinderDialog | None = None
         self.file_host_links_dialog: tk.Toplevel | None = None
@@ -471,12 +472,6 @@ class DownloaderApp:
             state="disabled",
         )
         self.stop_button.pack(side="left", padx=(8, 0))
-        self.refresh_hosts_button = ttk.Button(
-            controls,
-            text="Host Status",
-            command=lambda: self._refresh_hosts(show_popup=True),
-        )
-        self.refresh_hosts_button.pack(side="left", padx=(8, 0))
         self.columns_button = ttk.Button(
             controls,
             text="Configure columns",
@@ -832,9 +827,7 @@ class DownloaderApp:
             confirm_button.configure(state="normal" if self.hosts else "disabled")
         if status_button is not None:
             status_button.configure(
-                state="disabled"
-                if self.refresh_hosts_button.instate(["disabled"])
-                else "normal"
+                state="disabled" if getattr(self, "_hosts_refreshing", False) else "normal"
             )
 
     def _add_link(self, text: str | None = None, parent: tk.Misc | None = None) -> bool:
@@ -1206,11 +1199,11 @@ class DownloaderApp:
         return file.link
 
     def _refresh_hosts(self, show_popup: bool = False) -> None:
-        if self.refresh_hosts_button.instate(["disabled"]):
-            return
         if show_popup:
             self._show_hosts_popup(self.hosts, self.host_limits, None)
-        self.refresh_hosts_button.configure(state="disabled")
+        if getattr(self, "_hosts_refreshing", False):
+            return
+        self._hosts_refreshing = True
         self._update_file_host_dialog_controls()
         self.status_text.set("Checking host availability...")
         api_key = self.api_key.get().strip()
@@ -2646,6 +2639,13 @@ class DownloaderApp:
             foreground=colors["foreground"],
             background=colors["surface"],
         )
+        style.configure(
+            "TSpinbox",
+            fieldbackground=colors["field"],
+            foreground=colors["foreground"],
+            background=colors["surface"],
+            arrowcolor=colors["foreground"],
+        )
         style.map(
             "TCombobox",
             fieldbackground=[("disabled", colors["field"]), ("readonly", colors["field"])],
@@ -2653,6 +2653,11 @@ class DownloaderApp:
                 ("disabled", colors["disabled_foreground"]),
                 ("readonly", colors["foreground"]),
             ],
+        )
+        style.map(
+            "TSpinbox",
+            fieldbackground=[("disabled", colors["field"])],
+            foreground=[("disabled", colors["disabled_foreground"])],
         )
         style.configure("Treeview", background=colors["surface"], fieldbackground=colors["surface"], foreground=colors["foreground"], rowheight=25)
         style.configure("Treeview.Heading", background=colors["background"], foreground=colors["foreground"])
@@ -3021,7 +3026,7 @@ class DownloaderApp:
                 self.host_limits = event.limits
                 self.secure_store.set_setting("hosts", json.dumps(self.hosts))
                 self._apply_host_statuses(self.hosts)
-                self.refresh_hosts_button.configure(state="normal")
+                self._hosts_refreshing = False
                 self._update_file_host_dialog_controls()
                 self.status_text.set(f"Loaded {len(self.hosts)} supported hosts")
                 self._log(f"Loaded availability for {len(self.hosts)} supported hosts.")
@@ -3039,7 +3044,7 @@ class DownloaderApp:
                     )
                 self._maybe_start_downloads_on_startup()
             elif isinstance(event, HostsErrorEvent):
-                self.refresh_hosts_button.configure(state="normal")
+                self._hosts_refreshing = False
                 self.status_text.set(f"Host refresh failed: {event.message[:90]}")
                 self._log(event.message)
                 self._update_file_host_dialog_controls()
