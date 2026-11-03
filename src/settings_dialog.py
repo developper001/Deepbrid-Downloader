@@ -14,6 +14,15 @@ from .usenet_finder_state import (
     valid_cache_duration_hours,
 )
 
+SETTINGS_CATEGORIES = (
+    "Main",
+    "Usenet Finder",
+    "Hosts",
+    "Startup & Updates",
+    "Appearance",
+    "Logging",
+)
+
 
 class SettingsController(Protocol):
     root: tk.Tk
@@ -91,21 +100,30 @@ class SettingsDialog:
         )
         body = ttk.Frame(frame)
         body.grid(row=2, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=1)
         body.rowconfigure(0, weight=1)
+        navigation = ttk.Frame(body, padding=(0, 0, 10, 0))
+        navigation.grid(row=0, column=0, sticky="ns")
+        ttk.Label(navigation, text="Sections").pack(anchor="w", pady=(0, 6))
+        selected_category = tk.StringVar(master=self.dialog, value="Main")
+        settings_rows: list[tuple[ttk.Frame, str, str]] = []
+        category_headers: dict[str, ttk.Label] = {}
         self.canvas = tk.Canvas(
             body,
             background=app.theme_colors["background"],
             highlightthickness=0,
             borderwidth=0,
         )
-        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.canvas.grid(row=0, column=1, sticky="nsew")
         scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
+        scrollbar.grid(row=0, column=2, sticky="ns")
         self.canvas.configure(yscrollcommand=scrollbar.set)
         settings_list = ttk.Frame(self.canvas)
         settings_window = self.canvas.create_window((0, 0), window=settings_list, anchor="nw")
         settings_list.columnconfigure(0, weight=1)
+        no_matches = ttk.Label(settings_list, text="No matching settings")
+        section_title = ttk.Label(settings_list, font=("TkDefaultFont", 12, "bold"))
+        section_title.grid(row=0, column=0, sticky="w", pady=(0, 10))
         settings_list.bind(
             "<Configure>",
             lambda _event: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
@@ -129,12 +147,16 @@ class SettingsDialog:
         self.dialog.bind("<MouseWheel>", scroll_settings, add="+")
         self.dialog.bind("<Button-4>", scroll_settings, add="+")
         self.dialog.bind("<Button-5>", scroll_settings, add="+")
-        settings_rows: list[tuple[ttk.Frame, str]] = []
 
-        def add_setting(title: str, keywords: str, build_controls) -> None:
+        def add_setting(
+            title: str,
+            keywords: str,
+            build_controls,
+            *,
+            category: str,
+        ) -> None:
             row = ttk.Frame(settings_list, padding=(0, 6))
             row.columnconfigure(1, weight=1)
-            row.grid(row=len(settings_rows), column=0, sticky="ew")
             ttk.Label(row, text=title).grid(row=0, column=0, sticky="nw", padx=(0, 12))
             controls = ttk.Frame(row)
             controls.grid(row=0, column=1, sticky="ew")
@@ -147,9 +169,71 @@ class SettingsDialog:
                 sticky="ew",
                 pady=(8, 0),
             )
-            settings_rows.append((row, f"{title} {keywords}".casefold()))
+            settings_rows.append(
+                (row, category, f"{category} {title} {keywords}".casefold())
+            )
 
-        no_matches = ttk.Label(settings_list, text="No matching settings")
+        def render_settings(*_args: str) -> None:
+            query = filter_var.get().strip().casefold()
+            selected = selected_category.get()
+            for setting_row, _row_category, _searchable_text in settings_rows:
+                setting_row.grid_remove()
+            for header in category_headers.values():
+                header.grid_remove()
+            no_matches.grid_remove()
+            if selected == "All settings":
+                categories = SETTINGS_CATEGORIES
+                section_title.configure(text="All settings")
+            else:
+                categories = (selected,)
+                section_title.configure(text=selected)
+            row_index = 1
+            matches = 0
+            for category in categories:
+                category_rows = [
+                    row
+                    for row, row_category, searchable_text in settings_rows
+                    if row_category == category
+                    and (not query or query in searchable_text)
+                ]
+                header = category_headers.get(category)
+                if category_rows and selected == "All settings":
+                    if header is None:
+                        header = ttk.Label(
+                            settings_list,
+                            text=category,
+                            font=("TkDefaultFont", 10, "bold"),
+                        )
+                        category_headers[category] = header
+                    header.grid(row=row_index, column=0, sticky="ew", pady=(8, 2))
+                    row_index += 1
+                for setting_row in category_rows:
+                    setting_row.grid(row=row_index, column=0, sticky="ew")
+                    row_index += 1
+                    matches += 1
+            if not matches:
+                no_matches.grid(row=1, column=0, sticky="w", pady=8)
+            self.canvas.yview_moveto(0)
+
+        def filter_settings(*_args: str) -> None:
+            selected_category.set("All settings")
+            render_settings()
+
+        ttk.Radiobutton(
+            navigation,
+            text="All settings",
+            value="All settings",
+            variable=selected_category,
+            command=render_settings,
+        ).pack(anchor="w", fill="x")
+        for category in SETTINGS_CATEGORIES:
+            ttk.Radiobutton(
+                navigation,
+                text=category,
+                value=category,
+                variable=selected_category,
+                command=render_settings,
+            ).pack(anchor="w", fill="x")
 
         def build_api_key(controls: ttk.Frame) -> None:
             controls.columnconfigure(0, weight=1)
@@ -219,8 +303,18 @@ class SettingsDialog:
             self.dialog.configure(background=app.theme_colors["background"])
             self.canvas.configure(background=app.theme_colors["background"])
 
-        add_setting("API key", "credentials token secret", build_api_key)
-        add_setting("Download folder", "location directory output path", build_download_folder)
+        add_setting(
+            "API key",
+            "credentials token secret",
+            build_api_key,
+            category="Main",
+        )
+        add_setting(
+            "Download folder",
+            "location directory output path",
+            build_download_folder,
+            category="Main",
+        )
 
         def build_host_status(controls: ttk.Frame) -> None:
             ttk.Button(
@@ -233,6 +327,7 @@ class SettingsDialog:
             "Host status",
             "supported hosts availability host status daily quota refresh",
             build_host_status,
+            category="Hosts",
         )
 
         def build_host_columns(controls: ttk.Frame) -> None:
@@ -251,6 +346,7 @@ class SettingsDialog:
             "Host Status columns",
             "host status availability daily remaining quota columns visibility order",
             build_host_columns,
+            category="Hosts",
         )
 
         def build_appearance(controls: ttk.Frame) -> None:
@@ -261,7 +357,12 @@ class SettingsDialog:
                 command=update_theme,
             ).pack(anchor="w")
 
-        add_setting("Appearance", "theme dark light colors", build_appearance)
+        add_setting(
+            "Appearance",
+            "theme dark light colors",
+            build_appearance,
+            category="Appearance",
+        )
 
         startup_status = tk.StringVar(master=self.dialog)
 
@@ -290,6 +391,7 @@ class SettingsDialog:
             "Start after login",
             "startup login automatically launch open computer boot",
             build_startup_login,
+            category="Startup & Updates",
         )
 
         def build_auto_start(controls: ttk.Frame) -> None:
@@ -300,7 +402,12 @@ class SettingsDialog:
                 command=app._persist_auto_start_downloads,
             ).pack(anchor="w")
 
-        add_setting("Startup downloads", "start download queue launch automatic", build_auto_start)
+        add_setting(
+            "Startup downloads",
+            "start download queue launch automatic",
+            build_auto_start,
+            category="Startup & Updates",
+        )
 
         def build_auto_updates(controls: ttk.Frame) -> None:
             ttk.Checkbutton(
@@ -310,7 +417,12 @@ class SettingsDialog:
                 command=app._persist_auto_check_updates,
             ).pack(anchor="w")
 
-        add_setting("Startup updates", "check updates releases launch", build_auto_updates)
+        add_setting(
+            "Startup updates",
+            "check updates releases launch",
+            build_auto_updates,
+            category="Startup & Updates",
+        )
 
         cache_duration = tk.StringVar(
             master=self.dialog,
@@ -382,6 +494,7 @@ class SettingsDialog:
             "Usenet Finder cache",
             "usenet usenet finder search resolved links cache duration expiry clear",
             build_finder_cache,
+            category="Usenet Finder",
         )
 
         hide_auxiliary_files = tk.BooleanVar(
@@ -417,6 +530,7 @@ class SettingsDialog:
             "Usenet resolved files",
             "usenet finder hide par2 nfo auxiliary files filter resolved results",
             build_auxiliary_file_filter,
+            category="Usenet Finder",
         )
 
         history_status = tk.StringVar(master=self.dialog)
@@ -445,6 +559,7 @@ class SettingsDialog:
             "Usenet Finder search history",
             "usenet finder recent searches query history clear cleanup",
             build_finder_history,
+            category="Usenet Finder",
         )
 
         browser_test_status = tk.StringVar(master=self.dialog)
@@ -468,6 +583,7 @@ class SettingsDialog:
             "Usenet browser",
             "usenet finder chrome edge browser connection test",
             build_browser_connection_test,
+            category="Usenet Finder",
         )
 
         output_log_enabled = tk.BooleanVar(
@@ -537,6 +653,7 @@ class SettingsDialog:
             "Output log file",
             "logging output append file diagnostics long term",
             build_output_log,
+            category="Logging",
         )
 
         def build_queue_columns(controls: ttk.Frame) -> None:
@@ -555,6 +672,7 @@ class SettingsDialog:
             "Main download queue columns",
             "columns table visibility order file name original link host host status downloaded total remaining eta status verification",
             build_queue_columns,
+            category="Main",
         )
 
         def build_usenet_search_columns(controls: ttk.Frame) -> None:
@@ -573,6 +691,7 @@ class SettingsDialog:
             "Usenet Finder search-result columns",
             "usenet finder search results title category size date columns visibility order",
             build_usenet_search_columns,
+            category="Usenet Finder",
         )
 
         def build_usenet_file_columns(controls: ttk.Frame) -> None:
@@ -591,25 +710,24 @@ class SettingsDialog:
             "Usenet Finder resolved-file columns",
             "usenet finder resolved files name extension size availability columns visibility order",
             build_usenet_file_columns,
+            category="Usenet Finder",
         )
-
-        def filter_settings(*_args: str) -> None:
-            query = filter_var.get().strip().casefold()
-            visible_index = 0
-            for row, searchable_text in settings_rows:
-                if not query or query in searchable_text:
-                    row.grid(row=visible_index, column=0, sticky="ew")
-                    visible_index += 1
-                else:
-                    row.grid_remove()
-            if visible_index:
-                no_matches.grid_remove()
-            else:
-                no_matches.grid(row=0, column=0, sticky="w", pady=8)
 
         filter_var.trace_add("write", filter_settings)
         filter_var.set(initial_filter)
-        filter_settings()
+        if initial_filter:
+            query = initial_filter.strip().casefold()
+            matching_categories = [
+                category
+                for category in SETTINGS_CATEGORIES
+                if any(
+                    row_category == category and query in searchable_text
+                    for _row, row_category, searchable_text in settings_rows
+                )
+            ]
+            if matching_categories:
+                selected_category.set(matching_categories[0])
+        render_settings()
         def focus_filter() -> None:
             filter_entry.focus_set()
             filter_entry.selection_range(0, "end")

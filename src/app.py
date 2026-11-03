@@ -2685,6 +2685,21 @@ class DownloaderApp:
             foreground=[("active", colors["foreground"])],
             indicatorcolor=[("selected", colors["accent"]), ("!selected", colors["field"])],
         )
+        style.configure(
+            "TRadiobutton",
+            background=colors["background"],
+            foreground=colors["foreground"],
+            indicatorcolor=colors["field"],
+        )
+        style.map(
+            "TRadiobutton",
+            background=[("active", colors["heading_active"])],
+            foreground=[("active", colors["foreground"])],
+            indicatorcolor=[
+                ("selected", colors["accent"]),
+                ("!selected", colors["field"]),
+            ],
+        )
         style.configure("TEntry", fieldbackground=colors["field"], foreground=colors["foreground"])
         style.configure(
             "TCombobox",
