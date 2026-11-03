@@ -7,55 +7,45 @@
 
 A small cross-platform desktop downloader built with Python and Tkinter for Deepbrid-hosted files. It queues links, keeps progress in SQLite, resumes interrupted transfers when the server supports HTTP Range requests, and exposes a compact, easy-to-monitor interface for daily downloads.
 
-### Main dashboard
+## Screenshots
+
+### Main window
 
 ![Deepbrid Downloader dashboard](src/screenshots/dashboard-main-window.png)
+
+### Settings and hosts
+
+![Searchable settings with API-key validation](src/screenshots/settings-api-key-validation.png)
+![Refresh hosts](src/screenshots/host-status-refresh.png)
+
+### Queue and downloads
+
+![Add file-host links](src/screenshots/file-host-links-dialog.png)
+![Columns and queue options](src/screenshots/queue-column-customization.png)
+![Right-click menu](src/screenshots/queue-context-menu.png)
+![Retry workflow](src/screenshots/download-retry-workflow.png)
+![Safe retry handling](src/screenshots/safe-retry-handling.png)
+
+### Appearance and logging
+
+![Dark mode](src/screenshots/dark-mode-theme.png)
+![Console logs](src/screenshots/console-full-logs.png)
+
+### Usenet Finder
+
+![Usenet Finder search results and resolved files](src/screenshots/usenet-search-results.png)
+![Usenet Finder search history and category selection](src/screenshots/usenet-search-history-and-categories.png)
+
+### Torrents and About
+
+![Torrent upload dialog](src/screenshots/torrent-upload-dialog.png)
+![About window with GitHub link and update check](src/screenshots/about-and-update-check.png)
 
 ## Supported platforms
 
 - Windows 10/11
 - macOS 12+
 - Linux (Ubuntu and other mainstream distributions with Tkinter available)
-
-## Requirements
-
-- Python 3.11+
-- Tkinter support for your OS
-- `cryptography>=50.0.2`
-- `filelock>=4.1.0`
-- `platformdirs>=4.12.4`
-- `tkinterdnd2>=0.6.3`
-- `websocket-client>=1.9.2`
-
-## Installation
-
-```sh
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-Then run:
-
-```sh
-python -m src.app
-```
-
-Or use the launcher:
-
-```sh
-python launcher.py
-```
-
-## Run
-
-Use Python 3.11 or newer with Tkinter available. Install the dependencies and launch the app from the project root:
-
-```sh
-python -m pip install -r requirements.txt
-python -m src.app
-```
-
-On Linux, Tkinter may need to be installed through the operating system package manager. The queue, API key, generated Deepbrid URLs, and encryption key are stored in the per-user application-data directory provided by `platformdirs`; they persist independently of the executable's bundle location. Existing source-tree databases, legacy queue databases, and `.env` keys are migrated when possible.
 
 ## How to use
 
@@ -83,11 +73,7 @@ Usenet Finder links may expire independently of the download queue. If a transfe
 
 The **Find Usenet links** button opens a separate window that searches Usenet results and resolves selected entries into file links. Enter a query, optionally enter a category identifier, and select a result to resolve its file list. Resolved files support multi-selection; press **Ctrl+A** to select all listed files. Use **Add selected to queue** or **Add all accessible to queue** to add resolved files with valid HTTP(S) links. Unavailable files cannot be queued. Finder-reported file sizes are carried into the queue as estimates until transfer details provide an actual size. Usenet downloads use the URLs returned by Finder and the normal resumable queue transfer; click **Start** to begin and **Pause** to pause the queue, then click **Start** to resume.
 
-![Usenet Finder search results and resolved files](src/screenshots/usenet-search-results.png)
-
 The last query and category are saved and restored when the Finder window is reopened. If the first page of that search is still cached, it is shown immediately without requiring another Search click. Finder also restores the last selected row and its resolved file links while they remain within the configured cache duration. Search result pages and successfully resolved packages are cached locally in encrypted form. Their shared cache duration is configurable in Settings from 1 to 720 hours (24 hours by default); use **Usenet settings** in the Finder window to change it or clear both caches.
-
-![Usenet Finder search history and category selection](src/screenshots/usenet-search-history-and-categories.png)
 
 The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; to delete an individual entry, highlight it in the search history dropdown and press **Delete/Suppr**. Choose **[Clear search history]** in the dropdown or use **Clear search history** in Settings to remove all entries. Result categories populate the category picker, and search results and resolved files can be sorted by clicking a column heading. Use **Search columns...** and **File columns...** to show, hide, and reorder columns in each table; the resolved-files extension column is visible by default. **Hide PAR2/NFO** is enabled by default and temporarily filters parity archives and NFO files out of the resolved-file list; the files remain part of the package and are still included by **Add all accessible to queue**. Change this under **Usenet resolved files** in Settings or toggle it in the Finder; the choice is saved between runs. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
 
@@ -135,46 +121,6 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 - Build the Windows executable with the Deepbrid icon and no separate console window
 - Open the full project README directly from the About window
 
-## Screenshots
-
-### Settings
-
-![Searchable settings with API-key validation](src/screenshots/settings-api-key-validation.png)
-
-### Host status and quota overview
-
-![Refresh hosts](src/screenshots/host-status-refresh.png)
-
-### Adding file-host links
-
-![Add file-host links](src/screenshots/file-host-links-dialog.png)
-
-### About and release updates
-
-![About window with GitHub link and update check](src/screenshots/about-and-update-check.png)
-
-### Column visibility and queue management
-
-![Columns and queue options](src/screenshots/queue-column-customization.png)
-
-### Right-click actions and retry flow
-
-![Right-click menu](src/screenshots/queue-context-menu.png)
-
-![Retry workflow](src/screenshots/download-retry-workflow.png)
-
-![Safe retry handling](src/screenshots/safe-retry-handling.png)
-
-### Dark mode and console logging
-
-![Dark mode](src/screenshots/dark-mode-theme.png)
-
-![Console logs](src/screenshots/console-full-logs.png)
-
-### Torrent uploads
-
-![Torrent upload dialog](src/screenshots/torrent-upload-dialog.png)
-
 ## Tests
 
 The project uses the standard library unittest suite. Run it locally with:
@@ -202,6 +148,46 @@ It runs:
 - on Windows, macOS, and Ubuntu
 - `python -m unittest -q tests.test_downloader tests.test_queue`
 - a package build step with `python -m build`
+
+## Requirements
+
+- Python 3.11+
+- Tkinter support for your OS
+- `cryptography>=50.0.2`
+- `filelock>=4.1.0`
+- `platformdirs>=4.12.4`
+- `tkinterdnd2>=0.6.3`
+- `websocket-client>=1.9.2`
+
+## Installation
+
+```sh
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Then run:
+
+```sh
+python -m src.app
+```
+
+Or use the launcher:
+
+```sh
+python launcher.py
+```
+
+## Run
+
+Use Python 3.11 or newer with Tkinter available. Install the dependencies and launch the app from the project root:
+
+```sh
+python -m pip install -r requirements.txt
+python -m src.app
+```
+
+On Linux, Tkinter may need to be installed through the operating system package manager. The queue, API key, generated Deepbrid URLs, and encryption key are stored in the per-user application-data directory provided by `platformdirs`; they persist independently of the executable's bundle location. Existing source-tree databases, legacy queue databases, and `.env` keys are migrated when possible.
 
 ## Minimal installer for Windows, macOS, and Linux
 
