@@ -63,6 +63,7 @@ A small cross-platform desktop downloader built with Python and Tkinter for Deep
 - Use the About window to open the GitHub repository and check whether a newer release is available.
 - In Settings, use **Start after login** to toggle automatic startup on Windows/Linux or open macOS Login Items settings to add the app there. This starts the app after signing in; queued-download auto-start remains a separate option.
 - Settings are grouped into Main, Usenet Finder, Hosts, Startup & Updates, Appearance, and Logging sections. Use the filter to search settings across sections.
+- Choose **Reset all settings** in Settings to restore app preferences and column layouts. The API key, queued downloads, Usenet search history, and cached results are retained; stop the queue before resetting. On macOS, remove the app from Login Items manually if needed.
 
 ## Retry and resume behavior
 

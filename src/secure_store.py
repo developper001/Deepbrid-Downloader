@@ -155,6 +155,16 @@ class SecureStore:
                 (name, value.encode("utf-8")),
             )
 
+    def delete_settings(self, names: tuple[str, ...]) -> None:
+        reserved_names = {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS
+        if reserved_names.intersection(names):
+            raise ValueError("Secret database values cannot be deleted as plain settings.")
+        with self._connect() as connection:
+            connection.executemany(
+                "DELETE FROM app_settings WHERE name = ?",
+                ((name,) for name in names),
+            )
+
     def get_encrypted_setting(self, name: str, purpose: bytes) -> str | None:
         if name in {"api_key", "encryption_key"} | self.LEGACY_SECRET_SETTINGS:
             raise ValueError("Reserved database settings cannot be read as encrypted settings.")

@@ -28,7 +28,12 @@ from src.app_events import (
     StartupApiKeyProblemEvent,
     StartupUpdateEvent,
 )
-from src.app_config import AppConfiguration, USENET_AUTO_OPEN_BROWSER_SETTING
+from src.app_config import (
+    AppConfiguration,
+    RESETTABLE_SETTINGS,
+    USENET_AUTO_OPEN_BROWSER_SETTING,
+    reset_application_settings,
+)
 from src.app_info import (
     GITHUB_LATEST_RELEASE_URL,
     LatestRelease,
@@ -177,6 +182,79 @@ class FakeSelectionTable:
 
 
 class AppConfigurationTests(unittest.TestCase):
+    def test_reset_application_settings_removes_preferences_but_keeps_user_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "settings.sqlite3")
+            for name in RESETTABLE_SETTINGS:
+                store.set_setting(name, "custom value")
+            store.set_setting("usenet_finder_search_history", "saved history")
+            store.set_setting("file_host_links_draft", "saved draft")
+
+            reset_application_settings(store)
+
+            self.assertTrue(
+                all(store.get_setting(name) is None for name in RESETTABLE_SETTINGS)
+            )
+            self.assertEqual(
+                store.get_setting("usenet_finder_search_history"),
+                "saved history",
+            )
+            self.assertEqual(store.get_setting("file_host_links_draft"), "saved draft")
+
+    def test_reset_settings_updates_live_application_preferences(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "settings.sqlite3")
+            for name in RESETTABLE_SETTINGS:
+                store.set_setting(name, "custom value")
+            app = object.__new__(DownloaderApp)
+            app.worker = None
+            app.startup_manager = SimpleNamespace(supports_toggle=False)
+            app.usenet_finder_dialog = None
+            app.hosts_popup = None
+            app.secure_store = store
+            app.auto_check_updates = Mock()
+            app.auto_start_downloads = Mock()
+            app.output_dir_text = Mock()
+            app.append_output_log_path = Mock()
+            app.table = Mock()
+            app.theme_button = Mock()
+            app._apply_theme = Mock()
+            app._refresh_rows = Mock()
+            app._output_log_error_reported = True
+
+            with patch(
+                "src.app.default_download_directory",
+                return_value=Path(temporary_directory) / "downloads",
+            ):
+                result = app._reset_settings_to_defaults()
+
+            app.auto_check_updates.set.assert_called_once_with(True)
+            app.auto_start_downloads.set.assert_called_once_with(True)
+            self.assertEqual(
+                app.output_dir,
+                Path(temporary_directory) / "downloads",
+            )
+            self.assertEqual(app.usenet_finder_cache_duration_hours, DEFAULT_CACHE_DURATION_HOURS)
+            self.assertTrue(app.usenet_finder_hide_auxiliary_files)
+            self.assertTrue(app.usenet_auto_open_browser_for_link_renewal)
+            self.assertFalse(app.append_output_log_enabled)
+            self.assertFalse(app.dark_theme)
+            app._apply_theme.assert_called_once_with()
+            app._refresh_rows.assert_called_once_with()
+            self.assertIn("API key", result)
+
+    def test_reset_settings_is_blocked_while_download_queue_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            store = SecureStore(Path(temporary_directory) / "settings.sqlite3")
+            store.set_setting("dark_theme", "true")
+            app = object.__new__(DownloaderApp)
+            app.worker = SimpleNamespace(is_alive=lambda: True)
+
+            with self.assertRaisesRegex(RuntimeError, "Stop the download queue"):
+                app._reset_settings_to_defaults()
+
+            self.assertEqual(store.get_setting("dark_theme"), "true")
+
     def test_legacy_default_columns_are_migrated_to_show_extension(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             store = SecureStore(Path(temporary_directory) / "settings.sqlite3")

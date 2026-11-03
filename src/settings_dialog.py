@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Protocol
 
 from .secure_store import SecureStorageError
@@ -52,6 +52,7 @@ class SettingsController(Protocol):
     def _set_usenet_finder_cache_duration(self, hours: int) -> None: ...
     def _set_usenet_finder_hide_auxiliary_files(self, enabled: bool) -> None: ...
     def _set_usenet_auto_open_browser_for_link_renewal(self, enabled: bool) -> None: ...
+    def _reset_settings_to_defaults(self) -> str: ...
     def _clear_usenet_finder_cache(self) -> None: ...
     def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_columns_dialog(self) -> None: ...
@@ -793,8 +794,39 @@ class SettingsDialog:
             pady=(10, 0),
         )
         ttk.Button(footer, text="About", command=app._show_readme).pack(side="left")
+        ttk.Button(
+            footer,
+            text="Reset all settings...",
+            command=self._confirm_reset_settings,
+        ).pack(side="left", padx=(8, 0))
         ttk.Button(footer, text="Close", command=self.dialog.destroy).pack(side="right")
         self.dialog.bind("<Escape>", lambda _event: self.dialog.destroy())
+
+    def _confirm_reset_settings(self) -> None:
+        confirmed = messagebox.askyesno(
+            "Reset all settings",
+            "Restore all app preferences to their defaults, including the download folder "
+            "and table layouts?\n\n"
+            "Your API key, queued downloads, Usenet search history, and cached results will "
+            "be kept. Stop the download queue before resetting. On macOS, remove the app "
+            "from Login Items manually if you want to disable automatic startup.",
+            parent=self.dialog,
+            icon="warning",
+        )
+        if not confirmed:
+            return
+        try:
+            result = self.app._reset_settings_to_defaults()
+        except (OSError, RuntimeError, sqlite3.Error) as error:
+            self.app._log(f"Could not reset application settings: {error}")
+            messagebox.showerror(
+                "Could not reset settings",
+                str(error),
+                parent=self.dialog,
+            )
+            return
+        self.dialog.destroy()
+        messagebox.showinfo("Settings reset", result, parent=self.app.root)
 
     def _show_host_status(self) -> None:
         self.app._refresh_hosts(show_popup=True)

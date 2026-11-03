@@ -18,6 +18,35 @@ from .usenet_finder_state import (
 OUTPUT_LOG_ENABLED_SETTING = "append_output_log_enabled"
 OUTPUT_LOG_PATH_SETTING = "append_output_log_path"
 USENET_AUTO_OPEN_BROWSER_SETTING = "usenet_auto_open_browser_for_link_renewal"
+RESETTABLE_SETTINGS = (
+    "auto_check_updates_on_startup",
+    "auto_start_downloads_on_startup",
+    "visible_columns",
+    "column_order",
+    "column_widths",
+    "progress_column_initialized",
+    "progress_percentage_column_initialized",
+    "output_directory",
+    "dark_theme",
+    CACHE_DURATION_SETTING,
+    HIDE_AUXILIARY_FILES_SETTING,
+    USENET_AUTO_OPEN_BROWSER_SETTING,
+    OUTPUT_LOG_ENABLED_SETTING,
+    OUTPUT_LOG_PATH_SETTING,
+    "host_status_column_order",
+    "host_status_visible_columns",
+    "host_status_column_widths",
+    "usenet_search_column_order",
+    "usenet_search_visible_columns",
+    "usenet_search_column_widths",
+    "usenet_file_column_order",
+    "usenet_file_visible_columns",
+    "usenet_file_column_widths",
+)
+
+
+def reset_application_settings(secure_store: SecureStore) -> None:
+    secure_store.delete_settings(RESETTABLE_SETTINGS)
 
 
 def setting_is_enabled(value: str | None, default: bool) -> bool:

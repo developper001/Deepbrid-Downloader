@@ -25,6 +25,7 @@ from .app_config import (
     OUTPUT_LOG_PATH_SETTING,
     USENET_AUTO_OPEN_BROWSER_SETTING,
     AppConfiguration,
+    reset_application_settings,
     setting_is_enabled as _setting_is_enabled,
 )
 from .app_info import (
@@ -90,6 +91,7 @@ from .usenet_finder import (
 )
 from .usenet_finder_state import (
     CACHE_DURATION_SETTING,
+    DEFAULT_CACHE_DURATION_HOURS,
     HIDE_AUXILIARY_FILES_SETTING,
     UsenetFinderState,
     valid_cache_duration_hours,
@@ -1870,6 +1872,63 @@ class DownloaderApp:
             "true" if enabled else "false",
         )
         self.usenet_auto_open_browser_for_link_renewal = enabled
+
+    def _reset_settings_to_defaults(self) -> str:
+        if self.worker and self.worker.is_alive():
+            raise RuntimeError("Stop the download queue before resetting settings.")
+
+        startup_note = ""
+        if self.startup_manager.supports_toggle and self.startup_manager.is_enabled():
+            startup_note = self.startup_manager.configure()
+        elif sys.platform == "darwin":
+            startup_note = (
+                " If Deepbrid Downloader was added to macOS Login Items, remove it there "
+                "manually; macOS does not allow the app to change that setting."
+            )
+
+        finder = self.usenet_finder_dialog
+        if finder is not None:
+            try:
+                if finder.dialog.winfo_exists():
+                    finder.close()
+            except tk.TclError:
+                pass
+            self.usenet_finder_dialog = None
+        if self.hosts_popup is not None:
+            try:
+                if self.hosts_popup.winfo_exists():
+                    self.hosts_popup.destroy()
+            except tk.TclError:
+                pass
+
+        reset_application_settings(self.secure_store)
+
+        self.auto_check_updates.set(True)
+        self.auto_start_downloads.set(True)
+        self.output_dir = default_download_directory()
+        self.output_dir_text.set(str(self.output_dir))
+        self.column_order = list(COLUMN_ORDER)
+        self.visible_columns = list(DEFAULT_COLUMNS)
+        self.column_widths = QUEUE_COLUMN_WIDTHS.copy()
+        self.table.configure(displaycolumns=self.visible_columns)
+        for column, width in self.column_widths.items():
+            self.table.column(column, width=width)
+        self.usenet_finder_cache_duration_hours = DEFAULT_CACHE_DURATION_HOURS
+        self.usenet_finder_hide_auxiliary_files = True
+        self.usenet_auto_open_browser_for_link_renewal = True
+        self.append_output_log_enabled = False
+        self.append_output_log_path.set(str(PROJECT_ROOT / "deepbrid-output.log"))
+        self._output_log_error_reported = False
+        self.dark_theme = False
+        self._apply_theme()
+        self.theme_button.configure(text="Dark mode")
+        self._refresh_rows()
+
+        return (
+            "Settings were reset to their defaults. Your API key, queued downloads, "
+            "Usenet search history, and cached results were kept."
+            + startup_note
+        )
 
     def _set_append_output_log(self, enabled: bool, path_text: str) -> None:
         path_text = path_text.strip()
