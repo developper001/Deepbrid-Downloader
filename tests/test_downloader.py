@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 import struct
@@ -1046,11 +1047,16 @@ class ValidationAndPresentationTests(unittest.TestCase):
                 ) as replace,
                 patch("src.update_manager.time.sleep"),
                 patch("src.update_manager.subprocess.Popen"),
-                self.assertRaisesRegex(UpdateInstallError, "Windows denied access"),
+                self.assertRaisesRegex(
+                    UpdateInstallError,
+                    "Could not install the update: access denied",
+                ) as error,
             ):
                 apply_update_from_args(arguments)
 
-            self.assertEqual(replace.call_count, 12)
+            self.assertEqual(replace.call_count, 12 if os.name == "nt" else 1)
+            if os.name == "nt":
+                self.assertIn("Windows denied access", str(error.exception))
             self.assertEqual(target_path.read_bytes(), b"old application")
             self.assertEqual(staged_path.read_bytes(), b"new application")
             self.assertEqual(list(directory.glob(".deepbrid-old-*")), [])
