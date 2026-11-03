@@ -1251,7 +1251,11 @@ class UsenetFinderDialog:
         self.add_selected_button.configure(
             state="normal" if can_add and not self._request_running else "disabled"
         )
-        can_add_all = any(file.is_accessible for file in self._files.values())
+        can_add_all = any(
+            file.is_accessible
+            and not (self._hide_auxiliary_files and self._is_auxiliary_file(file))
+            for file in self._files.values()
+        )
         self.add_accessible_button.configure(
             state="normal" if can_add_all and not self._request_running else "disabled"
         )
@@ -1266,7 +1270,14 @@ class UsenetFinderDialog:
 
     def add_all_accessible_files(self) -> None:
         self._add_files_to_queue(
-            [file for file in self._files.values() if file.is_accessible]
+            [
+                file
+                for file in self._files.values()
+                if file.is_accessible
+                and not (
+                    self._hide_auxiliary_files and self._is_auxiliary_file(file)
+                )
+            ]
         )
 
     def _add_files_to_queue(self, files: list[FinderFile]) -> None:

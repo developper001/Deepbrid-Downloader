@@ -2308,6 +2308,59 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog._sort_files("availability")
         dialog.files.set_children.assert_called_with("", "first", "locked")
 
+    def test_add_all_accessible_skips_hidden_auxiliary_files(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        video = FinderFile("episode.mkv", "https://example.test/video", "1 GB", True, None, {})
+        parity = FinderFile("episode.PAR2", "https://example.test/par2", "2 MB", False, None, {})
+        info = FinderFile("episode.NFO", "https://example.test/nfo", "2 KB", False, None, {})
+        inaccessible = FinderFile(
+            "missing.mkv",
+            "",
+            "Unknown",
+            True,
+            "No link available",
+            {},
+        )
+        dialog._files = {
+            "video": video,
+            "parity": parity,
+            "info": info,
+            "inaccessible": inaccessible,
+        }
+        dialog._hide_auxiliary_files = True
+        dialog._resolved_result_token = None
+        dialog.app = SimpleNamespace(
+            add_usenet_links=Mock(return_value=(1, 0, 0)),
+        )
+        dialog.status = Mock()
+
+        dialog.add_all_accessible_files()
+
+        dialog.app.add_usenet_links.assert_called_once_with(
+            [("https://example.test/video", "episode.mkv", 1_000_000_000)]
+        )
+
+    def test_add_all_accessible_includes_auxiliary_files_when_visible(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        video = FinderFile("episode.mkv", "https://example.test/video", "1 GB", True, None, {})
+        info = FinderFile("episode.NFO", "https://example.test/nfo", "2 KB", False, None, {})
+        dialog._files = {"video": video, "info": info}
+        dialog._hide_auxiliary_files = False
+        dialog._resolved_result_token = None
+        dialog.app = SimpleNamespace(
+            add_usenet_links=Mock(return_value=(2, 0, 0)),
+        )
+        dialog.status = Mock()
+
+        dialog.add_all_accessible_files()
+
+        dialog.app.add_usenet_links.assert_called_once_with(
+            [
+                ("https://example.test/video", "episode.mkv", 1_000_000_000),
+                ("https://example.test/nfo", "episode.NFO", 2_000),
+            ]
+        )
+
     def test_auxiliary_file_filter_hides_par2_and_nfo_and_can_be_reversed(self) -> None:
         dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
         regular = FinderFile("episode.mkv", "https://example.test/video", "1 GB", True, None, {})
