@@ -2135,8 +2135,8 @@ class DownloaderApp:
         dialog = tk.Toplevel(self.root)
         dialog.title("Columns")
         dialog.resizable(True, True)
-        dialog.geometry("520x440")
-        dialog.minsize(480, 360)
+        dialog.geometry("620x560")
+        dialog.minsize(580, 520)
 
         frame = ttk.Frame(dialog, padding=12)
         frame.pack(fill="both", expand=True)
