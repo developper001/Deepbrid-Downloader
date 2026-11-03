@@ -10,7 +10,7 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .usenet_finder import (
     FinderFile,
@@ -42,6 +42,74 @@ FILE_COLUMN_LABELS = {
     "size": "Size",
     "availability": "Availability",
 }
+HOST_COLUMNS = ("host", "availability", "limit")
+DEFAULT_HOST_COLUMNS = HOST_COLUMNS
+HOST_COLUMN_LABELS = {
+    "host": "Host",
+    "availability": "Availability",
+    "limit": "Daily remaining",
+}
+
+
+def _read_column_layout(
+    secure_store: SecureStore,
+    order_setting: str,
+    visible_setting: str,
+    columns: tuple[str, ...],
+    default_visible: tuple[str, ...],
+) -> tuple[list[str], list[str]]:
+    try:
+        saved_order = json.loads(secure_store.get_setting(order_setting) or "[]")
+        saved_visible = json.loads(secure_store.get_setting(visible_setting) or "[]")
+    except (json.JSONDecodeError, sqlite3.Error):
+        return list(columns), list(default_visible)
+    order = (
+        [column for column in saved_order if column in columns]
+        if isinstance(saved_order, list)
+        else []
+    )
+    order = list(dict.fromkeys((*order, *columns)))
+    visible = (
+        {column for column in saved_visible if column in columns}
+        if isinstance(saved_visible, list)
+        else set()
+    )
+    if not visible:
+        visible = set(default_visible)
+    return order, [column for column in order if column in visible]
+
+
+def load_table_column_layout(
+    secure_store: SecureStore,
+    table_name: str,
+) -> tuple[list[str], list[str]]:
+    if table_name == "search":
+        columns, defaults = SEARCH_COLUMNS, DEFAULT_SEARCH_COLUMNS
+        order_setting, visible_setting = (
+            "usenet_search_column_order",
+            "usenet_search_visible_columns",
+        )
+    elif table_name == "files":
+        columns, defaults = FILE_COLUMNS, DEFAULT_FILE_COLUMNS
+        order_setting, visible_setting = (
+            "usenet_file_column_order",
+            "usenet_file_visible_columns",
+        )
+    elif table_name == "hosts":
+        columns, defaults = HOST_COLUMNS, DEFAULT_HOST_COLUMNS
+        order_setting, visible_setting = (
+            "host_status_column_order",
+            "host_status_visible_columns",
+        )
+    else:
+        raise ValueError(f"Unknown column table: {table_name}")
+    return _read_column_layout(
+        secure_store,
+        order_setting,
+        visible_setting,
+        columns,
+        defaults,
+    )
 
 
 class FinderController(Protocol):
@@ -922,48 +990,71 @@ class UsenetFinderDialog:
         columns: tuple[str, ...],
         default_visible: tuple[str, ...],
     ) -> tuple[list[str], list[str]]:
-        try:
-            saved_order = json.loads(self.app.secure_store.get_setting(order_setting) or "[]")
-            saved_visible = json.loads(
-                self.app.secure_store.get_setting(visible_setting) or "[]"
-            )
-        except (json.JSONDecodeError, sqlite3.Error):
-            return list(columns), list(default_visible)
-        order = (
-            [column for column in saved_order if column in columns]
-            if isinstance(saved_order, list)
-            else []
+        return _read_column_layout(
+            self.app.secure_store,
+            order_setting,
+            visible_setting,
+            columns,
+            default_visible,
         )
-        order = list(dict.fromkeys((*order, *columns)))
-        visible = (
-            {column for column in saved_visible if column in columns}
-            if isinstance(saved_visible, list)
-            else set()
-        )
-        if not visible:
-            visible = set(default_visible)
-        return order, [column for column in order if column in visible]
 
     def _show_column_settings(self, table_name: str) -> None:
+        table = self.results if table_name == "search" else self.files
+
+        def update_layout(order: list[str], visible: list[str]) -> None:
+            if table_name == "search":
+                self.search_column_order = order
+                self.search_visible_columns = visible
+            else:
+                self.file_column_order = order
+                self.file_visible_columns = visible
+
+        self.show_column_settings(
+            self.app,
+            self.dialog,
+            table_name,
+            table=table,
+            on_apply=update_layout,
+        )
+
+    @staticmethod
+    def show_column_settings(
+        app: FinderController,
+        parent: tk.Misc,
+        table_name: str,
+        *,
+        table: ttk.Treeview | None = None,
+        on_apply: Callable[[list[str], list[str]], None] | None = None,
+    ) -> None:
         if table_name == "search":
-            table = self.results
             columns = SEARCH_COLUMNS
             labels = SEARCH_COLUMN_LABELS
+            defaults = DEFAULT_SEARCH_COLUMNS
             order_setting = "usenet_search_column_order"
             visible_setting = "usenet_search_visible_columns"
-            working_order = list(self.search_column_order)
-            working_visible = set(self.search_visible_columns)
-        else:
-            table = self.files
+            title = "Usenet search-result columns"
+        elif table_name == "files":
             columns = FILE_COLUMNS
             labels = FILE_COLUMN_LABELS
+            defaults = DEFAULT_FILE_COLUMNS
             order_setting = "usenet_file_column_order"
             visible_setting = "usenet_file_visible_columns"
-            working_order = list(self.file_column_order)
-            working_visible = set(self.file_visible_columns)
+            title = "Usenet resolved-file columns"
+        elif table_name == "hosts":
+            columns = HOST_COLUMNS
+            labels = HOST_COLUMN_LABELS
+            defaults = DEFAULT_HOST_COLUMNS
+            order_setting = "host_status_column_order"
+            visible_setting = "host_status_visible_columns"
+            title = "Host status columns"
+        else:
+            raise ValueError(f"Unknown column table: {table_name}")
 
-        dialog = tk.Toplevel(self.dialog)
-        dialog.title("Usenet columns")
+        working_order, visible = load_table_column_layout(app.secure_store, table_name)
+        working_visible = set(visible)
+
+        dialog = tk.Toplevel(parent)
+        dialog.title(title)
         dialog.resizable(True, True)
         dialog.geometry("470x300")
         dialog.minsize(430, 260)
@@ -1057,9 +1148,7 @@ class UsenetFinderDialog:
         def reset_defaults() -> None:
             working_order[:] = columns
             working_visible.clear()
-            working_visible.update(
-                DEFAULT_SEARCH_COLUMNS if table_name == "search" else DEFAULT_FILE_COLUMNS
-            )
+            working_visible.update(defaults)
             render_order(columns[0])
 
         def apply_changes() -> None:
@@ -1074,23 +1163,20 @@ class UsenetFinderDialog:
                 column for column in working_order if column in working_visible
             ]
             try:
-                self.app.secure_store.set_setting(order_setting, json.dumps(working_order))
-                self.app.secure_store.set_setting(visible_setting, json.dumps(ordered_visible))
+                app.secure_store.set_setting(order_setting, json.dumps(working_order))
+                app.secure_store.set_setting(visible_setting, json.dumps(ordered_visible))
             except (OSError, sqlite3.Error) as error:
-                self.app._log(f"Could not save Usenet column settings: {error}")
+                app._log(f"Could not save column settings: {error}")
                 messagebox.showerror(
                     "Could not save columns",
                     str(error),
                     parent=dialog,
                 )
                 return
-            table.configure(displaycolumns=ordered_visible)
-            if table_name == "search":
-                self.search_column_order = list(working_order)
-                self.search_visible_columns = ordered_visible
-            else:
-                self.file_column_order = list(working_order)
-                self.file_visible_columns = ordered_visible
+            if table is not None:
+                table.configure(displaycolumns=ordered_visible)
+            if on_apply is not None:
+                on_apply(list(working_order), ordered_visible)
             dialog.destroy()
 
         move_buttons = ttk.Frame(frame)

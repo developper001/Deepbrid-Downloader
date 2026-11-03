@@ -44,6 +44,8 @@ class SettingsController(Protocol):
     def _clear_usenet_finder_cache(self) -> None: ...
     def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_columns_dialog(self) -> None: ...
+    def _show_usenet_column_settings(self, table_name: str, parent: tk.Misc) -> None: ...
+    def _show_host_column_settings(self, parent: tk.Misc) -> None: ...
     def _refresh_hosts(self, show_popup: bool = False) -> None: ...
     def _set_append_output_log(self, enabled: bool, path: str) -> None: ...
     def _test_usenet_browser_connection(
@@ -231,6 +233,24 @@ class SettingsDialog:
             "Host status",
             "supported hosts availability host status daily quota refresh",
             build_host_status,
+        )
+
+        def build_host_columns(controls: ttk.Frame) -> None:
+            ttk.Label(
+                controls,
+                text="Choose visible columns and their order in the Host Status table.",
+                wraplength=480,
+            ).pack(anchor="w", pady=(0, 6))
+            ttk.Button(
+                controls,
+                text="Configure Host Status columns",
+                command=lambda: app._show_host_column_settings(self.dialog),
+            ).pack(anchor="w")
+
+        add_setting(
+            "Host Status columns",
+            "host status availability daily remaining quota columns visibility order",
+            build_host_columns,
         )
 
         def build_appearance(controls: ttk.Frame) -> None:
@@ -519,17 +539,58 @@ class SettingsDialog:
             build_output_log,
         )
 
-        def build_columns(controls: ttk.Frame) -> None:
+        def build_queue_columns(controls: ttk.Frame) -> None:
+            ttk.Label(
+                controls,
+                text="Choose which columns appear and their order in the main download queue.",
+                wraplength=480,
+            ).pack(anchor="w", pady=(0, 6))
             ttk.Button(
                 controls,
-                text="Change column visibility and order",
+                text="Configure download queue columns",
                 command=app._show_columns_dialog,
             ).pack(anchor="w")
 
         add_setting(
-            "Configure columns",
+            "Main download queue columns",
             "columns table visibility order file name original link host host status downloaded total remaining eta status verification",
-            build_columns,
+            build_queue_columns,
+        )
+
+        def build_usenet_search_columns(controls: ttk.Frame) -> None:
+            ttk.Label(
+                controls,
+                text="Choose visible columns and their order in Usenet Finder search results.",
+                wraplength=480,
+            ).pack(anchor="w", pady=(0, 6))
+            ttk.Button(
+                controls,
+                text="Configure Usenet search-result columns",
+                command=lambda: app._show_usenet_column_settings("search", self.dialog),
+            ).pack(anchor="w")
+
+        add_setting(
+            "Usenet Finder search-result columns",
+            "usenet finder search results title category size date columns visibility order",
+            build_usenet_search_columns,
+        )
+
+        def build_usenet_file_columns(controls: ttk.Frame) -> None:
+            ttk.Label(
+                controls,
+                text="Choose visible columns and their order in resolved Usenet files.",
+                wraplength=480,
+            ).pack(anchor="w", pady=(0, 6))
+            ttk.Button(
+                controls,
+                text="Configure resolved-file columns",
+                command=lambda: app._show_usenet_column_settings("files", self.dialog),
+            ).pack(anchor="w")
+
+        add_setting(
+            "Usenet Finder resolved-file columns",
+            "usenet finder resolved files name extension size availability columns visibility order",
+            build_usenet_file_columns,
         )
 
         def filter_settings(*_args: str) -> None:

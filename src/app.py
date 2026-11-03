@@ -71,7 +71,12 @@ from .queue_table import (
 )
 from .queue_types import QueueSource, QueueStatus
 from .settings_dialog import SettingsDialog
-from .usenet_finder_dialog import UsenetFinderDialog
+from .usenet_finder_dialog import (
+    HOST_COLUMNS,
+    HOST_COLUMN_LABELS,
+    UsenetFinderDialog,
+    load_table_column_layout,
+)
 from .usenet_browser import UsenetBrowserSession
 from .usenet_finder import (
     UsenetFinderClient,
@@ -370,6 +375,7 @@ class DownloaderApp:
         self.host_limits: dict[str, str] = {}
         self._hosts_refreshing = False
         self.hosts_popup: tk.Toplevel | None = None
+        self.hosts_popup_table: ttk.Treeview | None = None
         self.usenet_finder_dialog: UsenetFinderDialog | None = None
         self.file_host_links_dialog: tk.Toplevel | None = None
         self.file_host_links_input: tk.Text | None = None
@@ -1265,13 +1271,18 @@ class DownloaderApp:
         search_var = tk.StringVar(master=popup)
         search_entry = ttk.Entry(search_row, textvariable=search_var)
         search_entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            frame,
+            text="Configure columns",
+            command=lambda: self._show_host_column_settings(popup),
+        ).pack(anchor="w", pady=(0, 8))
         table_frame = ttk.Frame(frame)
         table_frame.pack(fill="both", expand=True)
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
         table = ttk.Treeview(
             table_frame,
-            columns=("host", "availability", "limit"),
+            columns=HOST_COLUMNS,
             show="headings",
         )
         host_rows: list[tuple[str, str, str]] = []
@@ -1296,15 +1307,16 @@ class DownloaderApp:
                 sort_state["reverse"] = False
             render_rows()
 
-        for column, label in (
-            ("host", "Host"),
-            ("availability", "Availability"),
-            ("limit", "Daily remaining"),
-        ):
+        for column, label in HOST_COLUMN_LABELS.items():
             table.heading(column, text=label, command=lambda key=column: sort_by(key))
         table.column("host", width=220, anchor="w")
         table.column("availability", width=220, anchor="w")
         table.column("limit", width=140, anchor="e")
+        _column_order, visible_columns = load_table_column_layout(
+            self.secure_store,
+            "hosts",
+        )
+        table.configure(displaycolumns=visible_columns)
         table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
@@ -1376,6 +1388,7 @@ class DownloaderApp:
 
         search_var.trace_add("write", lambda *_args: render_rows())
         self.hosts_popup = popup
+        self.hosts_popup_table = table
         self._hosts_popup_update = update_hosts
         popup.bind(
             "<Destroy>",
@@ -1388,6 +1401,7 @@ class DownloaderApp:
     def _hosts_popup_destroyed(self, event: tk.Event, popup: tk.Toplevel) -> None:
         if event.widget == popup and self.hosts_popup is popup:
             self.hosts_popup = None
+            self.hosts_popup_table = None
             self._hosts_popup_update = None
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
@@ -1880,6 +1894,45 @@ class DownloaderApp:
         api_key_notice: str | None = None,
     ) -> None:
         SettingsDialog(self, initial_filter, api_key_notice)
+
+    def _show_usenet_column_settings(self, table_name: str, parent: tk.Misc) -> None:
+        finder = self.usenet_finder_dialog
+        table = None
+        on_apply = None
+        if finder is not None:
+            try:
+                if finder.dialog.winfo_exists():
+                    table = finder.results if table_name == "search" else finder.files
+
+                    def update_finder_layout(
+                        order: list[str],
+                        visible: list[str],
+                    ) -> None:
+                        if table_name == "search":
+                            finder.search_column_order = order
+                            finder.search_visible_columns = visible
+                        else:
+                            finder.file_column_order = order
+                            finder.file_visible_columns = visible
+
+                    on_apply = update_finder_layout
+            except tk.TclError:
+                pass
+        UsenetFinderDialog.show_column_settings(
+            self,
+            parent,
+            table_name,
+            table=table,
+            on_apply=on_apply,
+        )
+
+    def _show_host_column_settings(self, parent: tk.Misc) -> None:
+        UsenetFinderDialog.show_column_settings(
+            self,
+            parent,
+            "hosts",
+            table=self.hosts_popup_table,
+        )
 
     def _show_usenet_finder(self) -> None:
         if self.usenet_finder_dialog is not None:

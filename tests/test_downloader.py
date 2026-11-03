@@ -97,7 +97,7 @@ from src.usenet_finder import (
     file_size_bytes,
 )
 from src.usenet_browser import UsenetBrowserSession
-from src.usenet_finder_dialog import UsenetFinderDialog
+from src.usenet_finder_dialog import UsenetFinderDialog, load_table_column_layout
 from src.usenet_finder_state import (
     CACHE_DURATION_SETTING,
     CACHE_TTL_SECONDS,
@@ -1075,6 +1075,48 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertEqual(
             _filter_and_sort_host_rows(rows, "", "limit", True),
             [rows[0], rows[2], rows[1]],
+        )
+
+    def test_usenet_column_settings_can_open_directly_from_settings(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.usenet_finder_dialog = None
+        parent = Mock()
+
+        with patch("src.app.UsenetFinderDialog.show_column_settings") as show_settings:
+            app._show_usenet_column_settings("search", parent)
+
+        show_settings.assert_called_once_with(
+            app,
+            parent,
+            "search",
+            table=None,
+            on_apply=None,
+        )
+
+    def test_host_column_layout_defaults_and_saved_layouts(self) -> None:
+        store = Mock()
+        store.get_setting.return_value = None
+
+        order, visible = load_table_column_layout(store, "hosts")
+
+        self.assertEqual(order, ["host", "availability", "limit"])
+        self.assertEqual(visible, order)
+        store.get_setting.assert_any_call("host_status_column_order")
+        store.get_setting.assert_any_call("host_status_visible_columns")
+
+    def test_host_column_settings_can_open_directly_from_settings(self) -> None:
+        app = DownloaderApp.__new__(DownloaderApp)
+        app.hosts_popup_table = None
+        parent = Mock()
+
+        with patch("src.app.UsenetFinderDialog.show_column_settings") as show_settings:
+            app._show_host_column_settings(parent)
+
+        show_settings.assert_called_once_with(
+            app,
+            parent,
+            "hosts",
+            table=None,
         )
 
     def test_plain_click_replaces_existing_selection(self) -> None:
