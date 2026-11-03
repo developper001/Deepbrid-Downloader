@@ -2638,6 +2638,7 @@ class DownloaderApp:
             fieldbackground=colors["field"],
             foreground=colors["foreground"],
             background=colors["surface"],
+            arrowcolor=colors["foreground"],
         )
         style.configure(
             "TSpinbox",
