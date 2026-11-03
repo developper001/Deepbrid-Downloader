@@ -30,6 +30,7 @@ class SettingsController(Protocol):
     startup_manager: StartupManager
 
     def _log(self, message: str) -> None: ...
+    def _show_readme(self) -> None: ...
     def _open_api_key_dashboard(self) -> None: ...
     def _check_api_key(self, button: ttk.Button, status: tk.StringVar) -> None: ...
     def _choose_output_folder(self) -> None: ...
@@ -554,11 +555,14 @@ class SettingsDialog:
 
         self.dialog.after_idle(focus_filter)
 
-        ttk.Button(frame, text="Close", command=self.dialog.destroy).grid(
+        footer = ttk.Frame(frame)
+        footer.grid(
             row=3,
             column=0,
-            sticky="e",
+            sticky="ew",
             pady=(10, 0),
         )
+        ttk.Button(footer, text="About", command=app._show_readme).pack(side="left")
+        ttk.Button(footer, text="Close", command=self.dialog.destroy).pack(side="right")
         self.dialog.bind("<Escape>", lambda _event: self.dialog.destroy())
         self.dialog.grab_set()
