@@ -1038,22 +1038,14 @@ class ValidationAndPresentationTests(unittest.TestCase):
         thread_class.assert_called_once_with(target=app._load_hosts, args=("test-key",), daemon=True)
         thread_class.return_value.start.assert_called_once_with()
 
-    def test_settings_host_popup_takes_and_restores_modal_grab(self) -> None:
+    def test_settings_host_popup_does_not_restore_a_settings_modal_grab(self) -> None:
         settings = SettingsDialog.__new__(SettingsDialog)
         settings.dialog = Mock()
-        settings.dialog.winfo_exists.return_value = True
         popup = Mock()
         settings.app = SimpleNamespace(
             hosts_popup=popup,
             _refresh_hosts=Mock(),
         )
-        destroy_callback: list[object] = []
-
-        def bind(_sequence, callback, *, add):
-            self.assertEqual(add, "+")
-            destroy_callback.append(callback)
-
-        popup.bind.side_effect = bind
 
         settings._show_host_status()
 
@@ -1062,9 +1054,8 @@ class ValidationAndPresentationTests(unittest.TestCase):
         popup.transient.assert_called_once_with(settings.dialog)
         popup.grab_set.assert_called_once_with()
         popup.lift.assert_called_once_with()
-
-        destroy_callback[0](SimpleNamespace(widget=popup))
-        settings.dialog.grab_set.assert_called_once_with()
+        popup.bind.assert_not_called()
+        settings.dialog.grab_set.assert_not_called()
 
     def test_host_rows_filter_and_sort_by_each_column(self) -> None:
         rows = [

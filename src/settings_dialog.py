@@ -565,7 +565,6 @@ class SettingsDialog:
         ttk.Button(footer, text="About", command=app._show_readme).pack(side="left")
         ttk.Button(footer, text="Close", command=self.dialog.destroy).pack(side="right")
         self.dialog.bind("<Escape>", lambda _event: self.dialog.destroy())
-        self.dialog.grab_set()
 
     def _show_host_status(self) -> None:
         try:
@@ -579,25 +578,7 @@ class SettingsDialog:
             return
         try:
             popup.transient(self.dialog)
-            popup.bind(
-                "<Destroy>",
-                lambda event: self._restore_grab_after_hosts_popup(event, popup),
-                add="+",
-            )
             popup.grab_set()
             popup.lift()
-        except tk.TclError:
-            return
-
-    def _restore_grab_after_hosts_popup(
-        self,
-        event: tk.Event,
-        popup: tk.Toplevel,
-    ) -> None:
-        if event.widget != popup:
-            return
-        try:
-            if self.dialog.winfo_exists():
-                self.dialog.grab_set()
         except tk.TclError:
             return
