@@ -111,6 +111,21 @@ class SettingsDialog:
             "<Configure>",
             lambda event: self.canvas.itemconfigure(settings_window, width=event.width),
         )
+
+        def scroll_settings(event: tk.Event) -> str:
+            if getattr(event, "delta", 0):
+                units = int(-event.delta / 48)
+                if not units:
+                    units = -1 if event.delta > 0 else 1
+            else:
+                units = {4: -1, 5: 1}.get(getattr(event, "num", None), 0)
+            if units:
+                self.canvas.yview_scroll(units, "units")
+            return "break"
+
+        self.dialog.bind("<MouseWheel>", scroll_settings, add="+")
+        self.dialog.bind("<Button-4>", scroll_settings, add="+")
+        self.dialog.bind("<Button-5>", scroll_settings, add="+")
         settings_rows: list[tuple[ttk.Frame, str]] = []
 
         def add_setting(title: str, keywords: str, build_controls) -> None:
