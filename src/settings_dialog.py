@@ -567,18 +567,12 @@ class SettingsDialog:
         self.dialog.bind("<Escape>", lambda _event: self.dialog.destroy())
 
     def _show_host_status(self) -> None:
-        try:
-            self.dialog.grab_release()
-        except tk.TclError:
-            pass
-
         self.app._refresh_hosts(show_popup=True)
         popup = getattr(self.app, "hosts_popup", None)
         if popup is None:
             return
         try:
-            popup.transient(self.dialog)
-            popup.grab_set()
+            popup.transient("")
             popup.lift()
         except tk.TclError:
             return
