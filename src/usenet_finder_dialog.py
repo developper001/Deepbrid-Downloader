@@ -141,7 +141,7 @@ class UsenetFinderDialog:
         frame = ttk.Frame(self.dialog, padding=12)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(4, weight=3)
+        frame.rowconfigure(4, weight=1)
 
         header = ttk.Frame(frame)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
@@ -258,8 +258,19 @@ class UsenetFinderDialog:
         filter_entry.pack(side="left", fill="x", expand=True)
         self.result_filter.trace_add("write", lambda *_args: self._refresh_result_rows())
 
+        panes = ttk.Panedwindow(frame, orient="vertical")
+        panes.grid(row=4, column=0, sticky="nsew")
+        results_pane = ttk.Frame(panes)
+        results_pane.columnconfigure(0, weight=1)
+        results_pane.rowconfigure(0, weight=1)
+        resolved_files_pane = ttk.Frame(panes)
+        resolved_files_pane.columnconfigure(0, weight=1)
+        resolved_files_pane.rowconfigure(1, weight=1)
+        panes.add(results_pane, weight=3)
+        panes.add(resolved_files_pane, weight=2)
+
         self.results = ttk.Treeview(
-            frame,
+            results_pane,
             columns=SEARCH_COLUMNS,
             show="headings",
             selectmode="browse",
@@ -277,17 +288,21 @@ class UsenetFinderDialog:
             )
             self.results.column(column, width=width, anchor="w")
         self.results.configure(displaycolumns=self.search_visible_columns)
-        self.results.grid(row=4, column=0, sticky="nsew")
-        results_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.results.yview)
-        results_scrollbar.grid(row=4, column=1, sticky="ns")
+        self.results.grid(row=0, column=0, sticky="nsew")
+        results_scrollbar = ttk.Scrollbar(
+            results_pane,
+            orient="vertical",
+            command=self.results.yview,
+        )
+        results_scrollbar.grid(row=0, column=1, sticky="ns")
         self.results.configure(yscrollcommand=results_scrollbar.set)
         self.results.bind("<<TreeviewSelect>>", self._selection_changed)
         self.results.bind("<Double-1>", lambda _event: self.resolve_selected())
         self.results.bind("<Button-3>", self._show_result_context_menu)
         self.results.bind("<Button-2>", self._show_result_context_menu)
 
-        result_actions = ttk.Frame(frame)
-        result_actions.grid(row=5, column=0, sticky="ew", pady=(8, 8))
+        result_actions = ttk.Frame(results_pane)
+        result_actions.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 8))
         ttk.Button(
             result_actions,
             text="Configure columns",
@@ -307,7 +322,7 @@ class UsenetFinderDialog:
         ttk.Label(result_actions, textvariable=self.status).pack(side="left", padx=(12, 0))
 
         self.files = ttk.Treeview(
-            frame,
+            resolved_files_pane,
             columns=FILE_COLUMNS,
             show="headings",
             selectmode="extended",
@@ -330,25 +345,28 @@ class UsenetFinderDialog:
             "inaccessible",
             foreground=self.app.theme_colors["error"],
         )
-        self.files.grid(row=7, column=0, sticky="nsew")
-        files_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.files.yview)
-        files_scrollbar.grid(row=7, column=1, sticky="ns")
+        self.files.grid(row=1, column=0, sticky="nsew")
+        files_scrollbar = ttk.Scrollbar(
+            resolved_files_pane,
+            orient="vertical",
+            command=self.files.yview,
+        )
+        files_scrollbar.grid(row=1, column=1, sticky="ns")
         self.files.configure(yscrollcommand=files_scrollbar.set)
         self.files.bind("<<TreeviewSelect>>", self._file_selection_changed)
         self.files.bind("<Control-a>", self._select_all_files)
         self.files.bind("<Button-3>", self._show_file_context_menu)
         self.files.bind("<Button-2>", self._show_file_context_menu)
-        resolved_header = ttk.Frame(frame)
-        resolved_header.grid(row=6, column=0, sticky="ew", pady=(0, 4))
+        resolved_header = ttk.Frame(resolved_files_pane)
+        resolved_header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
         resolved_header.columnconfigure(0, weight=1)
         ttk.Label(resolved_header, text="Resolved files").grid(
             row=0,
             column=0,
             sticky="sw",
         )
-        frame.rowconfigure(7, weight=2)
-        file_actions = ttk.Frame(frame)
-        file_actions.grid(row=8, column=0, sticky="ew", pady=(8, 0))
+        file_actions = ttk.Frame(resolved_files_pane)
+        file_actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         self.add_selected_button = ttk.Button(
             file_actions,
             text="Add selected to queue",
