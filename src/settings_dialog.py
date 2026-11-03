@@ -34,6 +34,7 @@ class SettingsController(Protocol):
     dark_theme: bool
     usenet_finder_cache_duration_hours: int
     usenet_finder_hide_auxiliary_files: bool
+    usenet_auto_open_browser_for_link_renewal: bool
     append_output_log_enabled: bool
     append_output_log_path: tk.StringVar
     startup_manager: StartupManager
@@ -50,6 +51,7 @@ class SettingsController(Protocol):
     def _persist_auto_check_updates(self) -> None: ...
     def _set_usenet_finder_cache_duration(self, hours: int) -> None: ...
     def _set_usenet_finder_hide_auxiliary_files(self, enabled: bool) -> None: ...
+    def _set_usenet_auto_open_browser_for_link_renewal(self, enabled: bool) -> None: ...
     def _clear_usenet_finder_cache(self) -> None: ...
     def _clear_usenet_finder_search_history(self) -> None: ...
     def _show_columns_dialog(self) -> None: ...
@@ -583,6 +585,55 @@ class SettingsDialog:
             "Usenet browser",
             "usenet finder chrome edge browser connection test",
             build_browser_connection_test,
+            category="Usenet Finder",
+        )
+
+        auto_open_usenet_browser = tk.BooleanVar(
+            master=self.dialog,
+            value=app.usenet_auto_open_browser_for_link_renewal,
+        )
+        auto_open_usenet_browser_status = tk.StringVar(master=self.dialog)
+
+        def save_auto_open_usenet_browser() -> None:
+            enabled = auto_open_usenet_browser.get()
+            try:
+                app._set_usenet_auto_open_browser_for_link_renewal(enabled)
+            except (OSError, sqlite3.Error) as error:
+                auto_open_usenet_browser.set(
+                    app.usenet_auto_open_browser_for_link_renewal
+                )
+                auto_open_usenet_browser_status.set(f"Could not save setting: {error}")
+                app._log(f"Could not save automatic Usenet browser setting: {error}")
+                return
+            auto_open_usenet_browser_status.set("Saved.")
+
+        def build_auto_open_usenet_browser(controls: ttk.Frame) -> None:
+            ttk.Checkbutton(
+                controls,
+                text="Open the dedicated browser when a queued Usenet link needs renewal",
+                variable=auto_open_usenet_browser,
+                command=save_auto_open_usenet_browser,
+            ).pack(anchor="w")
+            ttk.Label(
+                controls,
+                text=(
+                    "This opens the app's separate Chrome/Edge profile only when an expired "
+                    "queued link needs a fresh Finder link. Sign in and save your password in "
+                    "that dedicated profile; credentials saved in your regular browser are "
+                    "not shared. You may still need to complete Cloudflare verification."
+                ),
+                wraplength=480,
+                justify="left",
+            ).pack(anchor="w", pady=(4, 0))
+            ttk.Label(controls, textvariable=auto_open_usenet_browser_status).pack(
+                anchor="w",
+                pady=(4, 0),
+            )
+
+        add_setting(
+            "Usenet link renewal",
+            "usenet queued expired link renew reopen chrome edge browser automatically",
+            build_auto_open_usenet_browser,
             category="Usenet Finder",
         )
 

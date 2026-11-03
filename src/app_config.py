@@ -17,6 +17,7 @@ from .usenet_finder_state import (
 
 OUTPUT_LOG_ENABLED_SETTING = "append_output_log_enabled"
 OUTPUT_LOG_PATH_SETTING = "append_output_log_path"
+USENET_AUTO_OPEN_BROWSER_SETTING = "usenet_auto_open_browser_for_link_renewal"
 
 
 def setting_is_enabled(value: str | None, default: bool) -> bool:
@@ -39,6 +40,7 @@ class AppConfiguration:
     dark_theme: bool
     usenet_finder_cache_duration_hours: int
     usenet_finder_hide_auxiliary_files: bool
+    usenet_auto_open_browser_for_link_renewal: bool
     append_output_log_enabled: bool
     append_output_log_path: Path
 
@@ -236,6 +238,10 @@ class AppConfiguration:
             usenet_finder_cache_duration_hours=cache_duration_hours,
             usenet_finder_hide_auxiliary_files=setting_is_enabled(
                 secure_store.get_setting(HIDE_AUXILIARY_FILES_SETTING),
+                default=True,
+            ),
+            usenet_auto_open_browser_for_link_renewal=setting_is_enabled(
+                secure_store.get_setting(USENET_AUTO_OPEN_BROWSER_SETTING),
                 default=True,
             ),
             append_output_log_enabled=setting_is_enabled(

@@ -799,7 +799,8 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
             app = DownloaderApp.__new__(DownloaderApp)
             app.store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
             app.secure_store = app.store.secure_store
-            app.usenet_browser = object()
+            app.usenet_browser = SimpleNamespace(open=Mock())
+            app.usenet_auto_open_browser_for_link_renewal = False
             app._log = Mock()
             app.store.add(
                 "https://usenet.example/download/expired",
@@ -841,8 +842,12 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
                 client_class.return_value.resolve.return_value = package
 
                 renewed_link = app._refresh_usenet_download_link(item)
+                app.usenet_browser.open.assert_not_called()
+                app.usenet_auto_open_browser_for_link_renewal = True
+                renewed_link = app._refresh_usenet_download_link(item)
 
             self.assertEqual(renewed_link, "https://usenet.example/download/refreshed")
+            app.usenet_browser.open.assert_called_once_with()
             renewed_item = app.store.list_items()[0]
             self.assertEqual(renewed_item.finder_result_token, "result-token")
             self.assertEqual(renewed_item.finder_file_index, 1)

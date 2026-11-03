@@ -28,7 +28,7 @@ from src.app_events import (
     StartupApiKeyProblemEvent,
     StartupUpdateEvent,
 )
-from src.app_config import AppConfiguration
+from src.app_config import AppConfiguration, USENET_AUTO_OPEN_BROWSER_SETTING
 from src.app_info import (
     GITHUB_LATEST_RELEASE_URL,
     LatestRelease,
@@ -248,6 +248,7 @@ class AppConfigurationTests(unittest.TestCase):
                 DEFAULT_CACHE_DURATION_HOURS,
             )
             self.assertTrue(config.usenet_finder_hide_auxiliary_files)
+            self.assertTrue(config.usenet_auto_open_browser_for_link_renewal)
             self.assertFalse(config.append_output_log_enabled)
             self.assertEqual(config.append_output_log_path, default_log_path)
             with closing(sqlite3.connect(database)) as connection:
@@ -276,6 +277,7 @@ class AppConfigurationTests(unittest.TestCase):
             )
             store.set_setting(CACHE_DURATION_SETTING, "48")
             store.set_setting(HIDE_AUXILIARY_FILES_SETTING, "false")
+            store.set_setting(USENET_AUTO_OPEN_BROWSER_SETTING, "true")
             log_path = downloads / "diagnostics.log"
             store.set_setting("append_output_log_enabled", "true")
             store.set_setting("append_output_log_path", str(log_path))
@@ -297,6 +299,7 @@ class AppConfigurationTests(unittest.TestCase):
             self.assertEqual(config.column_widths["link"], 800)
             self.assertEqual(config.usenet_finder_cache_duration_hours, 48)
             self.assertFalse(config.usenet_finder_hide_auxiliary_files)
+            self.assertTrue(config.usenet_auto_open_browser_for_link_renewal)
             self.assertTrue(config.append_output_log_enabled)
             self.assertEqual(config.append_output_log_path, log_path)
 
@@ -623,6 +626,23 @@ class ValidationAndPresentationTests(unittest.TestCase):
         self.assertTrue(app.usenet_finder_hide_auxiliary_files)
         self.assertEqual(saved_settings[HIDE_AUXILIARY_FILES_SETTING], "true")
         finder_dialog._set_auxiliary_files_hidden.assert_called_once_with(True)
+
+    def test_auto_open_usenet_browser_setting_is_persisted(self) -> None:
+        saved_settings: dict[str, str] = {}
+        app = object.__new__(DownloaderApp)
+        app.secure_store = SimpleNamespace(
+            set_setting=lambda name, value: saved_settings.__setitem__(name, value)
+        )
+
+        app._set_usenet_auto_open_browser_for_link_renewal(True)
+
+        self.assertTrue(app.usenet_auto_open_browser_for_link_renewal)
+        self.assertEqual(saved_settings[USENET_AUTO_OPEN_BROWSER_SETTING], "true")
+
+        app._set_usenet_auto_open_browser_for_link_renewal(False)
+
+        self.assertFalse(app.usenet_auto_open_browser_for_link_renewal)
+        self.assertEqual(saved_settings[USENET_AUTO_OPEN_BROWSER_SETTING], "false")
 
     def test_single_instance_lock_rejects_second_owner_and_releases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -23,6 +23,7 @@ from platformdirs import user_data_dir, user_downloads_dir
 from .app_config import (
     OUTPUT_LOG_ENABLED_SETTING,
     OUTPUT_LOG_PATH_SETTING,
+    USENET_AUTO_OPEN_BROWSER_SETTING,
     AppConfiguration,
     setting_is_enabled as _setting_is_enabled,
 )
@@ -396,6 +397,9 @@ class DownloaderApp:
         self.usenet_finder_cache_duration_hours = config.usenet_finder_cache_duration_hours
         self.usenet_finder_hide_auxiliary_files = (
             config.usenet_finder_hide_auxiliary_files
+        )
+        self.usenet_auto_open_browser_for_link_renewal = (
+            config.usenet_auto_open_browser_for_link_renewal
         )
         self.append_output_log_enabled = config.append_output_log_enabled
         self.append_output_log_path = tk.StringVar(
@@ -1168,6 +1172,8 @@ class DownloaderApp:
         return added_count, duplicate_count, invalid_count
 
     def _refresh_usenet_download_link(self, item: QueueItem) -> str:
+        if self.usenet_auto_open_browser_for_link_renewal:
+            self.usenet_browser.open()
         token = item.finder_result_token
         file_index = item.finder_file_index
         if token is None or file_index is None:
@@ -1857,6 +1863,13 @@ class DownloaderApp:
                     dialog._set_auxiliary_files_hidden(enabled)
             except tk.TclError:
                 pass
+
+    def _set_usenet_auto_open_browser_for_link_renewal(self, enabled: bool) -> None:
+        self.secure_store.set_setting(
+            USENET_AUTO_OPEN_BROWSER_SETTING,
+            "true" if enabled else "false",
+        )
+        self.usenet_auto_open_browser_for_link_renewal = enabled
 
     def _set_append_output_log(self, enabled: bool, path_text: str) -> None:
         path_text = path_text.strip()
