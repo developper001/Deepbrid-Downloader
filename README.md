@@ -55,13 +55,14 @@ A small cross-platform desktop downloader built with Python and Tkinter for Deep
 - Rows show status, downloaded/total bytes, remaining bytes, per-file ETA, and optional size-verification results.
 - The bottom progress bar tracks settled enabled links plus the active file's partial progress; its caption shows queue count and total ETA.
 - The total ETA estimates unknown queued file sizes from the average size of completed downloads when a sample is available.
-- Use the Configure columns dialog to show or hide fields, change their order, or reset the layout to defaults. The file extension is shown by default, after the file name. Resize table columns as needed; the horizontal scrollbar appears when visible columns no longer fit.
+- Use the Configure columns dialog to show or hide fields, change their order and widths, or reset the layout to defaults. Column widths are saved between runs. The file extension is shown by default, after the file name. Resize table columns as needed; horizontal scrollbars appear when visible columns no longer fit.
 - Click a row to select it, press Ctrl+A to select all queued links, Ctrl-click to add or toggle rows, or Shift-click to select a range; right-click a selected row to apply context-menu actions to the selection in display order.
-- The Host Status window is available from Settings and the file-host link-entry window. It opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column.
+- The Host Status window is available from Settings and the file-host link-entry window. It opens with the last cached host list, then refreshes availability and daily quotas in the background. Search by host or sort by any column; configure its visible columns and saved widths from the popup.
 - The app keeps active partial files and automatically resumes queued work after startup. Closing the window requests a safe stop and waits for the active network read to return before exit, preserving the partial file for resume.
 - If the API key is missing or rejected, the app opens the filtered API-key Settings automatically. Use the Get API key button there to retrieve a key, then use Check API key to verify it.
 - Use the About window to open the GitHub repository and check whether a newer release is available.
 - In Settings, use **Start after login** to toggle automatic startup on Windows/Linux or open macOS Login Items settings to add the app there. This starts the app after signing in; queued-download auto-start remains a separate option.
+- Settings are grouped into Main, Usenet Finder, Hosts, Startup & Updates, Appearance, and Logging sections. Use the filter to search settings across sections.
 
 ## Retry and resume behavior
 
@@ -75,7 +76,7 @@ The **Find Usenet links** button opens a separate window that searches Usenet re
 
 The last query and category are saved and restored when the Finder window is reopened. If the first page of that search is still cached, it is shown immediately without requiring another Search click. Finder also restores the last selected row and its resolved file links while they remain within the configured cache duration. Search result pages and successfully resolved packages are cached locally in encrypted form. Their shared cache duration is configurable in Settings from 1 to 720 hours (24 hours by default); use **Usenet settings** in the Finder window to change it or clear both caches.
 
-The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; to delete an individual entry, highlight it in the search history dropdown and press **Delete/Suppr**. Choose **[Clear search history]** in the dropdown or use **Clear search history** in Settings to remove all entries. Result categories populate the category picker, and search results and resolved files can be sorted by clicking a column heading. Use **Search columns...** and **File columns...** to show, hide, and reorder columns in each table; the resolved-files extension column is visible by default. **Hide PAR2/NFO** is enabled by default and temporarily filters parity archives and NFO files out of the resolved-file list; the files remain part of the package and are still included by **Add all accessible to queue**. Change this under **Usenet resolved files** in Settings or toggle it in the Finder; the choice is saved between runs. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
+The Finder checks the dedicated browser connection periodically with a lightweight local status check. Cached results show their expiry time. Recent searches can be selected again; to delete an individual entry, highlight it in the search history dropdown and press **Delete/Suppr**. Choose **[Clear search history]** in the dropdown or use **Clear search history** in Settings to remove all entries. Result categories populate the category picker, and search results and resolved files can be sorted by clicking a column heading. Use **Configure columns** beneath either table to show, hide, reorder, and set widths; widths are saved between runs. Long columns can extend past the window and be reached with the horizontal scrollbar. The resolved-files extension column is visible by default. **Hide PAR2/NFO** is enabled by default and filters parity archives and NFO files out of the resolved-file list and from **Add all accessible to queue**. Change this under **Usenet resolved files** in Settings or toggle it in the Finder; the choice is saved between runs. Use **Test browser connection** in Settings to check the dedicated browser connection on demand.
 
 Usenet Finder requires Google Chrome or Microsoft Edge to be installed. The app opens a dedicated browser window automatically and uses an isolated profile stored under the application's data directory with loopback-only DevTools. If neither browser is found, the app explains how to install one:
 
@@ -109,9 +110,9 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 - Check whether a completed download's size matched the expected size reported by its host
 - Retry blocked or failed links safely, with a pause-and-resume workflow
 - Stop active downloads safely when closing the app; partial files are kept for resume
-- Open a searchable Settings window for the API key, download folder, appearance, startup behavior, and queue columns; preferences are saved between runs
+- Open searchable, sectioned Settings for the API key, download folder, appearance, startup behavior, Hosts, Logging, and table columns; preferences are saved between runs
 - Check the API key from Settings and switch themes directly from the dashboard; startup downloads are enabled by default
-- Toggle dark mode, show or hide the console, and customize column visibility and order with a reset-to-defaults option
+- Toggle dark mode, show or hide the console, and customize table column visibility, order, and widths with a reset-to-defaults option; widths persist between runs
 - Keep table heading hover, the About README, and update-download progress readable in dark mode
 - Open API-key Settings automatically at startup when the key is missing or rejected; access the Deepbrid key page from Settings
 - Check for newer releases in About and opt into verified in-app updates with download progress
