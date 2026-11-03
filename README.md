@@ -155,9 +155,9 @@ It runs:
 - Python 3.11+
 - Tkinter support for your OS
 - `cryptography>=50.0.2`
-- `filelock>=4.1.0`
-- `platformdirs>=4.12.4`
-- `tkinterdnd2>=0.6.3`
+- `filelock>=4.2.7`
+- `platformdirs>=4.14.3`
+- `tkinterdnd2>=0.7.0`
 - `websocket-client>=1.9.2`
 
 ## Installation
