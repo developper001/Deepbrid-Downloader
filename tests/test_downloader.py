@@ -86,7 +86,12 @@ from src.startup_manager import (
     StartupConfigurationError,
     StartupManager,
 )
-from src.update_manager import download_update_asset
+from src.update_manager import (
+    UpdateInstallError,
+    _replace_with_retry,
+    apply_update_from_args,
+    download_update_asset,
+)
 from src.usenet_finder import (
     FinderFile,
     FinderPackage,
@@ -990,6 +995,93 @@ class ValidationAndPresentationTests(unittest.TestCase):
                 with self.assertRaisesRegex(Exception, "SHA-256"):
                     download_update_asset(bad_asset, Path(temporary_directory), lambda *_: None)
             self.assertEqual(list(Path(temporary_directory).glob("*.download")), [])
+
+    def test_update_replace_retries_permission_error(self) -> None:
+        source = Path("staged-update")
+        destination = Path("application")
+        with (
+            patch("src.update_manager.os.replace", side_effect=[PermissionError, None]) as replace,
+            patch("src.update_manager.time.sleep") as sleep,
+        ):
+            _replace_with_retry(source, destination, attempts=2, retry_delay=0.1)
+
+        self.assertEqual(replace.call_count, 2)
+        sleep.assert_called_once_with(0.1)
+
+    def test_update_replace_raises_after_retry_limit(self) -> None:
+        source = Path("staged-update")
+        destination = Path("application")
+        with (
+            patch("src.update_manager.os.replace", side_effect=PermissionError("denied")) as replace,
+            patch("src.update_manager.time.sleep") as sleep,
+            self.assertRaisesRegex(PermissionError, "denied"),
+        ):
+            _replace_with_retry(source, destination, attempts=3, retry_delay=0.1)
+
+        self.assertEqual(replace.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_update_install_does_not_replace_original_when_first_replace_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            target_path = directory / "DeepbridDownloader.exe"
+            staged_path = directory / ".deepbrid-update-test.download"
+            helper_path = directory / ".deepbrid-update-helper-test.exe"
+            target_path.write_bytes(b"old application")
+            staged_path.write_bytes(b"new application")
+            arguments = [
+                "--apply-update",
+                str(staged_path),
+                str(target_path),
+                "123",
+                str(helper_path),
+            ]
+
+            with (
+                patch("src.update_manager.sys.executable", str(helper_path)),
+                patch("src.update_manager._wait_for_process"),
+                patch(
+                    "src.update_manager.os.replace",
+                    side_effect=PermissionError("access denied"),
+                ) as replace,
+                patch("src.update_manager.time.sleep"),
+                patch("src.update_manager.subprocess.Popen"),
+                self.assertRaisesRegex(UpdateInstallError, "Windows denied access"),
+            ):
+                apply_update_from_args(arguments)
+
+            self.assertEqual(replace.call_count, 12)
+            self.assertEqual(target_path.read_bytes(), b"old application")
+            self.assertEqual(staged_path.read_bytes(), b"new application")
+            self.assertEqual(list(directory.glob(".deepbrid-old-*")), [])
+
+    def test_update_install_restores_original_if_restart_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            target_path = directory / "DeepbridDownloader.exe"
+            staged_path = directory / ".deepbrid-update-test.download"
+            helper_path = directory / ".deepbrid-update-helper-test.exe"
+            target_path.write_bytes(b"old application")
+            staged_path.write_bytes(b"new application")
+            arguments = [
+                "--apply-update",
+                str(staged_path),
+                str(target_path),
+                "123",
+                str(helper_path),
+            ]
+
+            with (
+                patch("src.update_manager.sys.executable", str(helper_path)),
+                patch("src.update_manager._wait_for_process"),
+                patch("src.update_manager.subprocess.Popen", side_effect=OSError("restart failed")),
+                self.assertRaisesRegex(UpdateInstallError, "restart failed"),
+            ):
+                apply_update_from_args(arguments)
+
+            self.assertEqual(target_path.read_bytes(), b"old application")
+            self.assertFalse(staged_path.exists())
+            self.assertEqual(list(directory.glob(".deepbrid-old-*")), [])
 
     def test_host_refresh_error_preserves_http_401_for_popup(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
