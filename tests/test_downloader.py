@@ -97,7 +97,12 @@ from src.usenet_finder import (
     file_size_bytes,
 )
 from src.usenet_browser import UsenetBrowserSession
-from src.usenet_finder_dialog import UsenetFinderDialog, load_table_column_layout
+from src.usenet_finder_dialog import (
+    UsenetFinderDialog,
+    _configure_horizontal_scrollbar,
+    _read_column_widths,
+    load_table_column_layout,
+)
 from src.usenet_finder_state import (
     CACHE_DURATION_SETTING,
     CACHE_TTL_SECONDS,
@@ -2154,6 +2159,75 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
+    def test_column_widths_restore_saved_values_and_default_invalid_values(self) -> None:
+        store = Mock()
+        store.get_setting.return_value = json.dumps(
+            {"title": 720, "category": 0, "size": "wide", "unused": 300}
+        )
+
+        widths = _read_column_widths(
+            store,
+            "usenet_search_column_widths",
+            ("title", "category", "size", "date"),
+            {"title": 470, "category": 100, "size": 100, "date": 150},
+        )
+
+        self.assertEqual(
+            widths,
+            {"title": 720, "category": 100, "size": 100, "date": 150},
+        )
+
+    def test_column_widths_are_saved_for_both_finder_tables(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.results = Mock()
+        dialog.files = Mock()
+        dialog.app = SimpleNamespace(secure_store=Mock(), _log=Mock())
+        dialog.results.column.side_effect = lambda column, _option: {
+            "title": "700",
+            "category": "130",
+            "size": "110",
+            "date": "160",
+        }[column]
+        dialog.files.column.side_effect = lambda column, _option: {
+            "name": "640",
+            "extension": "110",
+            "size": "120",
+            "availability": "170",
+        }[column]
+
+        dialog._save_column_widths("search")
+        dialog._save_column_widths("files")
+
+        store = dialog.app.secure_store
+        store.set_setting.assert_any_call(
+            "usenet_search_column_widths",
+            json.dumps({"title": 700, "category": 130, "size": 110, "date": 160}),
+        )
+        store.set_setting.assert_any_call(
+            "usenet_file_column_widths",
+            json.dumps(
+                {"name": 640, "extension": 110, "size": 120, "availability": 170}
+            ),
+        )
+
+    def test_horizontal_scrollbar_tracks_column_overflow(self) -> None:
+        table = Mock()
+        scrollbar = Mock()
+
+        _configure_horizontal_scrollbar(table, scrollbar)
+        update_scrollbar = table.configure.call_args.kwargs["xscrollcommand"]
+
+        update_scrollbar("0.1", "0.9")
+        scrollbar.set.assert_called_once_with("0.1", "0.9")
+        scrollbar.grid.assert_called_once_with()
+        scrollbar.grid_remove.assert_not_called()
+
+        scrollbar.reset_mock()
+        update_scrollbar("0", "1")
+        scrollbar.set.assert_called_once_with("0", "1")
+        scrollbar.grid_remove.assert_called_once_with()
+        scrollbar.grid.assert_not_called()
+
     def test_resolved_file_size_parser_supports_decimal_and_binary_units(self) -> None:
         self.assertEqual(file_size_bytes("1.1 GB"), 1_100_000_000)
         self.assertEqual(file_size_bytes("1.1 GiB"), round(1.1 * 1024**3))

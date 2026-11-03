@@ -49,6 +49,55 @@ HOST_COLUMN_LABELS = {
     "availability": "Availability",
     "limit": "Daily remaining",
 }
+SEARCH_COLUMN_WIDTHS = {
+    "title": 470,
+    "category": 100,
+    "size": 100,
+    "date": 150,
+}
+FILE_COLUMN_WIDTHS = {
+    "name": 500,
+    "extension": 100,
+    "size": 120,
+    "availability": 150,
+}
+
+
+def _configure_horizontal_scrollbar(
+    table: ttk.Treeview,
+    scrollbar: ttk.Scrollbar,
+) -> None:
+    def update_scrollbar(first: str, last: str) -> None:
+        scrollbar.set(first, last)
+        if float(first) > 0 or float(last) < 1:
+            scrollbar.grid()
+        else:
+            scrollbar.grid_remove()
+
+    table.configure(xscrollcommand=update_scrollbar)
+
+
+def _read_column_widths(
+    secure_store: SecureStore,
+    setting: str,
+    columns: tuple[str, ...],
+    defaults: dict[str, int],
+) -> dict[str, int]:
+    try:
+        saved_widths = json.loads(secure_store.get_setting(setting) or "{}")
+    except (json.JSONDecodeError, sqlite3.Error):
+        return defaults.copy()
+    if not isinstance(saved_widths, dict):
+        return defaults.copy()
+    return {
+        column: (
+            saved_widths[column]
+            if type(saved_widths.get(column)) is int
+            and 30 <= saved_widths[column] <= 10000
+            else defaults[column]
+        )
+        for column in columns
+    }
 
 
 def _read_column_layout(
@@ -168,11 +217,23 @@ class UsenetFinderDialog:
             SEARCH_COLUMNS,
             DEFAULT_SEARCH_COLUMNS,
         )
+        self.search_column_widths = _read_column_widths(
+            app.secure_store,
+            "usenet_search_column_widths",
+            SEARCH_COLUMNS,
+            SEARCH_COLUMN_WIDTHS,
+        )
         self.file_column_order, self.file_visible_columns = self._load_column_layout(
             "usenet_file_column_order",
             "usenet_file_visible_columns",
             FILE_COLUMNS,
             DEFAULT_FILE_COLUMNS,
+        )
+        self.file_column_widths = _read_column_widths(
+            app.secure_store,
+            "usenet_file_column_widths",
+            FILE_COLUMNS,
+            FILE_COLUMN_WIDTHS,
         )
         self.client = UsenetFinderClient(app.usenet_browser)
         self.state = UsenetFinderState(
@@ -343,18 +404,20 @@ class UsenetFinderDialog:
             show="headings",
             selectmode="browse",
         )
-        for column, width in (
-            ("title", 470),
-            ("category", 100),
-            ("size", 100),
-            ("date", 150),
-        ):
+        for column in SEARCH_COLUMNS:
+            width = self.search_column_widths[column]
             self.results.heading(
                 column,
                 text=SEARCH_COLUMN_LABELS[column],
                 command=lambda selected_column=column: self._sort_results(selected_column),
             )
-            self.results.column(column, width=width, anchor="w")
+            self.results.column(
+                column,
+                width=width,
+                minwidth=min(width, 70 if column != "title" else 200),
+                stretch=False,
+                anchor="w",
+            )
         self.results.configure(displaycolumns=self.search_visible_columns)
         self.results.grid(row=0, column=0, sticky="nsew")
         results_scrollbar = ttk.Scrollbar(
@@ -364,13 +427,25 @@ class UsenetFinderDialog:
         )
         results_scrollbar.grid(row=0, column=1, sticky="ns")
         self.results.configure(yscrollcommand=results_scrollbar.set)
+        results_horizontal_scrollbar = ttk.Scrollbar(
+            results_pane,
+            orient="horizontal",
+            command=self.results.xview,
+        )
+        results_horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
+        _configure_horizontal_scrollbar(self.results, results_horizontal_scrollbar)
+        self.results.bind(
+            "<ButtonRelease-1>",
+            lambda event: self._column_resize_finished(event, "search"),
+            add="+",
+        )
         self.results.bind("<<TreeviewSelect>>", self._selection_changed)
         self.results.bind("<Double-1>", lambda _event: self.resolve_selected())
         self.results.bind("<Button-3>", self._show_result_context_menu)
         self.results.bind("<Button-2>", self._show_result_context_menu)
 
         result_actions = ttk.Frame(results_pane)
-        result_actions.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 8))
+        result_actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 8))
         ttk.Button(
             result_actions,
             text="Configure columns",
@@ -396,18 +471,20 @@ class UsenetFinderDialog:
             selectmode="extended",
             height=6,
         )
-        for column, width in (
-            ("name", 500),
-            ("extension", 100),
-            ("size", 120),
-            ("availability", 150),
-        ):
+        for column in FILE_COLUMNS:
+            width = self.file_column_widths[column]
             self.files.heading(
                 column,
                 text=FILE_COLUMN_LABELS[column],
                 command=lambda selected_column=column: self._sort_files(selected_column),
             )
-            self.files.column(column, width=width, anchor="w")
+            self.files.column(
+                column,
+                width=width,
+                minwidth=min(width, 200 if column == "name" else 70),
+                stretch=False,
+                anchor="w",
+            )
         self.files.configure(displaycolumns=self.file_visible_columns)
         self.files.tag_configure(
             "inaccessible",
@@ -421,6 +498,18 @@ class UsenetFinderDialog:
         )
         files_scrollbar.grid(row=1, column=1, sticky="ns")
         self.files.configure(yscrollcommand=files_scrollbar.set)
+        files_horizontal_scrollbar = ttk.Scrollbar(
+            resolved_files_pane,
+            orient="horizontal",
+            command=self.files.xview,
+        )
+        files_horizontal_scrollbar.grid(row=2, column=0, sticky="ew")
+        _configure_horizontal_scrollbar(self.files, files_horizontal_scrollbar)
+        self.files.bind(
+            "<ButtonRelease-1>",
+            lambda event: self._column_resize_finished(event, "files"),
+            add="+",
+        )
         self.files.bind("<<TreeviewSelect>>", self._file_selection_changed)
         self.files.bind("<Control-a>", self._select_all_files)
         self.files.bind("<Button-3>", self._show_file_context_menu)
@@ -434,7 +523,7 @@ class UsenetFinderDialog:
             sticky="sw",
         )
         file_actions = ttk.Frame(resolved_files_pane)
-        file_actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        file_actions.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         self.add_selected_button = ttk.Button(
             file_actions,
             text="Add selected to queue",
@@ -998,6 +1087,26 @@ class UsenetFinderDialog:
             default_visible,
         )
 
+    def _column_resize_finished(self, event: tk.Event, table_name: str) -> None:
+        table = self.results if table_name == "search" else self.files
+        if table.identify_region(event.x, event.y) == "separator":
+            self._save_column_widths(table_name)
+
+    def _save_column_widths(self, table_name: str) -> None:
+        if table_name == "search":
+            table = self.results
+            setting = "usenet_search_column_widths"
+            columns = SEARCH_COLUMNS
+        else:
+            table = self.files
+            setting = "usenet_file_column_widths"
+            columns = FILE_COLUMNS
+        widths = {column: int(table.column(column, "width")) for column in columns}
+        try:
+            self.app.secure_store.set_setting(setting, json.dumps(widths))
+        except (SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not save Usenet Finder {table_name} column widths: {error}")
+
     def _show_column_settings(self, table_name: str) -> None:
         table = self.results if table_name == "search" else self.files
 
@@ -1404,6 +1513,8 @@ class UsenetFinderDialog:
         return f"Inaccessible: {file.inaccessible}" if file.inaccessible else "No link available"
 
     def close(self) -> None:
+        self._save_column_widths("search")
+        self._save_column_widths("files")
         for key_sequence, binding_id in self._search_history_delete_bindings:
             self.dialog._unbind(("bind", "all", key_sequence), binding_id)
         self._search_history_delete_bindings.clear()
