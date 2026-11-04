@@ -414,6 +414,7 @@ class DownloaderApp:
 
         self._build_ui()
         self._install_console_capture()
+        self._log(f"Deepbrid Downloader {APP_VERSION} started.")
         self._set_window_icon()
         self.api_key.trace_add("write", self._schedule_key_save)
         if self.hosts:
@@ -453,12 +454,6 @@ class DownloaderApp:
         self.brand_logo_label.grid(row=0, column=0, sticky="w", padx=(0, 18))
         header_actions = ttk.Frame(main)
         header_actions.grid(row=0, column=1, sticky="e", pady=(0, 8))
-        self.settings_button = ttk.Button(
-            header_actions,
-            text="Settings",
-            command=self._show_settings,
-        )
-        self.settings_button.pack(side="right")
         self.usenet_finder_button = ttk.Button(
             header_actions,
             text="Find Usenet links",
@@ -501,8 +496,12 @@ class DownloaderApp:
             command=self._toggle_theme,
         )
         self.theme_button.pack(side="left", padx=(8, 0))
-        self.readme_button = ttk.Button(controls, text="About", command=self._show_readme)
-        self.readme_button.pack(side="left", padx=(8, 0))
+        self.settings_button = ttk.Button(
+            controls,
+            text="Settings",
+            command=self._show_settings,
+        )
+        self.settings_button.pack(side="left", padx=(8, 0))
         ttk.Label(controls, textvariable=self.status_text).pack(side="right")
 
         self.panes = ttk.Panedwindow(main, orient="vertical")
@@ -529,6 +528,7 @@ class DownloaderApp:
         self.link_menu = tk.Menu(self.root, tearoff=False)
         self.link_menu.add_command(label="Copy original link", command=self._copy_original_link)
         self.link_menu.add_command(label="Copy Deepbrid link", command=self._copy_deepbrid_link)
+        self.link_menu.add_command(label="Copy filename", command=self._copy_filename)
         self.link_menu.add_command(label="Disable link", command=self._toggle_link_enabled)
         self.link_menu.add_separator()
         self.link_menu.add_command(label="Retry link", command=self._retry_item)
@@ -2556,6 +2556,10 @@ class DownloaderApp:
             state="normal" if any(item.deepbrid_link for item in items) else "disabled",
             label="Copy Deepbrid links" if multiple else "Copy Deepbrid link",
         )
+        self.link_menu.entryconfigure(
+            2,
+            label="Copy filenames" if multiple else "Copy filename",
+        )
         if all(item.enabled for item in items):
             toggle_label = "Disable links" if multiple else "Disable link"
         elif not any(item.enabled for item in items):
@@ -2563,23 +2567,23 @@ class DownloaderApp:
         else:
             toggle_label = "Toggle enabled state"
         self.link_menu.entryconfigure(0, label="Copy original links" if multiple else "Copy original link")
-        self.link_menu.entryconfigure(2, label=toggle_label)
+        self.link_menu.entryconfigure(3, label=toggle_label)
         self.link_menu.entryconfigure(
-            4,
+            5,
             state="normal"
             if any(item.status in {QueueStatus.FAILED, QueueStatus.BLOCKED} for item in items)
             else "disabled",
             label="Retry links" if multiple else "Retry link",
         )
         self.link_menu.entryconfigure(
-            5,
+            6,
             state="normal"
             if any(item.status != QueueStatus.DOWNLOADING for item in items)
             else "disabled",
             label="Force re-download links" if multiple else "Force re-download",
         )
         self.link_menu.entryconfigure(
-            7,
+            8,
             state="normal"
             if any(item.status != QueueStatus.DOWNLOADING for item in items)
             else "disabled",
@@ -2651,6 +2655,17 @@ class DownloaderApp:
             self.root.clipboard_append("\n".join(links))
             self.status_text.set("Deepbrid links copied" if len(links) > 1 else "Deepbrid link copied")
             self._log("Deepbrid link(s) copied to clipboard.")
+
+    def _copy_filename(self) -> None:
+        filenames = [
+            item.filename or Path(item.url.split("?", 1)[0]).name or item.url
+            for item in self._selected_items()
+        ]
+        if filenames:
+            self.root.clipboard_clear()
+            self.root.clipboard_append("\n".join(filenames))
+            self.status_text.set("Filenames copied" if len(filenames) > 1 else "Filename copied")
+            self._log("Filename(s) copied to clipboard.")
 
     def _toggle_link_enabled(self) -> None:
         items = self._selected_items()

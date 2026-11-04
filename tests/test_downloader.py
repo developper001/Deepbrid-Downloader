@@ -535,6 +535,25 @@ class ApplicationShutdownTests(unittest.TestCase):
 
 
 class ValidationAndPresentationTests(unittest.TestCase):
+    def test_copy_filename_copies_selected_names_in_display_order(self) -> None:
+        app = object.__new__(DownloaderApp)
+        app._selected_items = Mock(
+            return_value=[
+                SimpleNamespace(filename="first file.txt", url="https://example.test/first"),
+                SimpleNamespace(filename=None, url="https://example.test/second%20file.bin?token=x"),
+            ]
+        )
+        app.root = Mock()
+        app.status_text = Mock()
+        app._log = Mock()
+
+        app._copy_filename()
+
+        app.root.clipboard_clear.assert_called_once_with()
+        app.root.clipboard_append.assert_called_once_with("first file.txt\nsecond%20file.bin")
+        app.status_text.set.assert_called_once_with("Filenames copied")
+        app._log.assert_called_once_with("Filename(s) copied to clipboard.")
+
     def test_action_dialog_logos_have_light_and_dark_high_resolution_assets(self) -> None:
         for logo_path in (
             FILE_HOST_LOGO_LIGHT_PATH,
