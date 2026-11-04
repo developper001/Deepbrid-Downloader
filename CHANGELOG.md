@@ -5,10 +5,16 @@ available independently of GitHub Releases.
 
 ## [Unreleased]
 
-- Show the same confirmation prompt for manual update checks as for startup checks.
+## [v0.6.0] - 2026-11-04
+
+- Use the same confirmation prompt for manual and startup update checks.
 - Add a queue context-menu action to copy filenames and show the app version in
   the startup console.
 - Replace the main-window About button with Settings.
+- Add an in-app changelog viewer backed by versioned release notes bundled with
+  the application.
+- Reorder or hide table columns from their header context menus; keep detailed
+  column configuration in Settings.
 
 ## [v0.5.1] - 2026-11-04
 
