@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .secure_store import SecureStorageError
 from .startup_manager import StartupManager
@@ -238,9 +238,59 @@ class SettingsDialog:
                 command=render_settings,
             ).pack(anchor="w", fill="x")
 
+        self._build_main_settings(add_setting, api_key_notice)
+        self._build_host_settings(add_setting)
+        self._build_appearance_settings(add_setting)
+        self._build_startup_settings(add_setting)
+        self._build_usenet_settings(add_setting)
+        self._build_logging_settings(add_setting)
+        self._build_column_settings(add_setting)
+
+        filter_var.trace_add("write", filter_settings)
+        filter_var.set(initial_filter)
+        if initial_filter:
+            query = initial_filter.strip().casefold()
+            matching_categories = [
+                category
+                for category in SETTINGS_CATEGORIES
+                if any(
+                    row_category == category and query in searchable_text
+                    for _row, row_category, searchable_text in settings_rows
+                )
+            ]
+            if matching_categories:
+                selected_category.set(matching_categories[0])
+        render_settings()
+        def focus_filter() -> None:
+            filter_entry.focus_set()
+            filter_entry.selection_range(0, "end")
+
+        self.dialog.after_idle(focus_filter)
+
+        footer = ttk.Frame(frame)
+        footer.grid(
+            row=3,
+            column=0,
+            sticky="ew",
+            pady=(10, 0),
+        )
+        ttk.Button(footer, text="About", command=app._show_readme).pack(side="left")
+        ttk.Button(
+            footer,
+            text="Reset all settings...",
+            command=self._confirm_reset_settings,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(footer, text="Close", command=self.dialog.destroy).pack(side="right")
+        self.dialog.bind("<Escape>", lambda _event: self.dialog.destroy())
+
+    def _build_main_settings(
+        self,
+        add_setting: Callable[..., None],
+        api_key_notice: str | None,
+    ) -> None:
         def build_api_key(controls: ttk.Frame) -> None:
             controls.columnconfigure(0, weight=1)
-            api_key_entry = ttk.Entry(controls, textvariable=app.api_key, show="*")
+            api_key_entry = ttk.Entry(controls, textvariable=self.app.api_key, show="*")
             api_key_entry.grid(row=0, column=0, sticky="ew")
 
             def toggle_visibility() -> None:
@@ -257,7 +307,7 @@ class SettingsDialog:
             ttk.Button(
                 controls,
                 text="Get API key",
-                command=app._open_api_key_dashboard,
+                command=self.app._open_api_key_dashboard,
             ).grid(row=0, column=2, padx=(8, 0))
             key_actions = ttk.Frame(controls)
             key_actions.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
@@ -265,7 +315,7 @@ class SettingsDialog:
             check_button = ttk.Button(
                 key_actions,
                 text="Check API key",
-                command=lambda: app._check_api_key(check_button, check_status),
+                command=lambda: self.app._check_api_key(check_button, check_status),
             )
             check_button.pack(side="left")
             check_status_label = ttk.Label(key_actions, textvariable=check_status)
@@ -286,7 +336,7 @@ class SettingsDialog:
 
         def build_download_folder(controls: ttk.Frame) -> None:
             controls.columnconfigure(0, weight=1)
-            ttk.Entry(controls, textvariable=app.output_dir_text, state="readonly").grid(
+            ttk.Entry(controls, textvariable=self.app.output_dir_text, state="readonly").grid(
                 row=0,
                 column=0,
                 sticky="ew",
@@ -294,17 +344,8 @@ class SettingsDialog:
             ttk.Button(
                 controls,
                 text="Browse...",
-                command=app._choose_output_folder,
+                command=self.app._choose_output_folder,
             ).grid(row=0, column=1, padx=(8, 0))
-
-        dark_mode_setting = tk.BooleanVar(master=self.dialog, value=app.dark_theme)
-
-        def update_theme() -> None:
-            app.dark_theme = dark_mode_setting.get()
-            app._persist_theme()
-            app._apply_theme()
-            self.dialog.configure(background=app.theme_colors["background"])
-            self.canvas.configure(background=app.theme_colors["background"])
 
         add_setting(
             "API key",
@@ -319,6 +360,8 @@ class SettingsDialog:
             category="Main",
         )
 
+
+    def _build_host_settings(self, add_setting: Callable[..., None]) -> None:
         def build_host_status(controls: ttk.Frame) -> None:
             ttk.Button(
                 controls,
@@ -342,7 +385,7 @@ class SettingsDialog:
             ttk.Button(
                 controls,
                 text="Configure Host Status columns",
-                command=lambda: app._show_host_column_settings(self.dialog),
+                command=lambda: self.app._show_host_column_settings(self.dialog),
             ).pack(anchor="w")
 
         add_setting(
@@ -351,6 +394,17 @@ class SettingsDialog:
             build_host_columns,
             category="Hosts",
         )
+
+
+    def _build_appearance_settings(self, add_setting: Callable[..., None]) -> None:
+        dark_mode_setting = tk.BooleanVar(master=self.dialog, value=self.app.dark_theme)
+
+        def update_theme() -> None:
+            self.app.dark_theme = dark_mode_setting.get()
+            self.app._persist_theme()
+            self.app._apply_theme()
+            self.dialog.configure(background=self.app.theme_colors["background"])
+            self.canvas.configure(background=self.app.theme_colors["background"])
 
         def build_appearance(controls: ttk.Frame) -> None:
             ttk.Checkbutton(
@@ -367,10 +421,11 @@ class SettingsDialog:
             category="Appearance",
         )
 
+    def _build_startup_settings(self, add_setting: Callable[..., None]) -> None:
         startup_status = tk.StringVar(master=self.dialog)
 
         def build_startup_login(controls: ttk.Frame) -> None:
-            startup_manager = app.startup_manager
+            startup_manager = self.app.startup_manager
             if startup_manager.platform_name == "darwin":
                 button_text = "Open Login Items settings"
             else:
@@ -382,7 +437,7 @@ class SettingsDialog:
             startup_button = ttk.Button(
                 controls,
                 text=button_text,
-                command=lambda: app._configure_startup(startup_button, startup_status),
+                command=lambda: self.app._configure_startup(startup_button, startup_status),
             )
             startup_button.pack(side="left")
             ttk.Label(controls, textvariable=startup_status).pack(
@@ -401,8 +456,8 @@ class SettingsDialog:
             ttk.Checkbutton(
                 controls,
                 text="Start queued downloads when the app opens",
-                variable=app.auto_start_downloads,
-                command=app._persist_auto_start_downloads,
+                variable=self.app.auto_start_downloads,
+                command=self.app._persist_auto_start_downloads,
             ).pack(anchor="w")
 
         add_setting(
@@ -416,8 +471,8 @@ class SettingsDialog:
             ttk.Checkbutton(
                 controls,
                 text="Check for updates when the app opens",
-                variable=app.auto_check_updates,
-                command=app._persist_auto_check_updates,
+                variable=self.app.auto_check_updates,
+                command=self.app._persist_auto_check_updates,
             ).pack(anchor="w")
 
         add_setting(
@@ -427,12 +482,13 @@ class SettingsDialog:
             category="Startup & Updates",
         )
 
+    def _build_usenet_settings(self, add_setting: Callable[..., None]) -> None:
         cache_duration = tk.StringVar(
             master=self.dialog,
             value=str(
                 valid_cache_duration_hours(
                     getattr(
-                        app,
+                        self.app,
                         "usenet_finder_cache_duration_hours",
                         DEFAULT_CACHE_DURATION_HOURS,
                     )
@@ -443,18 +499,18 @@ class SettingsDialog:
 
         def clear_finder_cache() -> None:
             try:
-                app._clear_usenet_finder_cache()
+                self.app._clear_usenet_finder_cache()
             except (OSError, SecureStorageError, sqlite3.Error) as error:
-                app._log(f"Could not clear Usenet Finder cache: {error}")
+                self.app._log(f"Could not clear Usenet Finder cache: {error}")
                 cache_status.set(f"Could not clear cache: {error}")
                 return
-            app._log("Cleared Usenet Finder search and resolved-link caches.")
+            self.app._log("Cleared Usenet Finder search and resolved-link caches.")
             cache_status.set("Cache cleared.")
 
         def save_cache_duration(*_args: object) -> None:
             try:
                 hours = valid_cache_duration_hours(cache_duration.get())
-                app._set_usenet_finder_cache_duration(hours)
+                self.app._set_usenet_finder_cache_duration(hours)
             except (ValueError, OSError, sqlite3.Error) as error:
                 cache_status.set(str(error))
                 return
@@ -502,18 +558,18 @@ class SettingsDialog:
 
         hide_auxiliary_files = tk.BooleanVar(
             master=self.dialog,
-            value=app.usenet_finder_hide_auxiliary_files,
+            value=self.app.usenet_finder_hide_auxiliary_files,
         )
         auxiliary_files_status = tk.StringVar(master=self.dialog)
 
         def save_auxiliary_file_filter() -> None:
             enabled = hide_auxiliary_files.get()
             try:
-                app._set_usenet_finder_hide_auxiliary_files(enabled)
+                self.app._set_usenet_finder_hide_auxiliary_files(enabled)
             except (OSError, SecureStorageError, sqlite3.Error) as error:
-                hide_auxiliary_files.set(app.usenet_finder_hide_auxiliary_files)
+                hide_auxiliary_files.set(self.app.usenet_finder_hide_auxiliary_files)
                 auxiliary_files_status.set(f"Could not save setting: {error}")
-                app._log(f"Could not save Usenet resolved-file filter setting: {error}")
+                self.app._log(f"Could not save Usenet resolved-file filter setting: {error}")
                 return
             auxiliary_files_status.set("Saved.")
 
@@ -540,9 +596,9 @@ class SettingsDialog:
 
         def clear_finder_history() -> None:
             try:
-                app._clear_usenet_finder_search_history()
+                self.app._clear_usenet_finder_search_history()
             except (OSError, SecureStorageError, sqlite3.Error) as error:
-                app._log(f"Could not clear Usenet Finder search history: {error}")
+                self.app._log(f"Could not clear Usenet Finder search history: {error}")
                 history_status.set(f"Could not clear search history: {error}")
                 return
             history_status.set("Search history cleared.")
@@ -571,7 +627,7 @@ class SettingsDialog:
             test_button = ttk.Button(
                 controls,
                 text="Test browser connection",
-                command=lambda: app._test_usenet_browser_connection(
+                command=lambda: self.app._test_usenet_browser_connection(
                     browser_test_status,
                     test_button,
                 ),
@@ -591,20 +647,20 @@ class SettingsDialog:
 
         auto_open_usenet_browser = tk.BooleanVar(
             master=self.dialog,
-            value=app.usenet_auto_open_browser_for_link_renewal,
+            value=self.app.usenet_auto_open_browser_for_link_renewal,
         )
         auto_open_usenet_browser_status = tk.StringVar(master=self.dialog)
 
         def save_auto_open_usenet_browser() -> None:
             enabled = auto_open_usenet_browser.get()
             try:
-                app._set_usenet_auto_open_browser_for_link_renewal(enabled)
+                self.app._set_usenet_auto_open_browser_for_link_renewal(enabled)
             except (OSError, sqlite3.Error) as error:
                 auto_open_usenet_browser.set(
-                    app.usenet_auto_open_browser_for_link_renewal
+                    self.app.usenet_auto_open_browser_for_link_renewal
                 )
                 auto_open_usenet_browser_status.set(f"Could not save setting: {error}")
-                app._log(f"Could not save automatic Usenet browser setting: {error}")
+                self.app._log(f"Could not save automatic Usenet browser setting: {error}")
                 return
             auto_open_usenet_browser_status.set("Saved.")
 
@@ -638,22 +694,23 @@ class SettingsDialog:
             category="Usenet Finder",
         )
 
+    def _build_logging_settings(self, add_setting: Callable[..., None]) -> None:
         output_log_enabled = tk.BooleanVar(
             master=self.dialog,
-            value=app.append_output_log_enabled,
+            value=self.app.append_output_log_enabled,
         )
         output_log_path = tk.StringVar(
             master=self.dialog,
-            value=str(app.append_output_log_path.get()),
+            value=str(self.app.append_output_log_path.get()),
         )
         output_log_status = tk.StringVar(master=self.dialog)
 
         def save_output_log() -> None:
             try:
-                app._set_append_output_log(output_log_enabled.get(), output_log_path.get())
+                self.app._set_append_output_log(output_log_enabled.get(), output_log_path.get())
             except (OSError, ValueError, sqlite3.Error) as error:
-                output_log_enabled.set(app.append_output_log_enabled)
-                output_log_path.set(str(app.append_output_log_path.get()))
+                output_log_enabled.set(self.app.append_output_log_enabled)
+                output_log_path.set(str(self.app.append_output_log_path.get()))
                 output_log_status.set(f"Could not save output log setting: {error}")
                 return
             output_log_status.set(
@@ -708,6 +765,8 @@ class SettingsDialog:
             category="Logging",
         )
 
+
+    def _build_column_settings(self, add_setting: Callable[..., None]) -> None:
         def build_queue_columns(controls: ttk.Frame) -> None:
             ttk.Label(
                 controls,
@@ -717,7 +776,7 @@ class SettingsDialog:
             ttk.Button(
                 controls,
                 text="Configure download queue columns",
-                command=app._show_columns_dialog,
+                command=self.app._show_columns_dialog,
             ).pack(anchor="w")
 
         add_setting(
@@ -736,7 +795,7 @@ class SettingsDialog:
             ttk.Button(
                 controls,
                 text="Configure Usenet search-result columns",
-                command=lambda: app._show_usenet_column_settings("search", self.dialog),
+                command=lambda: self.app._show_usenet_column_settings("search", self.dialog),
             ).pack(anchor="w")
 
         add_setting(
@@ -755,7 +814,7 @@ class SettingsDialog:
             ttk.Button(
                 controls,
                 text="Configure resolved-file columns",
-                command=lambda: app._show_usenet_column_settings("files", self.dialog),
+                command=lambda: self.app._show_usenet_column_settings("files", self.dialog),
             ).pack(anchor="w")
 
         add_setting(
@@ -765,42 +824,7 @@ class SettingsDialog:
             category="Usenet Finder",
         )
 
-        filter_var.trace_add("write", filter_settings)
-        filter_var.set(initial_filter)
-        if initial_filter:
-            query = initial_filter.strip().casefold()
-            matching_categories = [
-                category
-                for category in SETTINGS_CATEGORIES
-                if any(
-                    row_category == category and query in searchable_text
-                    for _row, row_category, searchable_text in settings_rows
-                )
-            ]
-            if matching_categories:
-                selected_category.set(matching_categories[0])
-        render_settings()
-        def focus_filter() -> None:
-            filter_entry.focus_set()
-            filter_entry.selection_range(0, "end")
 
-        self.dialog.after_idle(focus_filter)
-
-        footer = ttk.Frame(frame)
-        footer.grid(
-            row=3,
-            column=0,
-            sticky="ew",
-            pady=(10, 0),
-        )
-        ttk.Button(footer, text="About", command=app._show_readme).pack(side="left")
-        ttk.Button(
-            footer,
-            text="Reset all settings...",
-            command=self._confirm_reset_settings,
-        ).pack(side="left", padx=(8, 0))
-        ttk.Button(footer, text="Close", command=self.dialog.destroy).pack(side="right")
-        self.dialog.bind("<Escape>", lambda _event: self.dialog.destroy())
 
     def _confirm_reset_settings(self) -> None:
         confirmed = messagebox.askyesno(
