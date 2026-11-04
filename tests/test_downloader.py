@@ -94,7 +94,6 @@ from src.startup_manager import (
 )
 from src.update_manager import (
     UpdateInstallError,
-    _replace_with_retry,
     apply_update_from_args,
     download_update_asset,
 )
@@ -1095,32 +1094,7 @@ class ValidationAndPresentationTests(unittest.TestCase):
                     download_update_asset(bad_asset, Path(temporary_directory), lambda *_: None)
             self.assertEqual(list(Path(temporary_directory).glob("*.download")), [])
 
-    def test_update_replace_retries_permission_error(self) -> None:
-        source = Path("staged-update")
-        destination = Path("application")
-        with (
-            patch("src.update_manager.os.replace", side_effect=[PermissionError, None]) as replace,
-            patch("src.update_manager.time.sleep") as sleep,
-        ):
-            _replace_with_retry(source, destination, attempts=2, retry_delay=0.1)
-
-        self.assertEqual(replace.call_count, 2)
-        sleep.assert_called_once_with(0.1)
-
-    def test_update_replace_raises_after_retry_limit(self) -> None:
-        source = Path("staged-update")
-        destination = Path("application")
-        with (
-            patch("src.update_manager.os.replace", side_effect=PermissionError("denied")) as replace,
-            patch("src.update_manager.time.sleep") as sleep,
-            self.assertRaisesRegex(PermissionError, "denied"),
-        ):
-            _replace_with_retry(source, destination, attempts=3, retry_delay=0.1)
-
-        self.assertEqual(replace.call_count, 3)
-        self.assertEqual(sleep.call_count, 2)
-
-    def test_update_install_does_not_replace_original_when_first_replace_fails(self) -> None:
+    def test_update_install_restores_original_when_replacement_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
             target_path = directory / "DeepbridDownloader.exe"
@@ -1135,26 +1109,29 @@ class ValidationAndPresentationTests(unittest.TestCase):
                 "123",
                 str(helper_path),
             ]
+            real_replace = os.replace
+            replace_calls = 0
+
+            def fail_first_replace(source: str | os.PathLike, destination: str | os.PathLike) -> None:
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 1:
+                    raise PermissionError("access denied")
+                real_replace(source, destination)
 
             with (
                 patch("src.update_manager.sys.executable", str(helper_path)),
                 patch("src.update_manager._wait_for_process"),
-                patch(
-                    "src.update_manager.os.replace",
-                    side_effect=PermissionError("access denied"),
-                ) as replace,
-                patch("src.update_manager.time.sleep"),
+                patch("src.update_manager.os.replace", side_effect=fail_first_replace) as replace,
                 patch("src.update_manager.subprocess.Popen"),
                 self.assertRaisesRegex(
                     UpdateInstallError,
                     "Could not install the update: access denied",
-                ) as error,
+                ),
             ):
                 apply_update_from_args(arguments)
 
-            self.assertEqual(replace.call_count, 12 if os.name == "nt" else 1)
-            if os.name == "nt":
-                self.assertIn("Windows denied access", str(error.exception))
+            self.assertEqual(replace.call_count, 2)
             self.assertEqual(target_path.read_bytes(), b"old application")
             self.assertEqual(staged_path.read_bytes(), b"new application")
             self.assertEqual(list(directory.glob(".deepbrid-old-*")), [])

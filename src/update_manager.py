@@ -149,25 +149,6 @@ def _wait_for_process(process_id: int, timeout: float = 120) -> None:
         time.sleep(0.2)
 
 
-def _replace_with_retry(
-    source: Path,
-    destination: Path,
-    *,
-    attempts: int = 1,
-    retry_delay: float = 0.25,
-) -> None:
-    if attempts < 1:
-        raise ValueError("At least one replace attempt is required.")
-    for attempt in range(attempts):
-        try:
-            os.replace(source, destination)
-            return
-        except PermissionError:
-            if attempt + 1 == attempts:
-                raise
-            time.sleep(retry_delay)
-
-
 def apply_update_from_args(arguments: list[str]) -> int:
     if len(arguments) != 5:
         raise UpdateInstallError("Invalid update-installer arguments.")
@@ -197,14 +178,8 @@ def apply_update_from_args(arguments: list[str]) -> int:
     backup_path = target_path.parent / f".deepbrid-old-{uuid.uuid4().hex}"
     original_mode = stat.S_IMODE(target_path.stat().st_mode)
     shutil.copy2(target_path, backup_path)
-    target_replaced = False
     try:
-        _replace_with_retry(
-            staged_path,
-            target_path,
-            attempts=12 if os.name == "nt" else 1,
-        )
-        target_replaced = True
+        os.replace(staged_path, target_path)
         if os.name != "nt":
             target_path.chmod(original_mode | 0o111)
         command = [str(target_path), "--cleanup-update-helper", str(helper_path)]
@@ -224,44 +199,12 @@ def apply_update_from_args(arguments: list[str]) -> int:
             ),
         )
     except Exception as error:
-        rollback_error = None
-        backup_cleanup_error = None
-        if target_replaced:
-            try:
-                _replace_with_retry(
-                    backup_path,
-                    target_path,
-                    attempts=12 if os.name == "nt" else 1,
-                )
-            except OSError as restore_error:
-                rollback_error = restore_error
-        else:
-            try:
-                backup_path.unlink(missing_ok=True)
-            except OSError as cleanup_error:
-                backup_cleanup_error = cleanup_error
+        os.replace(backup_path, target_path)
         try:
             subprocess.Popen([str(target_path)], cwd=target_path.parent)
         except OSError:
             pass
-        details = f"Could not install the update: {error}"
-        if rollback_error is not None:
-            details += (
-                f" The previous application could not be restored: {rollback_error}. "
-                f"A backup remains at {backup_path}."
-            )
-        elif backup_cleanup_error is not None:
-            details += (
-                f" The application was not replaced, but the temporary backup could not "
-                f"be removed: {backup_cleanup_error}. It remains at {backup_path}."
-            )
-        if isinstance(error, PermissionError) and os.name == "nt":
-            details += (
-                " Windows denied access after retrying. Close other Deepbrid Downloader "
-                "instances, then check that your account can modify the application folder. "
-                "If the folder is protected, move the app to a user-writable folder and retry."
-            )
-        raise UpdateInstallError(details) from error
+        raise UpdateInstallError(f"Could not install the update: {error}") from error
     backup_path.unlink(missing_ok=True)
     if os.name != "nt":
         helper_path.unlink(missing_ok=True)
