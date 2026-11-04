@@ -52,6 +52,7 @@ class QueueRunner:
         self.source_workflows = {
             QueueSource.PREMIUM_LINK: PremiumLinkWorkflow(context),
             QueueSource.USENET: UsenetWorkflow(context),
+            QueueSource.NZB_UPLOAD: UsenetWorkflow(context),
             QueueSource.TORRENT_CLOUD: TorrentWorkflow(context),
         }
 

@@ -118,7 +118,9 @@ class UsenetWorkflow:
     def __init__(self, context: QueueWorkflowContext):
         self.context = context
 
-    def starting_message(self, _item: QueueItem) -> str:
+    def starting_message(self, item: QueueItem) -> str:
+        if item.source == QueueSource.NZB_UPLOAD:
+            return "Starting NZB file download..."
         return "Starting direct Usenet download..."
 
     def resolve(
@@ -127,7 +129,12 @@ class UsenetWorkflow:
         item: QueueItem,
         _cancel_event: threading.Event,
     ) -> SourceResolution:
-        self.context.log(f"Using direct Usenet file URL for queue item {item.id}.")
+        source_name = (
+            "NZB upload"
+            if item.source == QueueSource.NZB_UPLOAD
+            else "direct Usenet"
+        )
+        self.context.log(f"Using {source_name} file URL for queue item {item.id}.")
         return SourceResolution(item.deepbrid_link or item.url, item.filename)
 
 

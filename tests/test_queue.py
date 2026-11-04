@@ -255,6 +255,49 @@ class QueueStoreTests(unittest.TestCase):
 
 
 class QueueRunnerTests(unittest.TestCase):
+    def test_runner_downloads_nzb_links_directly_without_premium_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_dir = Path(temporary_directory)
+            store = QueueStore(output_dir / "queue.sqlite3")
+            store.add(
+                "https://usenet.example/nzb/file",
+                filename="episode.mkv",
+                source=QueueSource.NZB_UPLOAD,
+            )
+            events: queue.Queue = queue.Queue()
+            requested_urls: list[str] = []
+
+            class FakeClient:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def validate_api_key(self) -> None:
+                    pass
+
+                def download(self, url, filename, directory, _should_stop, _progress, **kwargs):
+                    requested_urls.append(url)
+                    (directory / filename).write_bytes(b"file")
+                    kwargs["on_size_verified"](True)
+                    return True
+
+            with patch("src.queue_runner.DeepbridClient", FakeClient):
+                QueueRunner(
+                    store,
+                    "test-key",
+                    output_dir,
+                    events,
+                    threading.Event(),
+                    {},
+                    lambda _message: None,
+                    refresh_usenet_link=Mock(
+                        side_effect=AssertionError("NZB links are not Finder links")
+                    ),
+                ).run()
+
+            item = store.list_items()[0]
+            self.assertEqual(requested_urls, ["https://usenet.example/nzb/file"])
+            self.assertEqual(item.status, QueueStatus.COMPLETED)
+
     def test_runner_renews_expired_usenet_session_and_retries(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory)
@@ -892,6 +935,30 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
             assert item is not None
             self.assertEqual(item.host_message, "Usenet Finder")
             self.assertEqual(item.host_status, "up")
+            app._refresh_rows.assert_called_once()
+            app._save_visible_queue_order.assert_called_once()
+
+    def test_nzb_upload_links_use_the_usenet_queue_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            app = DownloaderApp.__new__(DownloaderApp)
+            app.store = QueueStore(Path(temporary_directory) / "queue.sqlite3")
+            app._refresh_rows = Mock()
+            app._save_visible_queue_order = Mock()
+            app._log = Mock()
+
+            counts = app.add_usenet_links(
+                [("https://usenet.example/file", "episode.mkv", 2048)],
+                source_label="NZB upload",
+                source=QueueSource.NZB_UPLOAD,
+            )
+
+            self.assertEqual(counts, (1, 0, 0))
+            item = app.store.next_item()
+            assert item is not None
+            self.assertEqual(item.source, QueueSource.NZB_UPLOAD)
+            self.assertEqual(item.host_message, "NZB upload")
+            self.assertEqual(item.filename, "episode.mkv")
+            self.assertEqual(item.total, 2048)
             app._refresh_rows.assert_called_once()
             app._save_visible_queue_order.assert_called_once()
 

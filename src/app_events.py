@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import StringVar, Toplevel, ttk
-from typing import TypeAlias
+from typing import Callable, TypeAlias
 
 from .app_info import LatestRelease, ReleaseAsset
+from .remote_jobs import UsenetUpload
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,13 @@ class HostsErrorEvent:
 
 
 @dataclass(frozen=True)
+class UsenetUploadFinishedEvent:
+    on_finished: Callable[[UsenetUpload | None, str | None], None]
+    upload: UsenetUpload | None
+    error: str | None
+
+
+@dataclass(frozen=True)
 class StartupUpdateEvent:
     release: LatestRelease
     asset: ReleaseAsset | None
@@ -125,6 +133,7 @@ BackgroundEvent: TypeAlias = (
     | StartupApiKeyProblemEvent
     | HostsLoadedEvent
     | HostsErrorEvent
+    | UsenetUploadFinishedEvent
     | StartupUpdateEvent
     | UpdateCheckEvent
     | UpdateProgressEvent

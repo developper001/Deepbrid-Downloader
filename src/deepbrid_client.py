@@ -13,11 +13,12 @@ from email.message import Message
 from pathlib import Path
 from typing import Callable
 
-from .remote_jobs import RemoteJob, RemoteJobFile
+from .remote_jobs import RemoteJob, RemoteJobFile, UsenetUpload, UsenetUploadFile
 
 
 API_BASE = "https://www.deepbrid.com/api/v1"
 APP_USER_AGENT = "DeepBridDownloader/0.2"
+MAX_NZB_FILE_SIZE = 100 * 1024 * 1024
 
 
 class DeepbridError(Exception):
@@ -226,6 +227,146 @@ class DeepbridClient:
             name=filename,
             status="queued",
         )
+
+    def upload_nzb_file(self, nzb_file: bytes, filename: str) -> UsenetUpload:
+        if not filename.lower().endswith(".nzb"):
+            raise ValueError("NZB files must have a .nzb extension.")
+        if not nzb_file:
+            raise ValueError("NZB files cannot be empty.")
+        if len(nzb_file) > MAX_NZB_FILE_SIZE:
+            raise ValueError("NZB files must be no larger than 100 MiB.")
+        boundary = f"DeepbridDownloader-{uuid.uuid4().hex}"
+        safe_upload_name = filename.replace('"', "_").replace("\r", "").replace("\n", "")
+        body = b"".join(
+            (
+                f"--{boundary}\r\n".encode("ascii"),
+                (
+                    'Content-Disposition: form-data; name="nzb_file"; '
+                    f'filename="{safe_upload_name}"\r\n'
+                ).encode("utf-8"),
+                b"Content-Type: application/x-nzb\r\n\r\n",
+                nzb_file,
+                b"\r\n",
+                f"--{boundary}--\r\n".encode("ascii"),
+            )
+        )
+        request = urllib.request.Request(
+            f"{API_BASE}/usenet/add",
+            data=body,
+            headers={
+                "Authorization": "******",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Accept": "application/json",
+                "User-Agent": APP_USER_AGENT,
+            },
+            method="POST",
+        )
+        payload = self._upload_json(request, "NZB upload")
+        return self._parse_usenet_upload(payload, filename)
+
+    def upload_nzb_url(self, nzb_url: str) -> UsenetUpload:
+        parsed_url = urllib.parse.urlsplit(nzb_url)
+        if (
+            parsed_url.scheme.lower() not in {"http", "https"}
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+        ):
+            raise ValueError("Enter a valid HTTP or HTTPS NZB URL.")
+        payload = urllib.parse.urlencode({"nzb_url": nzb_url}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{API_BASE}/usenet/add",
+            data=payload,
+            headers={
+                "Authorization": "******",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+                "User-Agent": APP_USER_AGENT,
+            },
+            method="POST",
+        )
+        response = self._upload_json(request, "NZB URL upload")
+        return self._parse_usenet_upload(response, nzb_url)
+
+    @staticmethod
+    def _parse_usenet_upload(
+        payload: dict[str, object],
+        fallback_title: str,
+    ) -> UsenetUpload:
+        raw_files = payload.get("files")
+        if not isinstance(raw_files, list):
+            raise DeepbridError("Deepbrid returned an NZB response without a file list.")
+        files: list[UsenetUploadFile] = []
+        for item in raw_files:
+            if not isinstance(item, dict):
+                raise DeepbridError("Deepbrid returned a malformed NZB file entry.")
+            name = item.get("filename") or item.get("name")
+            link = item.get("download_url") or item.get("link") or ""
+            size = item.get("filesize", item.get("size"))
+            unreachable = item.get("unreachable")
+            if not isinstance(name, str) or not name:
+                raise DeepbridError("Deepbrid returned an NZB file without a filename.")
+            if not isinstance(link, str):
+                link = ""
+            if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+                size = None
+            if not isinstance(unreachable, str) or not unreachable:
+                unreachable = None
+            files.append(UsenetUploadFile(name, link, size, unreachable))
+        if not files:
+            raise DeepbridError("Deepbrid processed the NZB but found no files.")
+        raw_id = payload.get("id")
+        upload_id = str(raw_id) if isinstance(raw_id, (int, str)) and not isinstance(raw_id, bool) else None
+        title = payload.get("title") or fallback_title
+        return UsenetUpload(
+            upload_id,
+            title if isinstance(title, str) else fallback_title,
+            tuple(files),
+        )
+
+    def _upload_json(
+        self,
+        request: urllib.request.Request,
+        operation: str,
+    ) -> dict[str, object]:
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                body = response.read().decode("utf-8", errors="replace")
+                status_code = response.status
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            error.close()
+            body = body.replace(self.api_key, "<REDACTED>")
+            raise DeepbridError(
+                f"Deepbrid {operation} returned HTTP {error.code}: {body[:600]}",
+                retryable=error.code not in (400, 401, 403, 404),
+                status_code=error.code,
+            ) from error
+        except (urllib.error.URLError, TimeoutError) as error:
+            raise DeepbridError(f"Could not complete {operation}: {error}") from error
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as error:
+            raise DeepbridError(
+                f"Deepbrid returned invalid JSON for {operation} (HTTP {status_code})."
+            ) from error
+        if not isinstance(payload, dict):
+            raise DeepbridError(f"Deepbrid returned an unexpected {operation} response.")
+        error_code = payload.get("error", 0)
+        if error_code not in (0, "0"):
+            message = payload.get("message")
+            raise DeepbridError(
+                str(message) if isinstance(message, str) and message else
+                f"Deepbrid {operation} failed with error {error_code}.",
+                retryable=error_code not in (10, "10"),
+                status_code=(
+                    int(error_code)
+                    if isinstance(error_code, int) or
+                    isinstance(error_code, str) and error_code.isdigit()
+                    else None
+                ),
+            )
+        return payload
 
     def get_job(self, job_id: str) -> RemoteJob:
         query = urllib.parse.urlencode({"id": job_id})

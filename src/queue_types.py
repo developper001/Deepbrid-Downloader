@@ -6,6 +6,7 @@ from enum import Enum
 class QueueSource(str, Enum):
     PREMIUM_LINK = "premium_link"
     USENET = "usenet"
+    NZB_UPLOAD = "nzb_upload"
     TORRENT_CLOUD = "torrent_cloud"
 
 

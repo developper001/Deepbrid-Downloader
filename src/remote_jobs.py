@@ -22,6 +22,21 @@ class RemoteJob:
     files: tuple[RemoteJobFile, ...] = ()
 
 
+@dataclass(frozen=True)
+class UsenetUploadFile:
+    name: str
+    download_url: str
+    size: int | None = None
+    unreachable: str | None = None
+
+
+@dataclass(frozen=True)
+class UsenetUpload:
+    id: str | None
+    title: str
+    files: tuple[UsenetUploadFile, ...]
+
+
 class RemoteJobProvider(Protocol):
     def submit_magnet(self, magnet: str) -> RemoteJob: ...
     def submit_torrent_file(self, torrent_file: bytes, filename: str) -> RemoteJob: ...

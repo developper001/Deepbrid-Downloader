@@ -11,6 +11,7 @@ from tests._test_support import (
     unittest,
     urllib,
 )
+from src.remote_jobs import UsenetUpload, UsenetUploadFile
 
 class DeepbridDiagnosticsTests(unittest.TestCase):
     def test_torrent_upload_uses_authenticated_multipart_api(self) -> None:
@@ -56,6 +57,83 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
         self.assertEqual(job.progress, 100.0)
         self.assertEqual(job.seeders, 2)
         self.assertEqual(job.files[0].download_url, "https://deepbrid.example/mytorrents?file=secret")
+
+    def test_nzb_file_upload_uses_authenticated_multipart_api(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            b'{"error":0,"id":1024,"files":[{"filename":"movie.mkv",'
+            b'"filesize":1234,"download_url":"https://usenet.example/file/movie.mkv"}]}',
+        )
+        with patch(
+            "src.deepbrid_client.urllib.request.urlopen",
+            return_value=response,
+        ) as open_url:
+            upload = DeepbridClient("test-key").upload_nzb_file(b"<nzb/>", "test.nzb")
+
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/usenet/add")
+        self.assertEqual(request.get_header("Authorization"), "******")
+        self.assertIn("multipart/form-data", request.get_header("Content-type"))
+        self.assertIn(b'name="nzb_file"; filename="test.nzb"', request.data)
+        self.assertIn(b"<nzb/>", request.data)
+        self.assertEqual(
+            upload,
+            UsenetUpload(
+                "1024",
+                "test.nzb",
+                (
+                    UsenetUploadFile(
+                        "movie.mkv",
+                        "https://usenet.example/file/movie.mkv",
+                        1234,
+                    ),
+                ),
+            ),
+        )
+
+    def test_nzb_url_upload_is_form_encoded_and_marks_unreachable_files(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            b'{"error":0,"id":1025,"title":"release",'
+            b'"files":[{"name":"movie.mkv","size":1234,"link":"https://usenet.example/file",'
+            b'"unreachable":null},{"name":"missing.mkv","size":42,"link":"",'
+            b'"unreachable":"missing_volume"}]}',
+        )
+        with patch(
+            "src.deepbrid_client.urllib.request.urlopen",
+            return_value=response,
+        ) as open_url:
+            upload = DeepbridClient("test-key").upload_nzb_url(
+                "https://files.example/release.nzb?token=a&part=1"
+            )
+
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/usenet/add")
+        self.assertEqual(request.get_header("Content-type"), "application/x-www-form-urlencoded")
+        self.assertIn(
+            b"nzb_url=https%3A%2F%2Ffiles.example%2Frelease.nzb%3Ftoken%3Da%26part%3D1",
+            request.data,
+        )
+        self.assertEqual(upload.title, "release")
+        self.assertEqual(upload.files[0].size, 1234)
+        self.assertEqual(upload.files[1].download_url, "")
+        self.assertEqual(upload.files[1].unreachable, "missing_volume")
+
+    def test_nzb_url_rejects_non_http_urls(self) -> None:
+        with self.assertRaisesRegex(ValueError, "valid HTTP or HTTPS"):
+            DeepbridClient("test-key").upload_nzb_url("file:///private/release.nzb")
+
+    def test_nzb_upload_reports_api_errors(self) -> None:
+        response = FakeResponse(
+            200,
+            {},
+            b'{"error":12,"message":"Could not process NZB"}',
+        )
+        with patch("src.deepbrid_client.urllib.request.urlopen", return_value=response):
+            with self.assertRaisesRegex(DeepbridError, "Could not process NZB"):
+                DeepbridClient("test-key").upload_nzb_url("https://files.example/release.nzb")
 
     def test_unsupported_filehost_response_is_not_retryable(self) -> None:
         response = FakeResponse(

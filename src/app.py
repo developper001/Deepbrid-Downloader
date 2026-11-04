@@ -54,6 +54,7 @@ from .app_events import (
     UpdateDownloadedEvent,
     UpdateDownloadFailedEvent,
     UpdateProgressEvent,
+    UsenetUploadFinishedEvent,
     WorkerDoneEvent,
 )
 from .deepbrid_client import DeepbridClient, DeepbridError, safe_filename
@@ -74,6 +75,7 @@ from .queue_table import (
     sort_queue_item,
 )
 from .queue_types import QueueSource, QueueStatus
+from .nzb_upload_dialog import NzbUploadDialog
 from .settings_dialog import SettingsDialog
 from .usenet_finder_dialog import (
     HOST_COLUMNS,
@@ -469,6 +471,12 @@ class DownloaderApp:
             command=self._show_add_torrent_dialog,
         )
         self.add_torrent_button.pack(side="right", padx=(0, 8))
+        self.add_nzb_button = ttk.Button(
+            header_actions,
+            text="Add NZB",
+            command=self._show_add_nzb_dialog,
+        )
+        self.add_nzb_button.pack(side="right", padx=(0, 8))
         self.add_links_button = ttk.Button(
             header_actions,
             text="Add file-host links",
@@ -894,6 +902,9 @@ class DownloaderApp:
             parent.destroy()
         return True
 
+    def _show_add_nzb_dialog(self) -> None:
+        NzbUploadDialog(self)
+
     def _show_add_torrent_dialog(self) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title("Add torrents")
@@ -1139,7 +1150,12 @@ class DownloaderApp:
             | tuple[str, str, int | None]
             | tuple[str, str, int | None, str, int]
         ],
+        *,
+        source_label: str = "Usenet Finder",
+        source: QueueSource = QueueSource.USENET,
     ) -> tuple[int, int, int]:
+        if source not in {QueueSource.USENET, QueueSource.NZB_UPLOAD}:
+            raise ValueError(f"Unsupported Usenet link source: {source!r}")
         added_count = 0
         duplicate_count = 0
         invalid_count = 0
@@ -1155,10 +1171,10 @@ class DownloaderApp:
             if self.store.add(
                 link,
                 host_status="up",
-                host_message="Usenet Finder",
+                host_message=source_label,
                 filename=safe_name,
                 total=total,
-                source=QueueSource.USENET,
+                source=source,
                 finder_result_token=finder_result_token,
                 finder_file_index=finder_file_index,
             ):
@@ -1168,9 +1184,14 @@ class DownloaderApp:
         if added_count:
             self._refresh_rows()
             self._save_visible_queue_order()
+        item_description = (
+            "Usenet Finder link(s)"
+            if source_label == "Usenet Finder"
+            else f"{source_label} file link(s)"
+        )
         self._log(
-            f"Added {added_count} Usenet Finder link(s) to the queue; "
-            f"skipped {duplicate_count} duplicate(s) and {invalid_count} invalid link(s)."
+            f"Added {added_count} {item_description} to the queue; skipped "
+            f"{duplicate_count} duplicate(s) and {invalid_count} invalid link(s)."
         )
         return added_count, duplicate_count, invalid_count
 
@@ -3384,6 +3405,8 @@ class DownloaderApp:
                         refresh_error=event.message,
                         status_code=event.status_code,
                     )
+            elif isinstance(event, UsenetUploadFinishedEvent):
+                event.on_finished(event.upload, event.error)
             elif isinstance(event, LogEvent):
                 if self.append_output_log_enabled:
                     try:
