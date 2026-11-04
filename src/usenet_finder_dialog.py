@@ -23,6 +23,7 @@ from .usenet_finder import (
 )
 from .usenet_browser import UsenetBrowserSession
 from .secure_store import SecureStorageError, SecureStore
+from .table_column_menu import show_column_context_menu
 from .usenet_finder_state import UsenetFinderState, UsenetFinderStateError
 from .column_widths import load_column_widths as _read_column_widths
 
@@ -59,6 +60,11 @@ HOST_COLUMN_MIN_WIDTHS = {
     "host": 100,
     "availability": 100,
     "limit": 70,
+}
+COLUMN_LAYOUT_SETTINGS = {
+    "search": ("usenet_search_column_order", "usenet_search_visible_columns"),
+    "files": ("usenet_file_column_order", "usenet_file_visible_columns"),
+    "hosts": ("host_status_column_order", "host_status_visible_columns"),
 }
 SEARCH_COLUMN_WIDTHS = {
     "title": 470,
@@ -159,6 +165,20 @@ def load_table_column_layout(
         columns,
         defaults,
     )
+
+
+def save_table_column_layout(
+    secure_store: SecureStore,
+    table_name: str,
+    order: list[str],
+    visible: list[str],
+) -> None:
+    try:
+        order_setting, visible_setting = COLUMN_LAYOUT_SETTINGS[table_name]
+    except KeyError as error:
+        raise ValueError(f"Unknown column table: {table_name}") from error
+    secure_store.set_setting(order_setting, json.dumps(order))
+    secure_store.set_setting(visible_setting, json.dumps(visible))
 
 
 def load_table_column_widths(
@@ -466,14 +486,15 @@ class UsenetFinderDialog:
         self.results.bind("<Double-1>", lambda _event: self.resolve_selected())
         self.results.bind("<Button-3>", self._show_result_context_menu)
         self.results.bind("<Button-2>", self._show_result_context_menu)
+        for sequence in ("<Button-3>", "<Button-2>"):
+            self.results.bind(
+                sequence,
+                lambda event: self._show_column_context_menu(event, "search"),
+                add="+",
+            )
 
         result_actions = ttk.Frame(results_pane)
         result_actions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 8))
-        ttk.Button(
-            result_actions,
-            text="Configure columns",
-            command=lambda: self._show_column_settings("search"),
-        ).pack(side="left")
         self.more_button = ttk.Button(
             result_actions,
             text="Load more",
@@ -537,6 +558,12 @@ class UsenetFinderDialog:
         self.files.bind("<Control-a>", self._select_all_files)
         self.files.bind("<Button-3>", self._show_file_context_menu)
         self.files.bind("<Button-2>", self._show_file_context_menu)
+        for sequence in ("<Button-3>", "<Button-2>"):
+            self.files.bind(
+                sequence,
+                lambda event: self._show_column_context_menu(event, "files"),
+                add="+",
+            )
         resolved_header = ttk.Frame(resolved_files_pane)
         resolved_header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
         resolved_header.columnconfigure(0, weight=1)
@@ -567,11 +594,6 @@ class UsenetFinderDialog:
             command=self._toggle_auxiliary_files_filter,
         )
         self.auxiliary_files_filter_button.pack(side="left", padx=(8, 0))
-        ttk.Button(
-            file_actions,
-            text="Configure columns",
-            command=lambda: self._show_column_settings("files"),
-        ).pack(side="left", padx=(8, 0))
 
     def open_browser(self) -> bool:
         try:
@@ -940,7 +962,9 @@ class UsenetFinderDialog:
         self._restoring_result_token = None
         self.resolve_selected()
 
-    def _show_result_context_menu(self, event: tk.Event) -> str:
+    def _show_result_context_menu(self, event: tk.Event) -> str | None:
+        if self.results.identify_region(event.x, event.y) == "heading":
+            return None
         item_id = self.results.identify_row(event.y)
         if not item_id:
             return "break"
@@ -963,7 +987,9 @@ class UsenetFinderDialog:
             menu.grab_release()
         return "break"
 
-    def _show_file_context_menu(self, event: tk.Event) -> str:
+    def _show_file_context_menu(self, event: tk.Event) -> str | None:
+        if self.files.identify_region(event.x, event.y) == "heading":
+            return None
         item_id = self.files.identify_row(event.y)
         if not item_id:
             return "break"
@@ -986,6 +1012,58 @@ class UsenetFinderDialog:
         finally:
             menu.grab_release()
         return "break"
+
+    def _show_column_context_menu(
+        self,
+        event: tk.Event,
+        table_name: str,
+    ) -> str | None:
+        if table_name == "search":
+            table = self.results
+            order = self.search_column_order
+            visible = self.search_visible_columns
+        else:
+            table = self.files
+            order = self.file_column_order
+            visible = self.file_visible_columns
+        return show_column_context_menu(
+            table,
+            event,
+            order,
+            visible,
+            lambda new_order, new_visible: self._save_column_layout(
+                table_name,
+                table,
+                new_order,
+                new_visible,
+            ),
+        )
+
+    def _save_column_layout(
+        self,
+        table_name: str,
+        table: ttk.Treeview,
+        order: list[str],
+        visible: list[str],
+    ) -> None:
+        try:
+            save_table_column_layout(self.app.secure_store, table_name, order, visible)
+        except (OSError, SecureStorageError, sqlite3.Error) as error:
+            self.app._log(f"Could not save Usenet Finder {table_name} column layout: {error}")
+            self.status.set(f"Could not save column layout: {error}")
+            messagebox.showerror(
+                "Could not save columns",
+                str(error),
+                parent=self.dialog,
+            )
+            return
+        table.configure(displaycolumns=visible)
+        if table_name == "search":
+            self.search_column_order = order
+            self.search_visible_columns = visible
+        else:
+            self.file_column_order = order
+            self.file_visible_columns = visible
 
     def _process_events(self) -> None:
         if not self.dialog.winfo_exists():

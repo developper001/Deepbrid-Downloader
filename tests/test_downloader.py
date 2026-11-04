@@ -18,7 +18,7 @@ from contextlib import closing
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 from src.deepbrid_client import APP_USER_AGENT, DeepbridClient, DeepbridError
 from src.app_events import (
@@ -84,6 +84,7 @@ from src.app import (
     validate_output_folder,
 )
 from src.queue_table import QueueTableView, full_file_path
+from src.table_column_menu import show_column_context_menu
 from src.link_utils import extract_supported_links, supported_link_status
 from src.queue_store import QueueStore
 from src.settings_dialog import SettingsDialog
@@ -115,6 +116,7 @@ from src.usenet_finder_dialog import (
     _read_column_widths,
     load_table_column_layout,
     load_table_column_widths,
+    save_table_column_layout,
 )
 from src.usenet_finder_state import (
     CACHE_DURATION_SETTING,
@@ -1347,6 +1349,21 @@ class ValidationAndPresentationTests(unittest.TestCase):
         store.get_setting.assert_any_call("host_status_column_order")
         store.get_setting.assert_any_call("host_status_visible_columns")
 
+    def test_column_layout_saves_for_host_and_finder_tables(self) -> None:
+        store = Mock()
+
+        save_table_column_layout(store, "hosts", ["availability", "host"], ["host"])
+        self.assertEqual(
+            store.set_setting.call_args_list,
+            [
+                call("host_status_column_order", '["availability", "host"]'),
+                call("host_status_visible_columns", '["host"]'),
+            ],
+        )
+
+        with self.assertRaises(ValueError):
+            save_table_column_layout(store, "unknown", [], [])
+
     def test_host_column_widths_restore_saved_values(self) -> None:
         store = Mock()
         store.get_setting.side_effect = lambda name: (
@@ -1512,6 +1529,76 @@ class ValidationAndPresentationTests(unittest.TestCase):
             json.dumps(widths),
         )
         self.assertEqual(view.app.column_widths, widths)
+
+    def test_column_context_menu_reorders_and_hides_columns(self) -> None:
+        table = MagicMock()
+        table.identify_region.return_value = "heading"
+        table.identify_column.return_value = "#2"
+        table.__getitem__.return_value = ("filename", "extension", "link")
+        on_change = Mock()
+        event = SimpleNamespace(x=120, x_root=420, y=12, y_root=212)
+
+        with patch("src.table_column_menu.tk.Menu") as menu_class:
+            result = show_column_context_menu(
+                table,
+                event,
+                ["filename", "extension", "file_path", "link"],
+                ["filename", "extension", "link"],
+                on_change,
+            )
+
+        self.assertEqual(result, "break")
+        menu = menu_class.return_value
+        menu.add_command.call_args_list[0].kwargs["command"]()
+        on_change.assert_called_once_with(
+            ["extension", "filename", "file_path", "link"],
+            ["extension", "filename", "link"],
+        )
+        menu.add_command.call_args_list[2].kwargs["command"]()
+        on_change.assert_called_with(
+            ["filename", "extension", "file_path", "link"],
+            ["filename", "link"],
+        )
+
+    def test_column_context_menu_keeps_one_column_visible(self) -> None:
+        table = MagicMock()
+        table.identify_region.return_value = "heading"
+        table.identify_column.return_value = "#1"
+        table.__getitem__.return_value = ("filename",)
+        on_change = Mock()
+        event = SimpleNamespace(x=30, x_root=30, y=10, y_root=10)
+
+        with patch("src.table_column_menu.tk.Menu") as menu_class:
+            show_column_context_menu(table, event, ["filename"], ["filename"], on_change)
+
+        self.assertEqual(menu_class.return_value.add_command.call_args_list[2].kwargs["state"], "disabled")
+        menu_class.return_value.add_command.call_args_list[2].kwargs["command"]()
+        on_change.assert_not_called()
+
+    def test_queue_column_context_menu_is_posted_on_heading(self) -> None:
+        view = QueueTableView.__new__(QueueTableView)
+        view.table = MagicMock()
+        view.table.identify_region.return_value = "heading"
+        view.table.identify_column.return_value = "#2"
+        view.table.__getitem__.return_value = ("filename", "extension", "link")
+        view.app = SimpleNamespace(
+            column_order=["filename", "extension", "link"],
+            visible_columns=["filename", "extension", "link"],
+        )
+        event = SimpleNamespace(x=120, x_root=420, y=12, y_root=212)
+
+        with patch("src.queue_table.tk.Menu") as menu_class:
+            result = view._show_column_menu(event)
+
+        self.assertEqual(result, "break")
+        menu = menu_class.return_value
+        menu.tk_popup.assert_called_once_with(420, 212)
+        self.assertIs(view.table._column_context_menu, menu)
+        menu.grab_release.assert_not_called()
+        self.assertEqual(
+            [call.kwargs["label"] for call in menu.add_command.call_args_list],
+            ["Move left", "Move right", "Hide column"],
+        )
 
     def test_bulk_actions_use_display_order(self) -> None:
         app = DownloaderApp.__new__(DownloaderApp)
@@ -2452,6 +2539,16 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
+    def test_row_context_handlers_allow_heading_menu_to_run(self) -> None:
+        dialog = UsenetFinderDialog.__new__(UsenetFinderDialog)
+        dialog.results = Mock()
+        dialog.results.identify_region.return_value = "heading"
+        dialog.files = Mock()
+        dialog.files.identify_region.return_value = "heading"
+
+        self.assertIsNone(dialog._show_result_context_menu(SimpleNamespace(x=1, y=1)))
+        self.assertIsNone(dialog._show_file_context_menu(SimpleNamespace(x=1, y=1)))
+
     def test_column_widths_restore_saved_values_and_default_invalid_values(self) -> None:
         store = Mock()
         store.get_setting.return_value = json.dumps(
@@ -2953,7 +3050,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog.results = Mock()
         dialog.results.identify_row.return_value = "result-row"
         dialog.results.selection.return_value = ()
-        event = SimpleNamespace(y=15, x_root=100, y_root=200)
+        event = SimpleNamespace(x=100, y=15, x_root=100, y_root=200)
 
         with (
             patch("src.usenet_finder_dialog.tk.Menu") as menu_class,
@@ -2982,7 +3079,7 @@ class UsenetFinderDialogTests(unittest.TestCase):
         dialog.files.selection.side_effect = lambda: tuple(selected)
         dialog.files.selection_set.side_effect = lambda item_id: selected.append(item_id)
         dialog._update_file_actions = Mock()
-        event = SimpleNamespace(y=15, x_root=100, y_root=200)
+        event = SimpleNamespace(x=100, y=15, x_root=100, y_root=200)
 
         with (
             patch("src.usenet_finder_dialog.tk.Menu") as menu_class,

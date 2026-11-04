@@ -1,6 +1,7 @@
 **/__pycache__/*
 build/
 dist/
+.pytest_cache/
 
 *.sqlite3*
 *.spec

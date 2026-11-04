@@ -3,14 +3,16 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from .deepbrid_client import safe_filename
 from .queue_store import QueueItem
 from .queue_types import QueueSource, QueueStatus
 from .secure_store import SecureStorageError
+from .table_column_menu import show_column_context_menu
 
 COLUMN_ORDER = (
     "filename",
@@ -282,8 +284,32 @@ class QueueTableView:
         ):
             self.table.bind(sequence, self.schedule_layout, add="+")
         self.table.bind("<ButtonRelease-1>", self._column_resize_finished, add="+")
+        context_click = "<Button-2>" if sys.platform == "darwin" else "<Button-3>"
+        self.table.bind(context_click, self._show_column_menu, add="+")
 
         parent.add(table_frame, weight=4)
+
+    def _show_column_menu(self, event: tk.Event) -> str | None:
+        return show_column_context_menu(
+            self.table,
+            event,
+            self.app.column_order,
+            self.app.visible_columns,
+            self._save_display_columns,
+        )
+
+    def _save_display_columns(self, order: list[str], visible: list[str]) -> bool:
+        try:
+            self.app.secure_store.set_setting("column_order", json.dumps(order))
+            self.app.secure_store.set_setting("visible_columns", json.dumps(visible))
+        except (OSError, sqlite3.Error, SecureStorageError) as error:
+            self.app._log(f"Could not save download queue column settings: {error}")
+            messagebox.showerror("Could not save columns", str(error), parent=self.app.root)
+            return False
+        self.app.column_order = order
+        self.app.visible_columns = visible
+        self.table.configure(displaycolumns=visible)
+        return True
 
     def _column_resize_finished(self, event: tk.Event) -> None:
         if self.table.identify_region(event.x, event.y) != "separator":

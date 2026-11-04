@@ -82,7 +82,9 @@ from .usenet_finder_dialog import (
     UsenetFinderDialog,
     load_table_column_layout,
     load_table_column_widths,
+    save_table_column_layout,
 )
+from .table_column_menu import show_column_context_menu
 from .usenet_browser import UsenetBrowserSession
 from .usenet_finder import (
     UsenetFinderClient,
@@ -485,12 +487,6 @@ class DownloaderApp:
             state="disabled",
         )
         self.stop_button.pack(side="left", padx=(8, 0))
-        self.columns_button = ttk.Button(
-            controls,
-            text="Configure columns",
-            command=self._show_columns_dialog,
-        )
-        self.columns_button.pack(side="left", padx=(8, 0))
         self.theme_button = ttk.Button(
             controls,
             text="Dark mode" if not self.dark_theme else "Light mode",
@@ -520,7 +516,11 @@ class DownloaderApp:
         self._selection_anchor: str | None = None
         self.table.bind("<Button-1>", self._select_table_row)
         self.table.bind("<Control-a>", self._select_all_table_rows)
-        self.table.bind("<Button-2>" if sys.platform == "darwin" else "<Button-3>", self._show_link_menu)
+        self.table.bind(
+            "<Button-2>" if sys.platform == "darwin" else "<Button-3>",
+            self._show_link_menu,
+            add="+",
+        )
         self.table.bind("<Delete>", self._handle_remove_shortcut)
         self.table.bind("<KP_Delete>", self._handle_remove_shortcut)
         self.table.bind("<Control-c>", self._copy_original_link)
@@ -1290,11 +1290,6 @@ class DownloaderApp:
         search_var = tk.StringVar(master=popup)
         search_entry = ttk.Entry(search_row, textvariable=search_var)
         search_entry.pack(side="left", fill="x", expand=True)
-        ttk.Button(
-            frame,
-            text="Configure columns",
-            command=lambda: self._show_host_column_settings(popup),
-        ).pack(anchor="w", pady=(0, 8))
         table_frame = ttk.Frame(frame)
         table_frame.pack(fill="both", expand=True)
         table_frame.rowconfigure(0, weight=1)
@@ -1365,6 +1360,23 @@ class DownloaderApp:
             ),
         )
         table.bind("<ButtonRelease-1>", self._save_host_column_widths, add="+")
+        context_click = "<Button-2>" if sys.platform == "darwin" else "<Button-3>"
+
+        def show_host_column_menu(event: tk.Event) -> str | None:
+            order, visible = load_table_column_layout(self.secure_store, "hosts")
+            return show_column_context_menu(
+                table,
+                event,
+                order,
+                visible,
+                lambda new_order, new_visible: self._save_host_column_layout(
+                    table,
+                    new_order,
+                    new_visible,
+                ),
+            )
+
+        table.bind(context_click, show_host_column_menu, add="+")
 
         def update_hosts(
             updated_hosts: dict[str, str],
@@ -1462,6 +1474,24 @@ class DownloaderApp:
             )
         except (OSError, sqlite3.Error, SecureStorageError) as error:
             self._log(f"Could not save host status column widths: {error}")
+
+    def _save_host_column_layout(
+        self,
+        table: ttk.Treeview,
+        order: list[str],
+        visible: list[str],
+    ) -> None:
+        try:
+            save_table_column_layout(self.secure_store, "hosts", order, visible)
+        except (OSError, sqlite3.Error, SecureStorageError) as error:
+            self._log(f"Could not save host status column layout: {error}")
+            messagebox.showerror(
+                "Could not save columns",
+                str(error),
+                parent=table.winfo_toplevel(),
+            )
+            return
+        table.configure(displaycolumns=visible)
 
     def _apply_host_statuses(self, hosts: dict[str, str]) -> None:
         for item in self.store.list_items():
