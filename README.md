@@ -15,7 +15,8 @@ A small cross-platform desktop downloader built with Python and Tkinter for Deep
 
 ### Settings and hosts
 
-![Searchable settings with API-key validation](src/screenshots/settings-api-key-validation.png)
+![Main and Usenet settings with API-key controls](src/screenshots/settings-main-and-usenet.png)
+![Usenet, Hosts, startup, appearance, and logging settings](src/screenshots/settings-usenet-hosts-startup-logging.png)
 ![Refresh hosts](src/screenshots/host-status-refresh.png)
 
 ### Queue and downloads
