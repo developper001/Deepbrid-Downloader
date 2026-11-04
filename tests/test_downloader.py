@@ -27,6 +27,7 @@ from src.app_events import (
     HostsLoadedEvent,
     StartupApiKeyProblemEvent,
     StartupUpdateEvent,
+    UpdateCheckEvent,
 )
 from src.app_config import (
     AppConfiguration,
@@ -1016,11 +1017,47 @@ class ValidationAndPresentationTests(unittest.TestCase):
             patch("src.app.fetch_latest_release_details", return_value=release),
             patch("src.app.platform_release_asset", return_value=asset),
         ):
-            app._load_update_status(None, None, None, None, None)
+            app._load_update_status(None, None, None, None)
 
         self.assertIn("newer than the latest published release", events[0].message)
         self.assertIsNone(events[0].release)
         self.assertIsNone(events[0].asset)
+
+    def test_manual_update_check_uses_startup_update_prompt(self) -> None:
+        release = LatestRelease(
+            "v0.5.2",
+            "https://github.com/developper001/Deepbrid-Downloader/releases/tag/v0.5.2",
+            (),
+        )
+        asset = ReleaseAsset(
+            "DeepbridDownloader-Windows.exe",
+            "https://github.com/developper001/Deepbrid-Downloader/releases/download/v0.5.2/DeepbridDownloader-Windows.exe",
+            1,
+            "a" * 64,
+        )
+        popup = Mock()
+        popup.winfo_exists.return_value = True
+        update_status = Mock()
+        check_button = Mock()
+        update_progress = Mock()
+        app = object.__new__(DownloaderApp)
+        app._prompt_startup_update = Mock()
+        event = UpdateCheckEvent(
+            popup,
+            update_status,
+            check_button,
+            update_progress,
+            "Version v0.5.2 is available.",
+            release,
+            asset,
+        )
+
+        app._handle_update_check(event)
+
+        check_button.configure.assert_called_once_with(state="normal")
+        update_status.set.assert_called_once_with(event.message)
+        update_progress.pack_forget.assert_called_once_with()
+        app._prompt_startup_update.assert_called_once_with(release, asset)
 
     def test_release_details_select_the_current_platform_asset(self) -> None:
         windows = ReleaseAsset(

@@ -1742,7 +1742,6 @@ class DownloaderApp:
         update_status = tk.StringVar(master=popup, value=f"Current version: {APP_VERSION}")
         ttk.Label(actions, textvariable=update_status).pack(side="left")
         update_progress = ttk.Progressbar(actions, length=150, mode="determinate", maximum=100)
-        release_button = ttk.Button(actions, text="Open release")
         check_button = ttk.Button(
             actions,
             text="Check for updates",
@@ -1750,7 +1749,6 @@ class DownloaderApp:
                 popup,
                 update_status,
                 check_button,
-                release_button,
                 update_progress,
             ),
         )
@@ -1772,7 +1770,6 @@ class DownloaderApp:
         popup: tk.Toplevel,
         update_status: tk.StringVar,
         check_button: ttk.Button,
-        release_button: ttk.Button,
         update_progress: ttk.Progressbar,
     ) -> None:
         check_button.configure(state="disabled")
@@ -1780,7 +1777,7 @@ class DownloaderApp:
         update_progress.pack_forget()
         threading.Thread(
             target=self._load_update_status,
-            args=(popup, update_status, check_button, release_button, update_progress),
+            args=(popup, update_status, check_button, update_progress),
             daemon=True,
         ).start()
 
@@ -1789,7 +1786,6 @@ class DownloaderApp:
         popup: tk.Toplevel,
         update_status: tk.StringVar,
         check_button: ttk.Button,
-        release_button: ttk.Button,
         update_progress: ttk.Progressbar,
     ) -> None:
         try:
@@ -1813,13 +1809,24 @@ class DownloaderApp:
                 popup,
                 update_status,
                 check_button,
-                release_button,
                 update_progress,
                 message,
                 release,
                 asset,
             )
         )
+
+    def _handle_update_check(self, event: UpdateCheckEvent) -> None:
+        try:
+            if not event.popup.winfo_exists():
+                return
+            event.check_button.configure(state="normal")
+            event.update_status.set(event.message)
+            event.update_progress.pack_forget()
+            if event.release is not None:
+                self._prompt_startup_update(event.release, event.asset)
+        except tk.TclError:
+            return
 
     def _persist_auto_check_updates(self) -> None:
         enabled = self.auto_check_updates.get()
@@ -2120,40 +2127,7 @@ class DownloaderApp:
         progress.pack(fill="x")
         threading.Thread(
             target=self._download_and_install_update,
-            args=(popup, status, None, None, progress, release, asset),
-            daemon=True,
-        ).start()
-
-    def _confirm_update_install(
-        self,
-        popup: tk.Toplevel,
-        update_status: tk.StringVar,
-        check_button: ttk.Button,
-        release_button: ttk.Button,
-        update_progress: ttk.Progressbar,
-        release: LatestRelease,
-        asset: ReleaseAsset,
-    ) -> None:
-        if not asset.sha256:
-            messagebox.showerror(
-                "Update unavailable",
-                "The release does not provide a verifiable SHA-256 digest.",
-                parent=popup,
-            )
-            return
-        message = f"Download and install version {release.tag}? The app will restart when the update is ready."
-        if self.worker and self.worker.is_alive():
-            message += " Active downloads will be interrupted; partial files will be kept for resume."
-        if not messagebox.askyesno("Install update", message, parent=popup):
-            return
-        check_button.configure(state="disabled")
-        release_button.configure(state="disabled")
-        update_progress.configure(maximum=max(asset.size, 1), value=0)
-        update_progress.pack(side="left", padx=(8, 0))
-        update_status.set(f"Downloading {release.tag}: 0%")
-        threading.Thread(
-            target=self._download_and_install_update,
-            args=(popup, update_status, check_button, release_button, update_progress, release, asset),
+            args=(popup, status, None, progress, release, asset),
             daemon=True,
         ).start()
 
@@ -2162,7 +2136,6 @@ class DownloaderApp:
         popup: tk.Toplevel,
         update_status: tk.StringVar,
         check_button: ttk.Button | None,
-        release_button: ttk.Button | None,
         update_progress: ttk.Progressbar,
         release: LatestRelease,
         asset: ReleaseAsset,
@@ -2197,7 +2170,6 @@ class DownloaderApp:
                     popup,
                     update_status,
                     check_button,
-                    release_button,
                     update_progress,
                     str(error),
                 )
@@ -3197,34 +3169,7 @@ class DownloaderApp:
             elif isinstance(event, StartupApiKeyProblemEvent):
                 self._open_api_key_settings_for_problem(event.message)
             elif isinstance(event, UpdateCheckEvent):
-                try:
-                    if not event.popup.winfo_exists():
-                        continue
-                    event.check_button.configure(state="normal")
-                    event.update_status.set(event.message)
-                    event.update_progress.pack_forget()
-                    if event.release is not None:
-                        if getattr(sys, "frozen", False) and event.asset is not None and event.asset.sha256:
-                            event.release_button.configure(
-                                text="Download and install",
-                                command=lambda window=event.popup, status=event.update_status,
-                                check=event.check_button, button=event.release_button,
-                                progress=event.update_progress, found_release=event.release,
-                                found_asset=event.asset: self._confirm_update_install(
-                                    window, status, check, button, progress, found_release, found_asset
-                                ),
-                            )
-                        else:
-                            event.release_button.configure(
-                                text="Open release",
-                                command=lambda target=event.release.release_url: webbrowser.open(target),
-                            )
-                        if not event.release_button.winfo_manager():
-                            event.release_button.pack(side="left", padx=(8, 0))
-                    else:
-                        event.release_button.pack_forget()
-                except tk.TclError:
-                    continue
+                self._handle_update_check(event)
             elif isinstance(event, UpdateProgressEvent):
                 try:
                     if not event.popup.winfo_exists():
@@ -3266,10 +3211,7 @@ class DownloaderApp:
                         event.update_status.set(f"Download failed: {event.message}")
                         if event.check_button is not None:
                             event.check_button.configure(state="normal")
-                        if event.release_button is not None:
-                            event.release_button.configure(state="normal")
-                        if event.check_button is not None or event.release_button is not None:
-                            event.update_progress.pack_forget()
+                        event.update_progress.pack_forget()
                         messagebox.showerror(
                             "Update download failed",
                             event.message,

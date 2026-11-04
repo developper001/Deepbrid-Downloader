@@ -82,7 +82,6 @@ class UpdateCheckEvent:
     popup: Toplevel
     update_status: StringVar
     check_button: ttk.Button
-    release_button: ttk.Button
     update_progress: ttk.Progressbar
     message: str
     release: LatestRelease | None
@@ -111,7 +110,6 @@ class UpdateDownloadFailedEvent:
     popup: Toplevel
     update_status: StringVar
     check_button: ttk.Button | None
-    release_button: ttk.Button | None
     update_progress: ttk.Progressbar
     message: str
 
