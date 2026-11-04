@@ -18,6 +18,8 @@ def application_data_args() -> list[str]:
         "--add-data",
         f"{ROOT / 'README.md'}{data_separator}.",
         "--add-data",
+        f"{ROOT / 'CHANGELOG.md'}{data_separator}.",
+        "--add-data",
         f"{ROOT / 'src' / 'img'}{data_separator}src/img",
         "--add-data",
         f"{ROOT / 'src' / 'screenshots'}{data_separator}src/screenshots",

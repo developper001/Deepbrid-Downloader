@@ -84,6 +84,7 @@ jobs:
             --workpath build \
             --specpath build \
             --add-data "$PROJECT_ROOT/README.md${DATA_SEP}." \
+            --add-data "$PROJECT_ROOT/CHANGELOG.md${DATA_SEP}." \
             --add-data "$PROJECT_ROOT/src/img${DATA_SEP}src/img" \
             --add-data "$PROJECT_ROOT/src/screenshots${DATA_SEP}src/screenshots" \
             launcher.py

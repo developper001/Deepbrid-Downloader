@@ -124,6 +124,7 @@ LEGACY_STORAGE_PATH = PROJECT_ROOT / "download"
 LEGACY_ENV_PATH = PROJECT_ROOT / ".env"
 INPUT_PATH = PROJECT_ROOT / "input_links.txt"
 README_PATH = RESOURCE_ROOT / "README.md"
+RELEASE_NOTES_PATH = RESOURCE_ROOT / "CHANGELOG.md"
 LOG_PATH = LEGACY_STORAGE_PATH / "logs.txt"
 IMAGE_ROOT = RESOURCE_ROOT / "src" / "img"
 ICON_PATH = IMAGE_ROOT / "deepbrid-logo.png"
@@ -1521,6 +1522,13 @@ class DownloaderApp:
             return "README.md is not available."
 
     @staticmethod
+    def release_notes_text() -> str:
+        try:
+            return RELEASE_NOTES_PATH.read_text(encoding="utf-8")
+        except OSError:
+            return "Release notes are not available."
+
+    @staticmethod
     def readme_image_paths() -> list[str]:
         try:
             contents = README_PATH.read_text(encoding="utf-8")
@@ -1755,6 +1763,11 @@ class DownloaderApp:
         check_button.pack(side="left", padx=(8, 0))
         ttk.Button(
             actions,
+            text="View Changelog",
+            command=self._show_release_notes,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
             text="GitHub repository",
             command=lambda: webbrowser.open(GITHUB_REPOSITORY_URL),
         ).pack(side="left", padx=(8, 0))
@@ -1764,6 +1777,67 @@ class DownloaderApp:
             command=lambda: webbrowser.open(DEEPBRID_DASHBOARD_URL),
         ).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Close", command=popup.destroy).pack(side="right")
+
+    def _show_release_notes(self) -> None:
+        colors = self.theme_colors
+        popup = tk.Toplevel(self.root)
+        popup.title("Deepbrid Downloader Release Notes")
+        popup.geometry("760x600")
+        popup.minsize(560, 400)
+        popup.resizable(True, True)
+        popup.configure(background=colors["background"])
+        popup.grab_set()
+
+        container = ttk.Frame(popup, padding=12)
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+
+        output = tk.Text(
+            container,
+            background=colors["background"],
+            foreground=colors["foreground"],
+            highlightthickness=0,
+            borderwidth=0,
+            relief="flat",
+            wrap="word",
+            padx=4,
+            pady=4,
+            insertwidth=0,
+            takefocus=False,
+        )
+        output.grid(row=0, column=0, sticky="nsew")
+        body_font = tkfont.nametofont("TkDefaultFont", root=popup).copy()
+        body_font.configure(size=body_font.cget("size") + 2)
+        output.configure(font=body_font)
+        for level in range(1, 7):
+            output.tag_configure(
+                f"heading-{level}",
+                font=("Segoe UI", 17 - min(level - 1, 4), "bold"),
+                foreground=colors["foreground"],
+                spacing3=4,
+            )
+
+        for line in self.release_notes_text().splitlines():
+            heading_match = re.match(r"^(#+)\s+(.*)$", line)
+            if heading_match:
+                level = min(len(heading_match.group(1)), 6)
+                output.insert("end", f"{heading_match.group(2)}\n", f"heading-{level}")
+            elif line.startswith("- "):
+                output.insert("end", f"  {line}\n")
+            else:
+                output.insert("end", f"{line}\n")
+
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=output.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        output.configure(yscrollcommand=scrollbar.set, state="disabled")
+        ttk.Button(container, text="Close", command=popup.destroy).grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="e",
+            pady=(8, 0),
+        )
 
     def _check_for_updates(
         self,

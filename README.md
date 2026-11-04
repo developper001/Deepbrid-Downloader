@@ -40,6 +40,7 @@ A small cross-platform desktop downloader built with Python and Tkinter for Deep
 
 ![Torrent upload dialog](src/screenshots/torrent-upload-dialog.png)
 ![About window with GitHub link and update check](src/screenshots/about-and-update-check.png)
+![Changelog viewer](src/screenshots/changelog.png)
 
 ## Supported platforms
 

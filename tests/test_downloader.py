@@ -40,6 +40,7 @@ from src.app_info import (
     LatestRelease,
     ReleaseAsset,
     UpdateCheckError,
+    __version__ as APP_VERSION,
     fetch_latest_release,
     fetch_latest_release_details,
     is_newer_version,
@@ -1621,6 +1622,12 @@ class ValidationAndPresentationTests(unittest.TestCase):
             if image_path.startswith("src/"):
                 with self.subTest(image_path=image_path):
                     self.assertTrue((repository_root / image_path).is_file())
+
+    def test_release_notes_content_is_available(self) -> None:
+        release_notes = DownloaderApp.release_notes_text()
+        self.assertIn("# Changelog", release_notes)
+        self.assertIn("## [Unreleased]", release_notes)
+        self.assertIn(f"## [v{APP_VERSION}]", release_notes)
 
     def test_about_parser_recognizes_linked_readme_badges(self) -> None:
         badge_line = (
