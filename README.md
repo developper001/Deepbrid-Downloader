@@ -37,9 +37,14 @@ A small cross-platform desktop downloader built with Python and Tkinter for Deep
 ![Usenet Finder search results and resolved files](src/screenshots/usenet-search-results.png)
 ![Usenet Finder search history and category selection](src/screenshots/usenet-search-history-and-categories.png)
 
-### Torrents and About
+### NZB and torrent uploads
 
+![Processed NZB upload results](src/screenshots/nzb-upload-results.png)
+![NZB file downloaded to the queue](src/screenshots/nzb-download-completed.png)
 ![Torrent upload dialog](src/screenshots/torrent-upload-dialog.png)
+
+### About
+
 ![About window with GitHub link and update check](src/screenshots/about-and-update-check.png)
 ![Changelog viewer](src/screenshots/changelog.png)
 
@@ -133,9 +138,11 @@ The project uses the standard library unittest suite. Run it locally with:
 python -m unittest -q tests.test_downloader tests.test_queue
 ```
 
-## Torrent downloads
+## NZB and torrent downloads
 
-Open **Add torrents**, then choose **Select .torrent file(s)** to select one or more files, **Select torrents recursively from folder** to scan a folder and its subfolders, or drop torrent files/folders onto the drop area. Torrent uploads are limited to 5 MiB each and require a Deepbrid Premium account and API key. The app submits torrents and checks their cloud-job status through the Deepbrid API; Chrome does not need to be open. When a torrent is ready, its returned files are added to the regular download queue and downloaded to the configured output folder. The app keeps the torrent job ID and requests fresh download links when needed because those links expire.
+Select **Add .nzb** to submit an NZB file or an HTTP(S) URL to Deepbrid. The app displays the files Deepbrid processes; select available files to add their returned download links to the regular queue.
+
+Open **Add .torrent**, then choose **Select .torrent file(s)** to select one or more files, **Select torrents recursively from folder** to scan a folder and its subfolders, or drop torrent files/folders onto the drop area. Torrent uploads are limited to 5 MiB each and require a Deepbrid Premium account and API key. The app submits torrents and checks their cloud-job status through the Deepbrid API; Chrome does not need to be open. When a torrent is ready, its returned files are added to the regular download queue and downloaded to the configured output folder. The app keeps the torrent job ID and requests fresh download links when needed because those links expire.
 
 GitHub Actions runs the same tests on pushes to `main` and pull requests across Ubuntu, Windows, and macOS for supported Python versions. The dependency audit runs weekly only and skips the platform test matrix.
 

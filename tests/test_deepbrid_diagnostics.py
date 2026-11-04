@@ -73,7 +73,7 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
 
         request = open_url.call_args.args[0]
         self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/usenet/add")
-        self.assertEqual(request.get_header("Authorization"), "******")
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-key")
         self.assertIn("multipart/form-data", request.get_header("Content-type"))
         self.assertIn(b'name="nzb_file"; filename="test.nzb"', request.data)
         self.assertIn(b"<nzb/>", request.data)
@@ -111,6 +111,7 @@ class DeepbridDiagnosticsTests(unittest.TestCase):
 
         request = open_url.call_args.args[0]
         self.assertEqual(request.full_url, "https://www.deepbrid.com/api/v1/usenet/add")
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-key")
         self.assertEqual(request.get_header("Content-type"), "application/x-www-form-urlencoded")
         self.assertIn(
             b"nzb_url=https%3A%2F%2Ffiles.example%2Frelease.nzb%3Ftoken%3Da%26part%3D1",

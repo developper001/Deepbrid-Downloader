@@ -254,7 +254,7 @@ class DeepbridClient:
             f"{API_BASE}/usenet/add",
             data=body,
             headers={
-                "Authorization": "******",
+                "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
                 "Accept": "application/json",
                 "User-Agent": APP_USER_AGENT,
@@ -278,7 +278,7 @@ class DeepbridClient:
             f"{API_BASE}/usenet/add",
             data=payload,
             headers={
-                "Authorization": "******",
+                "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "application/json",
                 "User-Agent": APP_USER_AGENT,

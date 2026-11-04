@@ -467,16 +467,16 @@ class DownloaderApp:
         self.usenet_finder_button.pack(side="right", padx=(0, 8))
         self.add_torrent_button = ttk.Button(
             header_actions,
-            text="Add torrents",
+            text="Add .torrent",
             command=self._show_add_torrent_dialog,
         )
-        self.add_torrent_button.pack(side="right", padx=(0, 8))
         self.add_nzb_button = ttk.Button(
             header_actions,
-            text="Add NZB",
+            text="Add .nzb",
             command=self._show_add_nzb_dialog,
         )
         self.add_nzb_button.pack(side="right", padx=(0, 8))
+        self.add_torrent_button.pack(side="right", padx=(0, 8))
         self.add_links_button = ttk.Button(
             header_actions,
             text="Add file-host links",
