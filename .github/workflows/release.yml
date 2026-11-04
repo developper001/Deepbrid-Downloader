@@ -119,9 +119,11 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Prepare release summary
+      - name: Prepare versioned release notes
         shell: bash
-        run: git log -1 --format=%B "$GITHUB_SHA" > release-summary.md
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: python scripts/extract_release_notes.py --tag "$RELEASE_TAG" --output release-notes.md
 
       - name: Generate sha256 checksums
         shell: bash
@@ -135,5 +137,4 @@ jobs:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: |
             release-artifacts/**
-          body_path: release-summary.md
-          generate_release_notes: true
+          body_path: release-notes.md

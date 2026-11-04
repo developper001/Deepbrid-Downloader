@@ -198,6 +198,7 @@ For a public repo, the minimal production path is to keep the source public and 
 Recommended minimal pipeline:
 - publish the source repo publicly
 - tag a release using the version in `src/app_info.py`, in the form `vX.Y.Z`
+- add that version's release notes to `CHANGELOG.md` before tagging; GitHub uses the matching section as the release description
 - let GitHub Actions build the app for Windows, macOS, and Linux
 - attach the binaries and the generated checksum file to the release
 
