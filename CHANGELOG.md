@@ -5,6 +5,12 @@ available independently of GitHub Releases.
 
 ## [Unreleased]
 
+## [v0.6.1] - 2026-11-05
+
+- Add NZB file and URL submission, display processed file availability, and
+  queue selected downloads.
+- Add NZB workflow screenshots and update the torrent/NZB upload interface.
+
 ## [v0.6.0] - 2026-11-04
 
 - Use the same confirmation prompt for manual and startup update checks.

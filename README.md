@@ -135,7 +135,7 @@ The probe prints response structure and request diagnostics. Endpoint behavior m
 The project uses the standard library unittest suite. Run it locally with:
 
 ```sh
-python -m unittest -q tests.test_downloader tests.test_queue
+python -m unittest discover -s tests -q
 ```
 
 ## NZB and torrent downloads
@@ -157,7 +157,7 @@ It runs:
 - Python 3.14
 - Python 3.15
 - on Windows, macOS, and Ubuntu
-- `python -m unittest -q tests.test_downloader tests.test_queue`
+- `python -m unittest discover -s tests -q`
 - a package build step with `python -m build`
 
 ## Requirements
