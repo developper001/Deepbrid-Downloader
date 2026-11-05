@@ -28,6 +28,8 @@ from tests._test_support import (
     StartupUpdateEvent,
     TORRENT_LOGO_DARK_PATH,
     TORRENT_LOGO_LIGHT_PATH,
+    USENET_LOGO_DARK_PATH,
+    USENET_LOGO_LIGHT_PATH,
     USENET_AUTO_OPEN_BROWSER_SETTING,
     UpdateCheckError,
     UpdateCheckEvent,
@@ -86,6 +88,14 @@ class AppStartupUpdatesTests(unittest.TestCase):
 
             self.assertEqual(contents[:8], b"\x89PNG\r\n\x1a\n")
             self.assertGreaterEqual(struct.unpack(">I", contents[16:20])[0], 200)
+            self.assertGreaterEqual(struct.unpack(">I", contents[20:24])[0], 40)
+
+    def test_usenet_modal_logo_has_light_and_dark_assets(self) -> None:
+        for logo_path in (USENET_LOGO_LIGHT_PATH, USENET_LOGO_DARK_PATH):
+            contents = logo_path.read_bytes()
+
+            self.assertEqual(contents[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertGreaterEqual(struct.unpack(">I", contents[16:20])[0], 40)
             self.assertGreaterEqual(struct.unpack(">I", contents[20:24])[0], 40)
 
     def test_linux_startup_configuration_creates_and_removes_autostart_entry(self) -> None:

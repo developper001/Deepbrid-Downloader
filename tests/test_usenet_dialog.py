@@ -19,6 +19,7 @@ from tests._test_support import (
     struct,
     unittest,
 )
+from src.nzb_upload_dialog import NzbUploadDialog
 
 class UsenetFinderPrototypeTests(unittest.TestCase):
     def test_search_parses_results_and_uses_the_undocumented_query_contract(self) -> None:
@@ -143,6 +144,22 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
                 "application/json",
                 json.dumps({"error": "Unsupported operation"}),
             )
+
+
+class NzbUploadPlaceholderTests(unittest.TestCase):
+    def test_url_placeholder_is_visible_only_when_entry_is_empty(self) -> None:
+        dialog = NzbUploadDialog.__new__(NzbUploadDialog)
+        dialog.url = Mock()
+        dialog.url_placeholder = Mock()
+
+        dialog.url.get.return_value = ""
+        dialog._refresh_url_placeholder()
+        dialog.url_placeholder.grid.assert_called_once_with()
+
+        dialog.url.get.return_value = "https://example.com/file.nzb"
+        dialog._refresh_url_placeholder()
+        dialog.url_placeholder.grid_remove.assert_called_once_with()
+
 
 class UsenetFinderDialogTests(unittest.TestCase):
     def test_row_context_handlers_allow_heading_menu_to_run(self) -> None:

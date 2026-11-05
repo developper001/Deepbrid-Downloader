@@ -63,6 +63,8 @@ from src.app import (
     OUTPUT_DIR,
     TORRENT_LOGO_DARK_PATH,
     TORRENT_LOGO_LIGHT_PATH,
+    USENET_LOGO_DARK_PATH,
+    USENET_LOGO_LIGHT_PATH,
     _ConsoleStream,
     append_output_log_line,
     default_download_directory,

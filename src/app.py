@@ -139,6 +139,8 @@ FILE_HOST_LOGO_LIGHT_PATH = IMAGE_ROOT / "file-host-links-light.png"
 FILE_HOST_LOGO_DARK_PATH = IMAGE_ROOT / "file-host-links-dark.png"
 TORRENT_LOGO_LIGHT_PATH = IMAGE_ROOT / "torrent-download-light.png"
 TORRENT_LOGO_DARK_PATH = IMAGE_ROOT / "torrent-download-dark.png"
+USENET_LOGO_LIGHT_PATH = IMAGE_ROOT / "usenet-globe-light.png"
+USENET_LOGO_DARK_PATH = IMAGE_ROOT / "usenet-globe-dark.png"
 FILE_HOST_LINKS_DRAFT_SETTING = "file_host_links_draft"
 FILE_HOST_LINKS_DRAFT_PURPOSE = b"file-host-links-draft-v1"
 FILE_HOST_LINKS_PLACEHOLDER = (
@@ -1039,6 +1041,8 @@ class DownloaderApp:
     ) -> ttk.Label:
         if kind == "file-host":
             logo_path = FILE_HOST_LOGO_DARK_PATH if self.dark_theme else FILE_HOST_LOGO_LIGHT_PATH
+        elif kind == "usenet-nzb":
+            logo_path = USENET_LOGO_DARK_PATH if self.dark_theme else USENET_LOGO_LIGHT_PATH
         else:
             logo_path = TORRENT_LOGO_DARK_PATH if self.dark_theme else TORRENT_LOGO_LIGHT_PATH
         image = tk.PhotoImage(master=dialog, file=str(logo_path))
@@ -3005,6 +3009,11 @@ class DownloaderApp:
         )
         style.configure("TEntry", fieldbackground=colors["field"], foreground=colors["foreground"])
         style.configure(
+            "FormHint.TLabel",
+            background=colors["background"],
+            foreground=colors["disabled_foreground"],
+        )
+        style.configure(
             "TCombobox",
             fieldbackground=colors["field"],
             foreground=colors["foreground"],
@@ -3082,6 +3091,10 @@ class DownloaderApp:
             "torrent": (
                 TORRENT_LOGO_LIGHT_PATH,
                 TORRENT_LOGO_DARK_PATH,
+            ),
+            "usenet-nzb": (
+                USENET_LOGO_LIGHT_PATH,
+                USENET_LOGO_DARK_PATH,
             ),
         }
         theme_index = 1 if self.dark_theme else 0

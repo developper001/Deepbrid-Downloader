@@ -19,6 +19,13 @@ class NzbUploadController(Protocol):
     api_key: tk.StringVar
     events: Queue[BackgroundEvent]
 
+    def _create_action_dialog_logo(
+        self,
+        parent: ttk.Frame,
+        dialog: tk.Toplevel,
+        kind: str,
+    ) -> ttk.Label: ...
+
     def add_usenet_links(
         self,
         links: list[tuple[str, str, int | None]],
@@ -42,31 +49,59 @@ class NzbUploadDialog:
         frame = ttk.Frame(self.dialog, padding=12)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(3, weight=1)
+        frame.rowconfigure(4, weight=1)
 
+        header = ttk.Frame(frame)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        header.columnconfigure(0, weight=1)
+        logo = ttk.Frame(header)
+        logo.grid(row=0, column=0, sticky="w")
+        app._create_action_dialog_logo(logo, self.dialog, "usenet-nzb").grid(
+            row=0,
+            column=0,
+            rowspan=2,
+            sticky="w",
+            padx=(0, 8),
+        )
+        ttk.Label(logo, text="USENET", font=("Segoe UI", 10, "bold")).grid(
+            row=0,
+            column=1,
+            sticky="sw",
+        )
+        ttk.Label(logo, text="NZB UPLOAD").grid(
+            row=1,
+            column=1,
+            sticky="nw",
+        )
+        self.file_button = ttk.Button(
+            header,
+            text="Choose .nzb file",
+            command=self._choose_file,
+        )
+        self.file_button.grid(row=0, column=1, sticky="e")
         ttk.Label(
             frame,
             text="Upload an NZB file or submit an NZB URL to Deepbrid.",
-        ).grid(row=0, column=0, sticky="w")
+        ).grid(row=1, column=0, sticky="w")
         url_row = ttk.Frame(frame)
-        url_row.grid(row=1, column=0, sticky="ew", pady=(10, 4))
+        url_row.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         url_row.columnconfigure(0, weight=1)
         self.url = tk.StringVar(master=self.dialog)
         self.url_entry = ttk.Entry(url_row, textvariable=self.url)
         self.url_entry.grid(row=0, column=0, sticky="ew")
+        self.url_placeholder = ttk.Label(
+            frame,
+            text="Example: https://example.com/file.nzb",
+            style="FormHint.TLabel",
+        )
+        self.url_placeholder.grid(row=3, column=0, sticky="w", pady=(0, 8))
+        self.url.trace_add("write", self._refresh_url_placeholder)
         self.url_button = ttk.Button(
             url_row,
             text="Upload URL",
             command=self._upload_url,
         )
         self.url_button.grid(row=0, column=1, padx=(8, 0))
-        self.file_button = ttk.Button(
-            frame,
-            text="Choose .nzb file",
-            command=self._choose_file,
-        )
-        self.file_button.grid(row=2, column=0, sticky="w", pady=(4, 8))
-
         self.files = ttk.Treeview(
             frame,
             columns=("name", "size", "availability"),
@@ -79,21 +114,21 @@ class NzbUploadDialog:
         self.files.column("name", width=400, minwidth=160, stretch=True)
         self.files.column("size", width=100, minwidth=80, stretch=False, anchor="e")
         self.files.column("availability", width=150, minwidth=120, stretch=False)
-        self.files.grid(row=3, column=0, sticky="nsew")
+        self.files.grid(row=4, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.files.yview)
-        scrollbar.grid(row=3, column=1, sticky="ns")
+        scrollbar.grid(row=4, column=1, sticky="ns")
         self.files.configure(yscrollcommand=scrollbar.set)
         self.files.tag_configure("unavailable", foreground="#888888")
 
         self.status = tk.StringVar(master=self.dialog, value="Ready")
         ttk.Label(frame, textvariable=self.status).grid(
-            row=4,
+            row=5,
             column=0,
             sticky="w",
             pady=(8, 0),
         )
         actions = ttk.Frame(frame)
-        actions.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        actions.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         self.add_selected_button = ttk.Button(
             actions,
             text="Add selected",
@@ -112,6 +147,12 @@ class NzbUploadDialog:
         self.dialog.bind("<Escape>", lambda _event: self.dialog.destroy())
         self.dialog.grab_set()
         self.url_entry.focus_set()
+
+    def _refresh_url_placeholder(self, *_args: str) -> None:
+        if self.url.get():
+            self.url_placeholder.grid_remove()
+        else:
+            self.url_placeholder.grid()
 
     def _choose_file(self) -> None:
         filename = filedialog.askopenfilename(
