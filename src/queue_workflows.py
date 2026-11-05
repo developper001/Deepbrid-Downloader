@@ -130,7 +130,7 @@ class UsenetWorkflow:
         _cancel_event: threading.Event,
     ) -> SourceResolution:
         source_name = (
-            "NZB upload"
+            "Download from NZB"
             if item.source == QueueSource.NZB_UPLOAD
             else "direct Usenet"
         )

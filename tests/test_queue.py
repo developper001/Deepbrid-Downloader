@@ -948,7 +948,7 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
 
             counts = app.add_usenet_links(
                 [("https://usenet.example/file", "episode.mkv", 2048)],
-                source_label="NZB upload",
+                source_label="Download from NZB",
                 source=QueueSource.NZB_UPLOAD,
             )
 
@@ -956,7 +956,7 @@ class UsenetFinderQueueIntegrationTests(unittest.TestCase):
             item = app.store.next_item()
             assert item is not None
             self.assertEqual(item.source, QueueSource.NZB_UPLOAD)
-            self.assertEqual(item.host_message, "NZB upload")
+            self.assertEqual(item.host_message, "Download from NZB")
             self.assertEqual(item.filename, "episode.mkv")
             self.assertEqual(item.total, 2048)
             app._refresh_rows.assert_called_once()

@@ -146,19 +146,39 @@ class UsenetFinderPrototypeTests(unittest.TestCase):
             )
 
 
-class NzbUploadPlaceholderTests(unittest.TestCase):
-    def test_url_placeholder_is_visible_only_when_entry_is_empty(self) -> None:
+class NzbUploadUrlDialogTests(unittest.TestCase):
+    def test_empty_url_shows_message_without_starting_upload(self) -> None:
         dialog = NzbUploadDialog.__new__(NzbUploadDialog)
-        dialog.url = Mock()
-        dialog.url_placeholder = Mock()
+        dialog.url_input = Mock()
+        dialog.url_input.get.return_value = " \n "
+        dialog.url_dialog = Mock()
+        dialog._start_upload = Mock()
 
-        dialog.url.get.return_value = ""
-        dialog._refresh_url_placeholder()
-        dialog.url_placeholder.grid.assert_called_once_with()
+        with patch("src.nzb_upload_dialog.messagebox.showinfo") as showinfo:
+            dialog._submit_url()
 
-        dialog.url.get.return_value = "https://example.com/file.nzb"
-        dialog._refresh_url_placeholder()
-        dialog.url_placeholder.grid_remove.assert_called_once_with()
+        showinfo.assert_called_once_with(
+            "NZB URL required",
+            "Enter the HTTP or HTTPS URL of an NZB file.",
+            parent=dialog.url_dialog,
+        )
+        dialog._start_upload.assert_not_called()
+        dialog.url_dialog.destroy.assert_not_called()
+
+    def test_url_submission_starts_upload_and_closes_the_url_modal(self) -> None:
+        dialog = NzbUploadDialog.__new__(NzbUploadDialog)
+        dialog.url_input = Mock()
+        dialog.url_input.get.return_value = " https://example.com/file.nzb \n"
+        dialog.url_dialog = Mock()
+        dialog._start_upload = Mock(return_value=True)
+
+        dialog._submit_url()
+
+        dialog._start_upload.assert_called_once_with(
+            url="https://example.com/file.nzb",
+            parent=dialog.url_dialog,
+        )
+        dialog.url_dialog.destroy.assert_called_once_with()
 
 
 class UsenetFinderDialogTests(unittest.TestCase):
